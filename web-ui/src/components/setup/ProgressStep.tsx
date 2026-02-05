@@ -225,7 +225,7 @@ const ProgressStep: Component = () => {
                   <div class="cicd-secrets">
                     <div class="cicd-secret">
                       <code class="cicd-secret-name">CLOUDFLARE_WORKER_NAME</code>
-                      <span class="cicd-secret-hint">The worker name you chose during deployment (e.g., claudeflare-github)</span>
+                      <span class="cicd-secret-hint">The worker name you chose during deployment (e.g., claudeflare)</span>
                     </div>
                   </div>
                 </div>
