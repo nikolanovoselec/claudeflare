@@ -447,14 +447,47 @@ async function handleConfigureCustomDomain(
 
   const workersDevTarget = `${workerName}.${accountSubdomain}.workers.dev`;
 
-  // Step 4a: Create DNS CNAME record pointing to workers.dev
+  // Step 4a: Create or update DNS CNAME record pointing to workers.dev
   // Extract subdomain part (e.g., "claude" from "claude.example.com")
   const subdomain = domainParts.length > 2 ? domainParts.slice(0, -2).join('.') : '@';
 
+  // Check if DNS record already exists
+  let existingDnsRecordId: string | null = null;
+  try {
+    const dnsLookupRes = await fetch(
+      `${CF_API_BASE}/zones/${zoneId}/dns_records?name=${customDomain}`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    const dnsLookupData = await dnsLookupRes.json() as {
+      success: boolean;
+      result?: Array<{ id: string; type: string }>;
+    };
+    if (dnsLookupData.success && dnsLookupData.result?.length) {
+      // Find a CNAME record (prefer CNAME, but accept any record to update)
+      const cnameRecord = dnsLookupData.result.find(r => r.type === 'CNAME');
+      existingDnsRecordId = cnameRecord?.id || dnsLookupData.result[0]?.id || null;
+      if (existingDnsRecordId) {
+        logger.info('Found existing DNS record, will update', { domain: customDomain, recordId: existingDnsRecordId });
+      }
+    }
+  } catch (lookupError) {
+    // If lookup fails, fall back to create (POST)
+    logger.warn('DNS record lookup failed, falling back to create', {
+      domain: customDomain,
+      error: lookupError instanceof Error ? lookupError.message : String(lookupError)
+    });
+  }
+
+  // Use PUT to update existing record, or POST to create new one
+  const dnsMethod = existingDnsRecordId ? 'PUT' : 'POST';
+  const dnsUrl = existingDnsRecordId
+    ? `${CF_API_BASE}/zones/${zoneId}/dns_records/${existingDnsRecordId}`
+    : `${CF_API_BASE}/zones/${zoneId}/dns_records`;
+
   const dnsRecordRes = await fetch(
-    `${CF_API_BASE}/zones/${zoneId}/dns_records`,
+    dnsUrl,
     {
-      method: 'POST',
+      method: dnsMethod,
       headers: {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json'
@@ -470,19 +503,23 @@ async function handleConfigureCustomDomain(
 
   if (!dnsRecordRes.ok) {
     const dnsError = await dnsRecordRes.json() as { errors?: Array<{ code: number; message: string }> };
-    // Record might already exist - that's OK (code 81057)
-    if (!dnsError.errors?.some(e => e.code === 81057)) {
-      const dnsErrMsg = dnsError.errors?.[0]?.message || 'Failed to create DNS record';
-      logger.error('DNS record creation failed', new Error(dnsErrMsg), {
+    // Record might already exist - that's OK (code 81057) - only relevant for POST
+    if (dnsMethod === 'POST' && dnsError.errors?.some(e => e.code === 81057)) {
+      // Record already exists but lookup didn't find it - log and continue
+      logger.info('DNS record already exists (detected via create error)', { domain: customDomain, subdomain, target: workersDevTarget });
+    } else {
+      const dnsErrMsg = dnsError.errors?.[0]?.message || `Failed to ${existingDnsRecordId ? 'update' : 'create'} DNS record`;
+      logger.error(`DNS record ${existingDnsRecordId ? 'update' : 'creation'} failed`, new Error(dnsErrMsg), {
         domain: customDomain,
         subdomain,
         target: workersDevTarget,
         zoneId,
+        method: dnsMethod,
         status: dnsRecordRes.status,
         errors: dnsError.errors,
       });
 
-      // Detect auth errors on DNS creation
+      // Detect auth errors on DNS creation/update
       const isDnsAuthError = dnsRecordRes.status === 403
         || dnsRecordRes.status === 401
         || dnsError.errors?.some(e => e.message?.toLowerCase().includes('authentication') || e.message?.toLowerCase().includes('permission'));
@@ -499,8 +536,8 @@ async function handleConfigureCustomDomain(
       steps[stepIndex].error = dnsErrMsg;
       throw new SetupError('configure_custom_domain', dnsErrMsg, steps);
     }
-    // Record already exists - log and continue
-    logger.info('DNS record already exists', { domain: customDomain, subdomain, target: workersDevTarget });
+  } else {
+    logger.info(`DNS record ${existingDnsRecordId ? 'updated' : 'created'}`, { domain: customDomain, subdomain, target: workersDevTarget });
   }
 
   // Step 4b: Add worker route for custom domain
@@ -555,7 +592,7 @@ async function handleConfigureCustomDomain(
 }
 
 /**
- * Step 5: Create CF Access application for custom domain
+ * Step 5: Create or update CF Access application for custom domain
  */
 async function handleCreateAccessApp(
   token: string,
@@ -567,10 +604,43 @@ async function handleCreateAccessApp(
   steps.push({ step: 'create_access_app', status: 'pending' });
   const stepIndex = steps.length - 1;
 
+  // Check if Access app already exists for this domain
+  let existingAppId: string | null = null;
+  try {
+    const appsLookupRes = await fetch(
+      `${CF_API_BASE}/accounts/${accountId}/access/apps`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    const appsLookupData = await appsLookupRes.json() as {
+      success: boolean;
+      result?: Array<{ id: string; domain: string; name: string }>;
+    };
+    if (appsLookupData.success && appsLookupData.result?.length) {
+      // Find app matching this domain
+      const existingApp = appsLookupData.result.find(app => app.domain === customDomain);
+      if (existingApp) {
+        existingAppId = existingApp.id;
+        logger.info('Found existing Access app, will update', { domain: customDomain, appId: existingAppId, name: existingApp.name });
+      }
+    }
+  } catch (lookupError) {
+    // If lookup fails, fall back to create (POST)
+    logger.warn('Access app lookup failed, falling back to create', {
+      domain: customDomain,
+      error: lookupError instanceof Error ? lookupError.message : String(lookupError)
+    });
+  }
+
+  // Use PUT to update existing app, or POST to create new one
+  const accessMethod = existingAppId ? 'PUT' : 'POST';
+  const accessUrl = existingAppId
+    ? `${CF_API_BASE}/accounts/${accountId}/access/apps/${existingAppId}`
+    : `${CF_API_BASE}/accounts/${accountId}/access/apps`;
+
   const accessAppRes = await fetch(
-    `${CF_API_BASE}/accounts/${accountId}/access/apps`,
+    accessUrl,
     {
-      method: 'POST',
+      method: accessMethod,
       headers: {
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json'
@@ -588,16 +658,33 @@ async function handleCreateAccessApp(
   const accessAppData = await accessAppRes.json() as {
     success: boolean;
     result?: { id: string };
-    errors?: Array<{ message: string }>;
+    errors?: Array<{ code?: number; message: string }>;
   };
 
   if (!accessAppData.success || !accessAppData.result) {
+    // Check if this is an "already exists" error and we didn't detect it in lookup
+    const alreadyExistsError = accessAppData.errors?.some(e =>
+      e.message?.toLowerCase().includes('already exists') ||
+      e.message?.toLowerCase().includes('duplicate')
+    );
+
+    if (alreadyExistsError && !existingAppId) {
+      // App exists but we couldn't find it - this shouldn't happen often
+      logger.warn('Access app already exists but was not found in lookup', { domain: customDomain });
+      // We can't update without the ID, so just log and continue
+      // The existing app should still work
+      steps[stepIndex].status = 'success';
+      return;
+    }
+
     steps[stepIndex].status = 'error';
-    steps[stepIndex].error = accessAppData.errors?.[0]?.message || 'Failed to create Access app';
-    throw new SetupError('create_access_app', accessAppData.errors?.[0]?.message || 'Failed to create Access app', steps);
+    steps[stepIndex].error = accessAppData.errors?.[0]?.message || `Failed to ${existingAppId ? 'update' : 'create'} Access app`;
+    throw new SetupError('create_access_app', accessAppData.errors?.[0]?.message || `Failed to ${existingAppId ? 'update' : 'create'} Access app`, steps);
   }
 
-  // Create Access policy
+  logger.info(`Access app ${existingAppId ? 'updated' : 'created'}`, { domain: customDomain, appId: accessAppData.result.id });
+
+  // Create or update Access policy
   const appId = accessAppData.result.id;
   let include: Array<Record<string, unknown>> = [];
 
@@ -609,6 +696,50 @@ async function handleCreateAccessApp(
     include = [{ everyone: {} }];
   }
 
+  // For existing apps, we need to check for existing policies and update them
+  if (existingAppId) {
+    try {
+      const policiesRes = await fetch(
+        `${CF_API_BASE}/accounts/${accountId}/access/apps/${appId}/policies`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+      const policiesData = await policiesRes.json() as {
+        success: boolean;
+        result?: Array<{ id: string; name: string }>;
+      };
+
+      if (policiesData.success && policiesData.result?.length) {
+        // Update the first policy (usually "Allow users")
+        const existingPolicy = policiesData.result[0];
+        await fetch(
+          `${CF_API_BASE}/accounts/${accountId}/access/apps/${appId}/policies/${existingPolicy.id}`,
+          {
+            method: 'PUT',
+            headers: {
+              'Authorization': `Bearer ${token}`,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+              name: 'Allow users',
+              decision: 'allow',
+              include
+            })
+          }
+        );
+        logger.info('Access policy updated', { appId, policyId: existingPolicy.id });
+        steps[stepIndex].status = 'success';
+        return;
+      }
+    } catch (policyLookupError) {
+      // If policy lookup fails, create a new policy
+      logger.warn('Access policy lookup failed, creating new policy', {
+        appId,
+        error: policyLookupError instanceof Error ? policyLookupError.message : String(policyLookupError)
+      });
+    }
+  }
+
+  // Create new policy (for new apps or if policy lookup failed)
   await fetch(
     `${CF_API_BASE}/accounts/${accountId}/access/apps/${appId}/policies`,
     {
@@ -625,6 +756,7 @@ async function handleCreateAccessApp(
     }
   );
 
+  logger.info('Access policy created', { appId });
   steps[stepIndex].status = 'success';
 }
 

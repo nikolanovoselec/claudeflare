@@ -373,10 +373,24 @@ describe('Setup Routes', () => {
           { status: 200 }
         )
       );
+      // Mock DNS record lookup - no existing record
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [] }),
+          { status: 200 }
+        )
+      );
       // Mock DNS record creation
       mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
       // Mock worker route creation
       mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      // Mock Access app lookup - no existing app
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [] }),
+          { status: 200 }
+        )
+      );
       // Mock access app creation
       mockFetch.mockResolvedValueOnce(
         new Response(
@@ -413,8 +427,11 @@ describe('Setup Routes', () => {
       );
 
       // Verify DNS record creation was called with correct parameters
+      // Find the DNS call that has a body (POST/PUT, not GET lookup)
       const dnsCall = mockFetch.mock.calls.find(
-        call => typeof call[0] === 'string' && call[0].includes('/dns_records')
+        call => typeof call[0] === 'string' &&
+          call[0].includes('/dns_records') &&
+          (call[1] as RequestInit)?.body !== undefined
       );
       expect(dnsCall).toBeDefined();
       const dnsBody = JSON.parse(dnsCall![1]?.body as string);
@@ -570,6 +587,13 @@ describe('Setup Routes', () => {
           { status: 200 }
         )
       );
+      // Mock DNS record lookup - no existing record
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [] }),
+          { status: 200 }
+        )
+      );
       // Mock DNS record creation - success
       mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
       // Mock worker route creation - 403 auth error
@@ -638,6 +662,13 @@ describe('Setup Routes', () => {
           { status: 200 }
         )
       );
+      // Mock DNS record lookup - no existing record
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [] }),
+          { status: 200 }
+        )
+      );
       // Mock DNS record creation - 403 auth error
       mockFetch.mockResolvedValueOnce(
         new Response(
@@ -703,7 +734,14 @@ describe('Setup Routes', () => {
           { status: 200 }
         )
       );
-      // Mock DNS record creation - already exists (code 81057)
+      // Mock DNS record lookup - no existing record (simulates race condition where lookup doesn't find it)
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [] }),
+          { status: 200 }
+        )
+      );
+      // Mock DNS record creation - already exists (code 81057) - race condition
       mockFetch.mockResolvedValueOnce(
         new Response(
           JSON.stringify({
@@ -715,6 +753,13 @@ describe('Setup Routes', () => {
       );
       // Mock worker route creation - success
       mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      // Mock Access app lookup - no existing app
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [] }),
+          { status: 200 }
+        )
+      );
       // Mock access app creation
       mockFetch.mockResolvedValueOnce(
         new Response(
@@ -781,10 +826,24 @@ describe('Setup Routes', () => {
           { status: 200 }
         )
       );
+      // Mock DNS record lookup - no existing record
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [] }),
+          { status: 200 }
+        )
+      );
       // Mock DNS record creation
       mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
       // Mock worker route creation
       mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      // Mock Access app lookup - no existing app
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [] }),
+          { status: 200 }
+        )
+      );
       // Mock access app creation
       mockFetch.mockResolvedValueOnce(
         new Response(
@@ -811,8 +870,11 @@ describe('Setup Routes', () => {
       expect(body.success).toBe(true);
 
       // Verify DNS record was created with fallback subdomain from hostname
+      // Find the DNS call that has a body (POST/PUT, not GET lookup)
       const dnsCall = mockFetch.mock.calls.find(
-        call => typeof call[0] === 'string' && call[0].includes('/dns_records')
+        call => typeof call[0] === 'string' &&
+          call[0].includes('/dns_records') &&
+          (call[1] as RequestInit)?.body !== undefined
       );
       expect(dnsCall).toBeDefined();
       const dnsBody = JSON.parse(dnsCall![1]?.body as string);
@@ -1118,6 +1180,382 @@ describe('Setup Routes', () => {
       expect(res.status).toBe(200);
       const body = await res.json() as { accountId: string };
       expect(body.accountId).toBe('acc123');
+    });
+
+    it('updates existing DNS record instead of failing when record exists', async () => {
+      const app = createTestApp();
+
+      // Mock accounts
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [{ id: 'acc123' }] }),
+          { status: 200 }
+        )
+      );
+      // Mock R2 credential derivation
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { id: 'r2-id', status: 'active' } }),
+          { status: 200 }
+        )
+      );
+      // Mock 4 secrets
+      for (let i = 0; i < 4; i++) {
+        mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      }
+      // Mock zone lookup
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [{ id: 'zone123' }] }),
+          { status: 200 }
+        )
+      );
+      // Mock subdomain lookup
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { subdomain: 'nikola-novoselec' } }),
+          { status: 200 }
+        )
+      );
+      // Mock DNS record lookup - returns existing CNAME record
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            success: true,
+            result: [{ id: 'dns-record-123', type: 'CNAME' }],
+          }),
+          { status: 200 }
+        )
+      );
+      // Mock DNS record UPDATE (PUT) - success
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      // Mock worker route creation
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      // Mock Access app lookup - no existing app
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [] }),
+          { status: 200 }
+        )
+      );
+      // Mock access app creation
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { id: 'app123' } }),
+          { status: 200 }
+        )
+      );
+      // Mock access policy creation
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+
+      const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: 'valid-token',
+          customDomain: 'claude.example.com',
+          accessPolicy: { type: 'everyone' },
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as {
+        success: boolean;
+        steps: Array<{ step: string; status: string }>;
+      };
+      expect(body.success).toBe(true);
+      expect(body.steps).toContainEqual(
+        expect.objectContaining({ step: 'configure_custom_domain', status: 'success' })
+      );
+
+      // Verify DNS record was updated with PUT, not created with POST
+      const dnsUpdateCall = mockFetch.mock.calls.find(
+        call => typeof call[0] === 'string' &&
+          call[0].includes('/dns_records/dns-record-123') &&
+          (call[1] as RequestInit)?.method === 'PUT'
+      );
+      expect(dnsUpdateCall).toBeDefined();
+    });
+
+    it('updates existing Access app instead of failing when app exists', async () => {
+      const app = createTestApp();
+
+      // Mock accounts
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [{ id: 'acc123' }] }),
+          { status: 200 }
+        )
+      );
+      // Mock R2 credential derivation
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { id: 'r2-id', status: 'active' } }),
+          { status: 200 }
+        )
+      );
+      // Mock 4 secrets
+      for (let i = 0; i < 4; i++) {
+        mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      }
+      // Mock zone lookup
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [{ id: 'zone123' }] }),
+          { status: 200 }
+        )
+      );
+      // Mock subdomain lookup
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { subdomain: 'nikola-novoselec' } }),
+          { status: 200 }
+        )
+      );
+      // Mock DNS record lookup - no existing record
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [] }),
+          { status: 200 }
+        )
+      );
+      // Mock DNS record creation (POST) - success
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      // Mock worker route creation
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      // Mock Access app lookup - returns existing app for this domain
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            success: true,
+            result: [{ id: 'existing-app-456', domain: 'claude.example.com', name: 'Claudeflare' }],
+          }),
+          { status: 200 }
+        )
+      );
+      // Mock Access app UPDATE (PUT) - success
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { id: 'existing-app-456' } }),
+          { status: 200 }
+        )
+      );
+      // Mock Access policy lookup - returns existing policy
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            success: true,
+            result: [{ id: 'policy-789', name: 'Allow users' }],
+          }),
+          { status: 200 }
+        )
+      );
+      // Mock Access policy UPDATE (PUT) - success
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+
+      const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: 'valid-token',
+          customDomain: 'claude.example.com',
+          accessPolicy: { type: 'email', emails: ['user@example.com'] },
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as {
+        success: boolean;
+        steps: Array<{ step: string; status: string }>;
+      };
+      expect(body.success).toBe(true);
+      expect(body.steps).toContainEqual(
+        expect.objectContaining({ step: 'create_access_app', status: 'success' })
+      );
+
+      // Verify Access app was updated with PUT, not created with POST
+      const accessAppUpdateCall = mockFetch.mock.calls.find(
+        call => typeof call[0] === 'string' &&
+          call[0].includes('/access/apps/existing-app-456') &&
+          (call[1] as RequestInit)?.method === 'PUT'
+      );
+      expect(accessAppUpdateCall).toBeDefined();
+
+      // Verify Access policy was updated with PUT
+      const policyUpdateCall = mockFetch.mock.calls.find(
+        call => typeof call[0] === 'string' &&
+          call[0].includes('/policies/policy-789') &&
+          (call[1] as RequestInit)?.method === 'PUT'
+      );
+      expect(policyUpdateCall).toBeDefined();
+    });
+
+    it('falls back to create when DNS record lookup fails', async () => {
+      const app = createTestApp();
+
+      // Mock accounts
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [{ id: 'acc123' }] }),
+          { status: 200 }
+        )
+      );
+      // Mock R2 credential derivation
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { id: 'r2-id', status: 'active' } }),
+          { status: 200 }
+        )
+      );
+      // Mock 4 secrets
+      for (let i = 0; i < 4; i++) {
+        mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      }
+      // Mock zone lookup
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [{ id: 'zone123' }] }),
+          { status: 200 }
+        )
+      );
+      // Mock subdomain lookup
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { subdomain: 'nikola-novoselec' } }),
+          { status: 200 }
+        )
+      );
+      // Mock DNS record lookup - fails with network error
+      mockFetch.mockRejectedValueOnce(new Error('Network error'));
+      // Mock DNS record creation (POST) - success
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      // Mock worker route creation
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      // Mock Access app lookup - no existing app
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [] }),
+          { status: 200 }
+        )
+      );
+      // Mock access app creation
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { id: 'app123' } }),
+          { status: 200 }
+        )
+      );
+      // Mock access policy creation
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+
+      const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: 'valid-token',
+          customDomain: 'claude.example.com',
+          accessPolicy: { type: 'everyone' },
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as {
+        success: boolean;
+        steps: Array<{ step: string; status: string }>;
+      };
+      expect(body.success).toBe(true);
+
+      // Verify DNS record was created with POST (fallback behavior)
+      const dnsCreateCall = mockFetch.mock.calls.find(
+        call => typeof call[0] === 'string' &&
+          call[0].endsWith('/dns_records') &&
+          (call[1] as RequestInit)?.method === 'POST'
+      );
+      expect(dnsCreateCall).toBeDefined();
+    });
+
+    it('falls back to create when Access app lookup fails', async () => {
+      const app = createTestApp();
+
+      // Mock accounts
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [{ id: 'acc123' }] }),
+          { status: 200 }
+        )
+      );
+      // Mock R2 credential derivation
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { id: 'r2-id', status: 'active' } }),
+          { status: 200 }
+        )
+      );
+      // Mock 4 secrets
+      for (let i = 0; i < 4; i++) {
+        mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      }
+      // Mock zone lookup
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [{ id: 'zone123' }] }),
+          { status: 200 }
+        )
+      );
+      // Mock subdomain lookup
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { subdomain: 'nikola-novoselec' } }),
+          { status: 200 }
+        )
+      );
+      // Mock DNS record lookup - no existing record
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [] }),
+          { status: 200 }
+        )
+      );
+      // Mock DNS record creation (POST) - success
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      // Mock worker route creation
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      // Mock Access app lookup - fails with network error
+      mockFetch.mockRejectedValueOnce(new Error('Network error'));
+      // Mock access app creation (POST) - success
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { id: 'app123' } }),
+          { status: 200 }
+        )
+      );
+      // Mock access policy creation
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+
+      const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: 'valid-token',
+          customDomain: 'claude.example.com',
+          accessPolicy: { type: 'everyone' },
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as {
+        success: boolean;
+        steps: Array<{ step: string; status: string }>;
+      };
+      expect(body.success).toBe(true);
+
+      // Verify Access app was created with POST (fallback behavior)
+      const accessCreateCall = mockFetch.mock.calls.find(
+        call => typeof call[0] === 'string' &&
+          call[0].endsWith('/access/apps') &&
+          (call[1] as RequestInit)?.method === 'POST'
+      );
+      expect(accessCreateCall).toBeDefined();
     });
   });
 
