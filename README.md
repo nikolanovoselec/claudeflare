@@ -64,9 +64,23 @@ Browser (multiple tabs)
 ## Requirements
 
 - **Cloudflare Account** with Workers Paid plan (~$5/month base)
-- **Cloudflare Access** configured for authentication
 - **Claude Max subscription** for Claude Code CLI access
-- **R2 API credentials** for storage sync
+
+### API Token Permissions
+
+The setup wizard requires a Cloudflare API token with these permissions:
+
+**Required:**
+- Account > Workers Scripts > Edit
+- Account > Workers R2 Storage > Edit
+- Account > Workers KV Storage > Edit
+- Account > Containers > Edit
+
+**Optional (for custom domain with Cloudflare Access):**
+- Account > Access: Apps and Policies > Edit
+- Zone > Zone > Read
+- Zone > DNS > Edit
+- Zone > Workers Routes > Edit
 
 ## Deployment
 
@@ -114,16 +128,37 @@ The repo includes GitHub Actions workflows:
 | `CLOUDFLARE_API_TOKEN` | API token with Workers Scripts Edit + R2 Edit permissions |
 | `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID |
 
+**Optional GitHub Variable:**
+
+| Variable | Description |
+|----------|-------------|
+| `CLOUDFLARE_WORKER_NAME` | Custom worker name for forks (defaults to "claudeflare") |
+
+### Setup Wizard
+
+After deployment, the setup wizard guides you through initial configuration:
+
+1. **API Token** - Enter a Cloudflare API token with required permissions
+2. **Custom Domain** (optional) - The wizard automatically:
+   - Creates a DNS CNAME record pointing to your workers.dev URL
+   - Adds a worker route for the custom domain
+   - Creates a Cloudflare Access application for authentication
+3. **Secrets** - R2 credentials and admin secret are derived and stored automatically
+
+The setup uses an upsert pattern, so you can re-run it without manually deleting existing DNS records or Access apps.
+
 ## Configuration
 
-### Required Wrangler Secrets
+### Wrangler Secrets
+
+These secrets are set automatically by the setup wizard:
 
 | Secret | Description |
 |--------|-------------|
-| `R2_ACCESS_KEY_ID` | R2 API token access key |
-| `R2_SECRET_ACCESS_KEY` | R2 API token secret |
+| `R2_ACCESS_KEY_ID` | Derived from API token ID |
+| `R2_SECRET_ACCESS_KEY` | SHA-256 hash of API token |
 | `CLOUDFLARE_API_TOKEN` | API token for R2 bucket creation |
-| `ADMIN_SECRET` | Secret for admin endpoints (zombie container cleanup) |
+| `ADMIN_SECRET` | Generated randomly for admin endpoints |
 | `ENCRYPTION_KEY` | (Optional) AES-256 key for encrypting credentials at rest |
 
 ### Environment Variables (wrangler.toml)
