@@ -1,0 +1,209 @@
+/**
+ * Session CRUD routes
+ * Handles GET/POST/PATCH/DELETE operations for sessions
+ */
+import { Hono } from 'hono';
+import { getContainer } from '@cloudflare/containers';
+import type { Env, Session } from '../../types';
+import { getSessionKey, getSessionPrefix, generateSessionId } from '../../lib/kv-keys';
+import { AuthVariables } from '../../middleware/auth';
+import { createRateLimiter } from '../../middleware/rate-limit';
+import { MAX_SESSION_NAME_LENGTH } from '../../lib/constants';
+import { getContainerId } from '../../lib/container-helpers';
+import { createLogger } from '../../lib/logger';
+import { containerSessionsCB } from '../../lib/circuit-breakers';
+import { ValidationError, NotFoundError } from '../../lib/error-types';
+
+const logger = createLogger('session-crud');
+
+/**
+ * Rate limiter for session creation
+ * Limits to 10 session creations per minute per user
+ */
+const sessionCreateRateLimiter = createRateLimiter({
+  windowMs: 60 * 1000, // 1 minute
+  maxRequests: 10,     // 10 sessions per minute
+  keyPrefix: 'session-create',
+});
+
+const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
+
+/**
+ * GET /api/sessions
+ * List all sessions for the authenticated user
+ */
+app.get('/', async (c) => {
+  const bucketName = c.get('bucketName');
+  const prefix = getSessionPrefix(bucketName);
+
+  // List all sessions for this user from KV
+  const list = await c.env.KV.list({ prefix });
+
+  // Fetch session data for each key (parallel for better performance)
+  const sessionPromises = list.keys.map(key => c.env.KV.get<Session>(key.name, 'json'));
+  const sessionResults = await Promise.all(sessionPromises);
+  const sessions: Session[] = sessionResults.filter((s): s is Session => s !== null);
+
+  // Sort by lastAccessedAt (most recent first)
+  sessions.sort(
+    (a, b) =>
+      new Date(b.lastAccessedAt).getTime() -
+      new Date(a.lastAccessedAt).getTime()
+  );
+
+  return c.json({ sessions });
+});
+
+/**
+ * POST /api/sessions
+ * Create a new session
+ * Rate limited to 10 requests per minute per user
+ */
+app.post('/', sessionCreateRateLimiter, async (c) => {
+  const bucketName = c.get('bucketName');
+  const body = await c.req.json<{ name?: string }>();
+
+  // Validate session name
+  let sessionName = body.name?.trim() || 'Terminal';
+  if (sessionName.length > MAX_SESSION_NAME_LENGTH) {
+    throw new ValidationError(`Session name too long (max ${MAX_SESSION_NAME_LENGTH} characters)`);
+  }
+  // Sanitize: remove potentially dangerous characters
+  sessionName = sessionName.replace(/[<>&"']/g, '');
+
+  const sessionId = generateSessionId();
+  const now = new Date().toISOString();
+
+  const session: Session = {
+    id: sessionId,
+    name: sessionName,
+    userId: bucketName,
+    createdAt: now,
+    lastAccessedAt: now,
+  };
+
+  // Store session in KV
+  const key = getSessionKey(bucketName, sessionId);
+  await c.env.KV.put(key, JSON.stringify(session));
+
+  return c.json({ session }, 201);
+});
+
+/**
+ * GET /api/sessions/:id
+ * Get a specific session
+ */
+app.get('/:id', async (c) => {
+  const bucketName = c.get('bucketName');
+  const sessionId = c.req.param('id');
+  const key = getSessionKey(bucketName, sessionId);
+
+  const session = await c.env.KV.get<Session>(key, 'json');
+
+  if (!session) {
+    throw new NotFoundError('Session');
+  }
+
+  return c.json({ session });
+});
+
+/**
+ * PATCH /api/sessions/:id
+ * Update session (e.g., rename)
+ */
+app.patch('/:id', async (c) => {
+  const bucketName = c.get('bucketName');
+  const sessionId = c.req.param('id');
+  const key = getSessionKey(bucketName, sessionId);
+
+  const session = await c.env.KV.get<Session>(key, 'json');
+
+  if (!session) {
+    throw new NotFoundError('Session');
+  }
+
+  const body = await c.req.json<{ name?: string }>();
+
+  // Update fields
+  if (body.name) {
+    session.name = body.name;
+  }
+  session.lastAccessedAt = new Date().toISOString();
+
+  // Save updated session
+  await c.env.KV.put(key, JSON.stringify(session));
+
+  return c.json({ session });
+});
+
+/**
+ * DELETE /api/sessions/:id
+ * Delete a session
+ */
+app.delete('/:id', async (c) => {
+  const reqLogger = logger.child({ requestId: c.req.header('X-Request-ID') });
+  const bucketName = c.get('bucketName');
+  const sessionId = c.req.param('id');
+  const key = getSessionKey(bucketName, sessionId);
+
+  // Check if session exists
+  const session = await c.env.KV.get<Session>(key, 'json');
+
+  if (!session) {
+    throw new NotFoundError('Session');
+  }
+
+  const containerId = getContainerId(bucketName, sessionId);
+  const container = getContainer(c.env.CONTAINER, containerId);
+
+  // Notify container to kill the PTY session
+  try {
+    // Terminal server runs on default port 8080
+    await containerSessionsCB.execute(() =>
+      container.fetch(
+        new Request(`http://container/sessions/${sessionId}`, {
+          method: 'DELETE',
+        })
+      )
+    );
+  } catch (error) {
+    // Container might not be running, that's okay
+    reqLogger.warn('Could not notify container about session deletion', { sessionId, error: String(error) });
+  }
+
+  // Delete from KV
+  await c.env.KV.delete(key);
+
+  // Always destroy this session's container
+  try {
+    await container.destroy();
+    reqLogger.info('Destroyed container', { containerId });
+  } catch (error) {
+    reqLogger.warn('Could not destroy container', { containerId, error: String(error) });
+  }
+
+  return c.json({ deleted: true, id: sessionId });
+});
+
+/**
+ * POST /api/sessions/:id/touch
+ * Update lastAccessedAt timestamp
+ */
+app.post('/:id/touch', async (c) => {
+  const bucketName = c.get('bucketName');
+  const sessionId = c.req.param('id');
+  const key = getSessionKey(bucketName, sessionId);
+
+  const session = await c.env.KV.get<Session>(key, 'json');
+
+  if (!session) {
+    throw new NotFoundError('Session');
+  }
+
+  session.lastAccessedAt = new Date().toISOString();
+  await c.env.KV.put(key, JSON.stringify(session));
+
+  return c.json({ session });
+});
+
+export default app;

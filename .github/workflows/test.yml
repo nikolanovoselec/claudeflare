@@ -1,0 +1,63 @@
+name: Test
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: test-${{ github.head_ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Cache root node_modules
+        uses: actions/cache@v4
+        id: cache-root
+        with:
+          path: node_modules
+          key: root-${{ hashFiles('package-lock.json') }}
+
+      - name: Cache web-ui node_modules
+        uses: actions/cache@v4
+        id: cache-webui
+        with:
+          path: web-ui/node_modules
+          key: webui-${{ hashFiles('web-ui/package-lock.json') }}
+
+      - name: Install root dependencies
+        if: steps.cache-root.outputs.cache-hit != 'true'
+        run: npm ci
+
+      - name: Install web-ui dependencies
+        if: steps.cache-webui.outputs.cache-hit != 'true'
+        run: npm ci
+        working-directory: web-ui
+
+      - name: Build frontend
+        run: npm run build
+        working-directory: web-ui
+
+      - name: Run backend tests
+        run: npm test
+
+      - name: Run frontend tests
+        run: npm test
+        working-directory: web-ui
+
+      - name: Type check backend
+        run: npm run typecheck
+
+      - name: Type check frontend
+        run: npm run typecheck
+        working-directory: web-ui

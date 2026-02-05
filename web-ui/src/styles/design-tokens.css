@@ -1,0 +1,206 @@
+/* ==========================================================================
+   Design Tokens - Claudeflare Design System
+   ========================================================================== */
+
+:root {
+  /* ==========================================================================
+     Colors - Backgrounds
+     ========================================================================== */
+
+  /* Backgrounds - deeper, more sophisticated */
+  --color-bg-base: #09090b;        /* Zinc 950 - true black base */
+  --color-bg-surface: #18181b;     /* Zinc 900 - cards, sidebars */
+  --color-bg-tertiary: #1f1f23;    /* Between surface and elevated */
+  --color-bg-elevated: #27272a;    /* Zinc 800 - modals, dropdowns */
+  --color-bg-muted: #3f3f46;       /* Zinc 700 - hover states */
+
+  /* ==========================================================================
+     Colors - Borders
+     ========================================================================== */
+
+  --color-border-subtle: #27272a;  /* Subtle borders */
+  --color-border-default: #3f3f46; /* Default borders */
+  --color-border-strong: #52525b;  /* Strong borders, focus rings */
+
+  /* ==========================================================================
+     Colors - Text
+     ========================================================================== */
+
+  --color-text-primary: #fafafa;   /* Zinc 50 - headings, important */
+  --color-text-secondary: #a1a1aa; /* Zinc 400 - body text */
+  --color-text-muted: #71717a;     /* Zinc 500 - labels, hints */
+  --color-text-dimmed: #52525b;    /* Zinc 600 - disabled */
+
+  /* ==========================================================================
+     Colors - Accent (Purple - Claude brand)
+     ========================================================================== */
+
+  --color-accent: #8b5cf6;         /* Violet 500 */
+  --color-accent-hover: #7c3aed;   /* Violet 600 */
+  --color-accent-muted: rgba(139, 92, 246, 0.15); /* For backgrounds */
+
+  /* ==========================================================================
+     Colors - Semantic
+     ========================================================================== */
+
+  /* Success */
+  --color-success: #22c55e;        /* Green 500 */
+  --color-success-muted: rgba(34, 197, 94, 0.15);
+
+  /* Warning */
+  --color-warning: #f59e0b;        /* Amber 500 */
+  --color-warning-muted: rgba(245, 158, 11, 0.15);
+
+  /* Error */
+  --color-error: #ef4444;          /* Red 500 */
+  --color-error-muted: rgba(239, 68, 68, 0.15);
+
+  /* Info */
+  --color-info: #3b82f6;           /* Blue 500 */
+  --color-info-muted: rgba(59, 130, 246, 0.15);
+
+  /* ==========================================================================
+     Colors - Special
+     ========================================================================== */
+
+  --color-terminal-bg: #0c0c0f;    /* Even darker for terminal */
+  --color-glow-accent: rgba(139, 92, 246, 0.4);
+
+  /* ==========================================================================
+     Colors - Glass Effects
+     ========================================================================== */
+
+  /* Glass effects for modern UI */
+  --color-glass: rgba(255, 255, 255, 0.03);
+  --color-glass-strong: rgba(255, 255, 255, 0.06);
+  --color-glass-border: rgba(255, 255, 255, 0.08);
+
+  /* ==========================================================================
+     Colors - Tab Types
+     ========================================================================== */
+
+  /* Terminal tab type colors */
+  --color-tab-claude: #8b5cf6;    /* Purple - Claude */
+  --color-tab-htop: #22c55e;      /* Green - htop */
+  --color-tab-yazi: #3b82f6;      /* Blue - yazi */
+  --color-tab-terminal: #f59e0b;  /* Amber - generic terminal */
+
+  /* ==========================================================================
+     Typography - Font Families
+     ========================================================================== */
+
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', monospace;
+
+  /* ==========================================================================
+     Typography - Font Sizes
+     ========================================================================== */
+
+  --text-xs: 0.75rem;    /* 12px - labels, badges */
+  --text-sm: 0.8125rem;  /* 13px - secondary text */
+  --text-base: 0.875rem; /* 14px - body */
+  --text-lg: 1rem;       /* 16px - section headers */
+  --text-xl: 1.125rem;   /* 18px - page headers */
+  --text-2xl: 1.5rem;    /* 24px - main titles */
+
+  /* ==========================================================================
+     Typography - Line Heights
+     ========================================================================== */
+
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.75;
+
+  /* ==========================================================================
+     Typography - Font Weights
+     ========================================================================== */
+
+  --font-normal: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+
+  /* ==========================================================================
+     Spacing Scale
+     ========================================================================== */
+
+  --space-0: 0;
+  --space-1: 0.25rem;  /* 4px */
+  --space-2: 0.5rem;   /* 8px */
+  --space-3: 0.75rem;  /* 12px */
+  --space-4: 1rem;     /* 16px */
+  --space-5: 1.25rem;  /* 20px */
+  --space-6: 1.5rem;   /* 24px */
+  --space-8: 2rem;     /* 32px */
+  --space-10: 2.5rem;  /* 40px */
+  --space-12: 3rem;    /* 48px */
+
+  /* ==========================================================================
+     Border Radius
+     ========================================================================== */
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
+  --radius-2xl: 16px;
+  --radius-full: 9999px;
+
+  /* ==========================================================================
+     Shadows (Minimal/Flat)
+     ========================================================================== */
+
+  /* Very subtle shadows - keep it flat */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.5);
+
+  /* Glow effects for focus/accent */
+  --glow-accent: 0 0 0 2px var(--color-glow-accent);
+  --glow-success: 0 0 0 2px rgba(34, 197, 94, 0.4);
+  --glow-error: 0 0 0 2px rgba(239, 68, 68, 0.4);
+
+  /* ==========================================================================
+     Transitions
+     ========================================================================== */
+
+  --transition-fast: 100ms ease-out;
+  --transition-base: 150ms ease-out;
+  --transition-slow: 250ms ease-out;
+  --transition-slower: 350ms ease-out;
+
+  /* Spring-like for more playful interactions */
+  --transition-bounce: 300ms cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* ==========================================================================
+     Layout
+     ========================================================================== */
+
+  --sidebar-width: 280px;
+  --sidebar-collapsed-width: 48px;
+  --header-height: 48px;
+  --status-bar-height: 24px;
+  --tab-bar-height: 36px;
+}
+
+/* ==========================================================================
+   Light Mode (Optional - future)
+   ========================================================================== */
+
+:root[data-theme="light"] {
+  --color-bg-base: #ffffff;
+  --color-bg-surface: #f4f4f5;
+  --color-bg-elevated: #ffffff;
+  --color-bg-muted: #e4e4e7;
+
+  --color-border-subtle: #e4e4e7;
+  --color-border-default: #d4d4d8;
+  --color-border-strong: #a1a1aa;
+
+  --color-text-primary: #09090b;
+  --color-text-secondary: #52525b;
+  --color-text-muted: #71717a;
+  --color-text-dimmed: #a1a1aa;
+
+  --color-terminal-bg: #fafafa;
+}

@@ -1,0 +1,29 @@
+{
+  "name": "claudeflare",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "cd web-ui && npm install && npm run build",
+    "deploy": "npm run build && node scripts/deploy-no-docker.mjs",
+    "deploy:docker": "npm run build && wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "vitest run --config vitest.e2e.config.ts",
+    "test:e2e:ui": "vitest run --config vitest.e2e.config.ts e2e/ui/"
+  },
+  "dependencies": {
+    "@cloudflare/containers": "^0.1.0",
+    "hono": "^4.7.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.8.0",
+    "@cloudflare/workers-types": "^4.20250124.0",
+    "puppeteer": "^24.36.1",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0",
+    "wrangler": "^4.0.0"
+  }
+}

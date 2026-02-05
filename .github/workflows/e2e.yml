@@ -1,0 +1,35 @@
+name: E2E Tests
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: 'Base URL of the deployed worker'
+        required: true
+        default: 'https://claudeflare.your-subdomain.workers.dev'
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run E2E API tests
+        run: npm run test:e2e
+        env:
+          E2E_BASE_URL: ${{ inputs.base_url }}
+
+      - name: Run E2E UI tests
+        run: npm run test:e2e:ui
+        env:
+          E2E_BASE_URL: ${{ inputs.base_url }}
