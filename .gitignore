@@ -7,3 +7,4 @@ web-ui/node_modules/
 web-ui/dist/
 .dev.vars
 wrangler.toml.bak
+CLAUDE.md

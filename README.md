@@ -306,7 +306,6 @@ vitest.e2e.config.ts    # E2E test config
 | Document | Description |
 |----------|-------------|
 | [TECHNICAL.md](./TECHNICAL.md) | Architecture, data flow, sync strategy, troubleshooting |
-| [CLAUDE.md](./CLAUDE.md) | Developer reference, gotchas, AI assistant context |
 
 ## License
 

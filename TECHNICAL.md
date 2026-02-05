@@ -1189,7 +1189,6 @@ claudeflare/
 +-- wrangler.toml             # Cloudflare configuration
 +-- vitest.config.ts          # Unit test config
 +-- vitest.e2e.config.ts      # E2E test config
-+-- CLAUDE.md                 # Project context for Claude
 +-- docs/
     +-- STORAGE-EVOLUTION.md  # Storage architecture history
 ```
