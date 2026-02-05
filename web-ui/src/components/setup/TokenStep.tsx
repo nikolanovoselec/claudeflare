@@ -66,6 +66,13 @@ const TokenStep: Component = () => {
     },
     {
       scope: 'Zone',
+      permission: 'DNS',
+      level: 'Edit',
+      why: 'Create a DNS record pointing to the worker',
+      usedFor: 'Creating CNAME record for custom domain to workers.dev',
+    },
+    {
+      scope: 'Zone',
       permission: 'Workers Routes',
       level: 'Edit',
       why: 'Route traffic from your custom domain to the worker',

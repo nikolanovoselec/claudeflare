@@ -338,7 +338,7 @@ describe('Setup Routes', () => {
       expect(mockKV.put).toHaveBeenCalledWith('setup:completed_at', expect.any(String));
     });
 
-    it('handles custom domain configuration', async () => {
+    it('handles custom domain configuration with DNS and route', async () => {
       const app = createTestApp();
 
       // Mock accounts
@@ -366,6 +366,15 @@ describe('Setup Routes', () => {
           { status: 200 }
         )
       );
+      // Mock subdomain lookup (for workers.dev target)
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { subdomain: 'nikola-novoselec' } }),
+          { status: 200 }
+        )
+      );
+      // Mock DNS record creation
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
       // Mock worker route creation
       mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
       // Mock access app creation
@@ -402,6 +411,17 @@ describe('Setup Routes', () => {
       expect(body.steps).toContainEqual(
         expect.objectContaining({ step: 'create_access_app', status: 'success' })
       );
+
+      // Verify DNS record creation was called with correct parameters
+      const dnsCall = mockFetch.mock.calls.find(
+        call => typeof call[0] === 'string' && call[0].includes('/dns_records')
+      );
+      expect(dnsCall).toBeDefined();
+      const dnsBody = JSON.parse(dnsCall![1]?.body as string);
+      expect(dnsBody.type).toBe('CNAME');
+      expect(dnsBody.name).toBe('claude');
+      expect(dnsBody.content).toBe('claudeflare.nikola-novoselec.workers.dev');
+      expect(dnsBody.proxied).toBe(true);
     });
 
     it('returns permission error when zones API returns 403 for custom domain', async () => {
@@ -543,6 +563,15 @@ describe('Setup Routes', () => {
           { status: 200 }
         )
       );
+      // Mock subdomain lookup
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { subdomain: 'nikola-novoselec' } }),
+          { status: 200 }
+        )
+      );
+      // Mock DNS record creation - success
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
       // Mock worker route creation - 403 auth error
       mockFetch.mockResolvedValueOnce(
         new Response(
@@ -572,6 +601,223 @@ describe('Setup Routes', () => {
       expect(body.success).toBe(false);
       expect(body.error).toContain('Zone permissions');
       expect(body.error).toContain('worker route');
+    });
+
+    it('returns permission error when DNS record creation returns auth error', async () => {
+      const app = createTestApp();
+
+      // Mock accounts
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [{ id: 'acc123' }] }),
+          { status: 200 }
+        )
+      );
+      // Mock R2 credential derivation
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { id: 'r2-id', status: 'active' } }),
+          { status: 200 }
+        )
+      );
+      // Mock 4 secrets
+      for (let i = 0; i < 4; i++) {
+        mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      }
+      // Mock zone lookup - success
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [{ id: 'zone123' }] }),
+          { status: 200 }
+        )
+      );
+      // Mock subdomain lookup
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { subdomain: 'nikola-novoselec' } }),
+          { status: 200 }
+        )
+      );
+      // Mock DNS record creation - 403 auth error
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            success: false,
+            errors: [{ code: 10000, message: 'Authentication error' }],
+          }),
+          { status: 403 }
+        )
+      );
+
+      const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: 'valid-token',
+          customDomain: 'claude.example.com',
+        }),
+      });
+
+      expect(res.status).toBe(400);
+      const body = await res.json() as {
+        success: boolean;
+        error: string;
+        steps: Array<{ step: string; status: string; error?: string }>;
+      };
+      expect(body.success).toBe(false);
+      expect(body.error).toContain('DNS permissions');
+    });
+
+    it('continues when DNS record already exists (code 81057)', async () => {
+      const app = createTestApp();
+
+      // Mock accounts
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [{ id: 'acc123' }] }),
+          { status: 200 }
+        )
+      );
+      // Mock R2 credential derivation
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { id: 'r2-id', status: 'active' } }),
+          { status: 200 }
+        )
+      );
+      // Mock 4 secrets
+      for (let i = 0; i < 4; i++) {
+        mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      }
+      // Mock zone lookup
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [{ id: 'zone123' }] }),
+          { status: 200 }
+        )
+      );
+      // Mock subdomain lookup
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { subdomain: 'nikola-novoselec' } }),
+          { status: 200 }
+        )
+      );
+      // Mock DNS record creation - already exists (code 81057)
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            success: false,
+            errors: [{ code: 81057, message: 'The record already exists.' }],
+          }),
+          { status: 400 }
+        )
+      );
+      // Mock worker route creation - success
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      // Mock access app creation
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { id: 'app123' } }),
+          { status: 200 }
+        )
+      );
+      // Mock access policy creation
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+
+      const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: 'valid-token',
+          customDomain: 'claude.example.com',
+          accessPolicy: { type: 'everyone' },
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as {
+        success: boolean;
+        steps: Array<{ step: string; status: string }>;
+      };
+      expect(body.success).toBe(true);
+      expect(body.steps).toContainEqual(
+        expect.objectContaining({ step: 'configure_custom_domain', status: 'success' })
+      );
+    });
+
+    it('uses hostname from workers.dev URL when subdomain API fails', async () => {
+      const app = createTestApp();
+
+      // Mock accounts
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [{ id: 'acc123' }] }),
+          { status: 200 }
+        )
+      );
+      // Mock R2 credential derivation
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { id: 'r2-id', status: 'active' } }),
+          { status: 200 }
+        )
+      );
+      // Mock 4 secrets
+      for (let i = 0; i < 4; i++) {
+        mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      }
+      // Mock zone lookup
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: [{ id: 'zone123' }] }),
+          { status: 200 }
+        )
+      );
+      // Mock subdomain lookup - fails (API error)
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: false, result: null }),
+          { status: 200 }
+        )
+      );
+      // Mock DNS record creation
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      // Mock worker route creation
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      // Mock access app creation
+      mockFetch.mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({ success: true, result: { id: 'app123' } }),
+          { status: 200 }
+        )
+      );
+      // Mock access policy creation
+      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+
+      // Request from workers.dev hostname - subdomain is extracted from this
+      const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          token: 'valid-token',
+          customDomain: 'claude.example.com',
+          accessPolicy: { type: 'everyone' },
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as { success: boolean };
+      expect(body.success).toBe(true);
+
+      // Verify DNS record was created with fallback subdomain from hostname
+      const dnsCall = mockFetch.mock.calls.find(
+        call => typeof call[0] === 'string' && call[0].includes('/dns_records')
+      );
+      expect(dnsCall).toBeDefined();
+      const dnsBody = JSON.parse(dnsCall![1]?.body as string);
+      // Should use 'test' as the account subdomain from 'claudeflare.test.workers.dev'
+      expect(dnsBody.content).toBe('claudeflare.test.workers.dev');
     });
 
     it('does not run custom domain step when customDomain is not provided', async () => {

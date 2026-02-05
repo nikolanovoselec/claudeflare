@@ -330,7 +330,7 @@ async function handleSetSecrets(
 }
 
 /**
- * Step 4: Configure custom domain with worker route
+ * Step 4: Configure custom domain with DNS CNAME record and worker route
  */
 async function handleConfigureCustomDomain(
   token: string,
@@ -383,7 +383,7 @@ async function handleConfigureCustomDomain(
 
     if (isAuthError) {
       const permError = 'API token lacks Zone permissions required for custom domain configuration. '
-        + 'Add "Zone > Zone > Read" and "Zone > Workers Routes > Edit" permissions to your token, '
+        + 'Add "Zone > Zone > Read", "Zone > DNS > Edit", and "Zone > Workers Routes > Edit" permissions to your token, '
         + 'or skip custom domain setup.';
       steps[stepIndex].status = 'error';
       steps[stepIndex].error = permError;
@@ -406,7 +406,104 @@ async function handleConfigureCustomDomain(
   // Resolve the actual worker script name (handles Deploy button renaming)
   const workerName = await resolveWorkerName(token, accountId, requestUrl);
 
-  // Add worker route for custom domain
+  // Get the account subdomain for workers.dev URL
+  // Format: {workerName}.{account-subdomain}.workers.dev
+  // We need to resolve account subdomain from the API
+  let accountSubdomain: string;
+  try {
+    const subdomainRes = await fetch(
+      `${CF_API_BASE}/accounts/${accountId}/workers/subdomain`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    const subdomainData = await subdomainRes.json() as {
+      success: boolean;
+      result?: { subdomain: string };
+      errors?: Array<{ code: number; message: string }>;
+    };
+
+    if (!subdomainData.success || !subdomainData.result?.subdomain) {
+      // Fallback: use the request URL if it's already on workers.dev
+      const hostname = new URL(requestUrl).hostname;
+      if (hostname.endsWith('.workers.dev')) {
+        // Extract account subdomain from hostname: {worker}.{account-subdomain}.workers.dev
+        const parts = hostname.split('.');
+        if (parts.length >= 3) {
+          accountSubdomain = parts[parts.length - 3];
+        } else {
+          throw new Error('Could not determine account subdomain');
+        }
+      } else {
+        throw new Error('Could not determine account subdomain');
+      }
+    } else {
+      accountSubdomain = subdomainData.result.subdomain;
+    }
+  } catch (error) {
+    logger.error('Failed to get account subdomain', error instanceof Error ? error : new Error(String(error)));
+    steps[stepIndex].status = 'error';
+    steps[stepIndex].error = 'Failed to determine workers.dev subdomain for DNS record';
+    throw new SetupError('configure_custom_domain', 'Failed to determine workers.dev subdomain for DNS record', steps);
+  }
+
+  const workersDevTarget = `${workerName}.${accountSubdomain}.workers.dev`;
+
+  // Step 4a: Create DNS CNAME record pointing to workers.dev
+  // Extract subdomain part (e.g., "claude" from "claude.example.com")
+  const subdomain = domainParts.length > 2 ? domainParts.slice(0, -2).join('.') : '@';
+
+  const dnsRecordRes = await fetch(
+    `${CF_API_BASE}/zones/${zoneId}/dns_records`,
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        type: 'CNAME',
+        name: subdomain,
+        content: workersDevTarget,
+        proxied: true
+      })
+    }
+  );
+
+  if (!dnsRecordRes.ok) {
+    const dnsError = await dnsRecordRes.json() as { errors?: Array<{ code: number; message: string }> };
+    // Record might already exist - that's OK (code 81057)
+    if (!dnsError.errors?.some(e => e.code === 81057)) {
+      const dnsErrMsg = dnsError.errors?.[0]?.message || 'Failed to create DNS record';
+      logger.error('DNS record creation failed', new Error(dnsErrMsg), {
+        domain: customDomain,
+        subdomain,
+        target: workersDevTarget,
+        zoneId,
+        status: dnsRecordRes.status,
+        errors: dnsError.errors,
+      });
+
+      // Detect auth errors on DNS creation
+      const isDnsAuthError = dnsRecordRes.status === 403
+        || dnsRecordRes.status === 401
+        || dnsError.errors?.some(e => e.message?.toLowerCase().includes('authentication') || e.message?.toLowerCase().includes('permission'));
+
+      if (isDnsAuthError) {
+        const permError = 'API token lacks DNS permissions required for custom domain configuration. '
+          + 'Add "Zone > DNS > Edit" permission to your token, or skip custom domain setup.';
+        steps[stepIndex].status = 'error';
+        steps[stepIndex].error = permError;
+        throw new SetupError('configure_custom_domain', permError, steps);
+      }
+
+      steps[stepIndex].status = 'error';
+      steps[stepIndex].error = dnsErrMsg;
+      throw new SetupError('configure_custom_domain', dnsErrMsg, steps);
+    }
+    // Record already exists - log and continue
+    logger.info('DNS record already exists', { domain: customDomain, subdomain, target: workersDevTarget });
+  }
+
+  // Step 4b: Add worker route for custom domain
   const routeRes = await fetch(
     `${CF_API_BASE}/zones/${zoneId}/workers/routes`,
     {
