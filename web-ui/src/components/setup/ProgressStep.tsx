@@ -26,7 +26,7 @@ const ProgressStep: Component = () => {
 
   const stepLabels: Record<string, string> = {
     get_account: 'Verifying account',
-    create_r2_token: 'Deriving R2 credentials',
+    derive_r2_credentials: 'Deriving R2 credentials',
     set_secrets: 'Setting worker secrets',
     configure_custom_domain: 'Configuring custom domain',
     create_access_app: 'Creating Access application',

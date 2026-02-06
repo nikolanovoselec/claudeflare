@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { Env, CredentialsStatus } from '../types';
 import { authMiddleware, AuthVariables } from '../middleware/auth';
 import { createLogger } from '../lib/logger';
-import { CredentialsError, AuthError } from '../lib/error-types';
+import { CredentialsError, AuthError, toError } from '../lib/error-types';
 
 const logger = createLogger('credentials');
 
@@ -65,7 +65,7 @@ app.get('/', async (c) => {
       updatedAt: null,
     });
   } catch (error) {
-    logger.error('Check error', error instanceof Error ? error : new Error(String(error)));
+    logger.error('Check error', toError(error));
     throw new CredentialsError('check');
   }
 });
@@ -89,7 +89,7 @@ app.delete('/', async (c) => {
       message: 'Credentials deleted',
     });
   } catch (error) {
-    logger.error('Delete error', error instanceof Error ? error : new Error(String(error)));
+    logger.error('Delete error', toError(error));
     throw new CredentialsError('delete');
   }
 });

@@ -34,24 +34,86 @@ function createMockKV() {
   };
 }
 
-// Mock fetch for Cloudflare API calls
-function createMockFetch() {
-  return vi.fn();
+// URL-based mock fetch factory — routes requests by URL pattern (and optionally method)
+// instead of fragile positional mockResolvedValueOnce chaining.
+//
+// Pattern matching rules:
+//   - Default: URL path (before '?') must END WITH the pattern. This prevents broad patterns
+//     like '/accounts' from matching sub-resource URLs like '/accounts/acc123/workers/...'.
+//   - Prefix '~': Uses includes() against the URL path — matches anywhere in the path.
+//     Use this for patterns that need to match both base paths and sub-resource paths
+//     (e.g., '~/dns_records' matches both '.../dns_records' and '.../dns_records/record-id').
+//   - Contains '?': Uses includes() against the full URL (including query string).
+//
+// Patterns are sorted by length descending so more specific patterns match first.
+function createUrlMockFetch(responses: Record<string, ((url: string, init?: RequestInit) => Response | Promise<Response>)>) {
+  const sortedEntries = Object.entries(responses).sort((a, b) => b[0].length - a[0].length);
+  return vi.fn((url: string | URL | Request, init?: RequestInit) => {
+    const urlString = typeof url === 'string' ? url : url instanceof URL ? url.toString() : url.url;
+    const urlPath = urlString.split('?')[0];
+    for (const [rawPattern, factory] of sortedEntries) {
+      if (rawPattern.includes('?')) {
+        // Query-string patterns: includes() against the full URL
+        if (urlString.includes(rawPattern)) return Promise.resolve(factory(urlString, init));
+      } else if (rawPattern.startsWith('~')) {
+        // Prefix '~': includes() against the URL path (for sub-resource matching)
+        const pattern = rawPattern.slice(1);
+        if (urlPath.includes(pattern)) return Promise.resolve(factory(urlString, init));
+      } else {
+        // Default: endsWith() against the URL path
+        if (urlPath.endsWith(rawPattern)) return Promise.resolve(factory(urlString, init));
+      }
+    }
+    return Promise.reject(new Error(`Unmocked: ${init?.method || 'GET'} ${urlString}`));
+  });
 }
+
+// Standard mock responses for common Cloudflare API endpoints
+const mockResponses = {
+  accounts: () => new Response(
+    JSON.stringify({ success: true, result: [{ id: 'acc123' }] }),
+    { status: 200 }
+  ),
+  tokenVerify: () => new Response(
+    JSON.stringify({ success: true, result: { id: 'r2-key-id', status: 'active' } }),
+    { status: 200 }
+  ),
+  secretPut: () => new Response('', { status: 200 }),
+  zoneLookup: () => new Response(
+    JSON.stringify({ success: true, result: [{ id: 'zone123' }] }),
+    { status: 200 }
+  ),
+  subdomainLookup: () => new Response(
+    JSON.stringify({ success: true, result: { subdomain: 'test-account' } }),
+    { status: 200 }
+  ),
+  dnsRecordLookupEmpty: () => new Response(
+    JSON.stringify({ success: true, result: [] }),
+    { status: 200 }
+  ),
+  dnsRecordCreate: () => new Response('', { status: 200 }),
+  workerRouteCreate: () => new Response('', { status: 200 }),
+  accessAppsLookupEmpty: () => new Response(
+    JSON.stringify({ success: true, result: [] }),
+    { status: 200 }
+  ),
+  accessAppCreate: () => new Response(
+    JSON.stringify({ success: true, result: { id: 'app123' } }),
+    { status: 200 }
+  ),
+  accessPolicyCreate: () => new Response('', { status: 200 }),
+};
 
 // Standard env token for configure tests
 const TEST_TOKEN = 'env-api-token';
 
 describe('Setup Routes', () => {
   let mockKV: ReturnType<typeof createMockKV>;
-  let mockFetch: ReturnType<typeof createMockFetch>;
   let originalFetch: typeof globalThis.fetch;
 
   beforeEach(() => {
     mockKV = createMockKV();
-    mockFetch = createMockFetch();
     originalFetch = globalThis.fetch;
-    globalThis.fetch = mockFetch;
   });
 
   afterEach(() => {
@@ -92,78 +154,53 @@ describe('Setup Routes', () => {
     return app;
   }
 
-  // Helper: mock a successful configure flow (accounts + R2 creds + 3 secrets)
-  function mockSuccessfulBaseFlow() {
-    // Mock accounts fetch success
-    mockFetch.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({ success: true, result: [{ id: 'acc123' }] }),
-        { status: 200 }
-      )
-    );
-    // Mock R2 credential derivation (token verify to get ID)
-    mockFetch.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({
-          success: true,
-          result: { id: 'r2-key-id', status: 'active' },
-        }),
-        { status: 200 }
-      )
-    );
-    // Mock secret setting (3 secrets: R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, ADMIN_SECRET)
-    for (let i = 0; i < 3; i++) {
-      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
-    }
+  // Helper: build URL-based mock fetch for the successful base flow (accounts + R2 creds + 3 secrets)
+  function baseFlowMocks(): Record<string, (url: string, init?: RequestInit) => Response> {
+    return {
+      '/accounts': mockResponses.accounts,
+      '/user/tokens/verify': mockResponses.tokenVerify,
+      '/secrets': mockResponses.secretPut,
+    };
   }
 
-  // Helper: mock custom domain flow (zone + subdomain + DNS lookup + DNS create + route)
-  function mockCustomDomainFlow() {
-    // Mock zone lookup
-    mockFetch.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({ success: true, result: [{ id: 'zone123' }] }),
-        { status: 200 }
-      )
-    );
-    // Mock subdomain lookup (for workers.dev target)
-    mockFetch.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({ success: true, result: { subdomain: 'test-account' } }),
-        { status: 200 }
-      )
-    );
-    // Mock DNS record lookup - no existing record
-    mockFetch.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({ success: true, result: [] }),
-        { status: 200 }
-      )
-    );
-    // Mock DNS record creation
-    mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
-    // Mock worker route creation
-    mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+  // Helper: build URL-based mocks for custom domain flow (zone + subdomain + DNS lookup + DNS create + route)
+  function customDomainFlowMocks(): Record<string, (url: string, init?: RequestInit) => Response> {
+    return {
+      '/zones?name=': mockResponses.zoneLookup,
+      '/workers/subdomain': mockResponses.subdomainLookup,
+      // '~' prefix: includes-match so both .../dns_records and .../dns_records/{id} are handled
+      '~/dns_records': (_url: string, init?: RequestInit) => {
+        // GET for lookup, POST/PUT for create/update
+        if (!init?.method || init.method === 'GET') {
+          return mockResponses.dnsRecordLookupEmpty();
+        }
+        return mockResponses.dnsRecordCreate();
+      },
+      '/workers/routes': mockResponses.workerRouteCreate,
+    };
   }
 
-  // Helper: mock access app creation flow
-  function mockAccessAppFlow() {
-    // Mock Access app lookup - no existing app
-    mockFetch.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({ success: true, result: [] }),
-        { status: 200 }
-      )
-    );
-    // Mock access app creation
-    mockFetch.mockResolvedValueOnce(
-      new Response(
-        JSON.stringify({ success: true, result: { id: 'app123' } }),
-        { status: 200 }
-      )
-    );
-    // Mock access policy creation
-    mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+  // Helper: build URL-based mocks for access app creation flow
+  function accessAppFlowMocks(): Record<string, (url: string, init?: RequestInit) => Response> {
+    return {
+      // '~' prefix: includes-match so both .../access/apps and .../access/apps/{id} are handled
+      '~/access/apps': (_url: string, init?: RequestInit) => {
+        if (!init?.method || init.method === 'GET') {
+          return mockResponses.accessAppsLookupEmpty();
+        }
+        return mockResponses.accessAppCreate();
+      },
+      '~/policies': mockResponses.accessPolicyCreate,
+    };
+  }
+
+  // Helper: install URL-based mock fetch for a complete successful configure flow
+  function mockFullSuccessFlow() {
+    globalThis.fetch = createUrlMockFetch({
+      ...baseFlowMocks(),
+      ...customDomainFlowMocks(),
+      ...accessAppFlowMocks(),
+    });
   }
 
   // Standard body for configure requests
@@ -262,10 +299,7 @@ describe('Setup Routes', () => {
 
     it('reads token from env, not from request body', async () => {
       const app = createTestApp({ CLOUDFLARE_API_TOKEN: 'my-env-token' });
-
-      mockSuccessfulBaseFlow();
-      mockCustomDomainFlow();
-      mockAccessAppFlow();
+      mockFullSuccessFlow();
 
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -276,6 +310,7 @@ describe('Setup Routes', () => {
       expect(res.status).toBe(200);
 
       // Verify CF API was called with the env token, not a body token
+      const mockFetch = globalThis.fetch as ReturnType<typeof createUrlMockFetch>;
       expect(mockFetch).toHaveBeenCalledWith(
         'https://api.cloudflare.com/client/v4/accounts',
         expect.objectContaining({
@@ -287,13 +322,12 @@ describe('Setup Routes', () => {
     it('returns error when get_account step fails', async () => {
       const app = createTestApp();
 
-      // Mock accounts fetch failure
-      mockFetch.mockResolvedValueOnce(
-        new Response(
+      globalThis.fetch = createUrlMockFetch({
+        '/accounts': () => new Response(
           JSON.stringify({ success: false, result: [] }),
           { status: 200 }
-        )
-      );
+        ),
+      });
 
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -311,10 +345,7 @@ describe('Setup Routes', () => {
 
     it('progresses through steps correctly on success', async () => {
       const app = createTestApp();
-
-      mockSuccessfulBaseFlow();
-      mockCustomDomainFlow();
-      mockAccessAppFlow();
+      mockFullSuccessFlow();
 
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -333,7 +364,7 @@ describe('Setup Routes', () => {
         expect.objectContaining({ step: 'get_account', status: 'success' })
       );
       expect(body.steps).toContainEqual(
-        expect.objectContaining({ step: 'create_r2_token', status: 'success' })
+        expect.objectContaining({ step: 'derive_r2_credentials', status: 'success' })
       );
       expect(body.steps).toContainEqual(
         expect.objectContaining({ step: 'set_secrets', status: 'success' })
@@ -346,10 +377,7 @@ describe('Setup Routes', () => {
 
     it('sets only 3 secrets (not CLOUDFLARE_API_TOKEN)', async () => {
       const app = createTestApp();
-
-      mockSuccessfulBaseFlow();
-      mockCustomDomainFlow();
-      mockAccessAppFlow();
+      mockFullSuccessFlow();
 
       await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -358,6 +386,7 @@ describe('Setup Routes', () => {
       });
 
       // Find all secret-setting calls (PUT to /secrets)
+      const mockFetch = globalThis.fetch as ReturnType<typeof createUrlMockFetch>;
       const secretCalls = mockFetch.mock.calls.filter(
         call => typeof call[0] === 'string' &&
           call[0].includes('/secrets') &&
@@ -378,10 +407,7 @@ describe('Setup Routes', () => {
 
     it('stores users in KV as user:{email} entries', async () => {
       const app = createTestApp();
-
-      mockSuccessfulBaseFlow();
-      mockCustomDomainFlow();
-      mockAccessAppFlow();
+      mockFullSuccessFlow();
 
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -407,10 +433,7 @@ describe('Setup Routes', () => {
 
     it('stores setup completion in KV', async () => {
       const app = createTestApp();
-
-      mockSuccessfulBaseFlow();
-      mockCustomDomainFlow();
-      mockAccessAppFlow();
+      mockFullSuccessFlow();
 
       await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -425,10 +448,7 @@ describe('Setup Routes', () => {
 
     it('handles custom domain configuration with DNS and route', async () => {
       const app = createTestApp();
-
-      mockSuccessfulBaseFlow();
-      mockCustomDomainFlow();
-      mockAccessAppFlow();
+      mockFullSuccessFlow();
 
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -455,6 +475,7 @@ describe('Setup Routes', () => {
       );
 
       // Verify DNS record creation was called with correct parameters
+      const mockFetch = globalThis.fetch as ReturnType<typeof createUrlMockFetch>;
       const dnsCall = mockFetch.mock.calls.find(
         call => typeof call[0] === 'string' &&
           call[0].includes('/dns_records') &&
@@ -470,10 +491,7 @@ describe('Setup Routes', () => {
 
     it('uses email includes from allowedUsers for access policy', async () => {
       const app = createTestApp();
-
-      mockSuccessfulBaseFlow();
-      mockCustomDomainFlow();
-      mockAccessAppFlow();
+      mockFullSuccessFlow();
 
       await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -485,6 +503,7 @@ describe('Setup Routes', () => {
       });
 
       // Find the access policy creation call
+      const mockFetch = globalThis.fetch as ReturnType<typeof createUrlMockFetch>;
       const policyCall = mockFetch.mock.calls.find(
         call => typeof call[0] === 'string' &&
           call[0].includes('/policies') &&
@@ -501,18 +520,17 @@ describe('Setup Routes', () => {
     it('returns permission error when zones API returns 403 for custom domain', async () => {
       const app = createTestApp();
 
-      mockSuccessfulBaseFlow();
-      // Mock zone lookup - 403 auth error (token lacks Zone permissions)
-      mockFetch.mockResolvedValueOnce(
-        new Response(
+      globalThis.fetch = createUrlMockFetch({
+        ...baseFlowMocks(),
+        '/zones?name=': () => new Response(
           JSON.stringify({
             success: false,
             errors: [{ code: 10000, message: 'Authentication error' }],
             result: [],
           }),
           { status: 403 }
-        )
-      );
+        ),
+      });
 
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -540,18 +558,17 @@ describe('Setup Routes', () => {
     it('returns permission error when zones API returns authentication error message', async () => {
       const app = createTestApp();
 
-      mockSuccessfulBaseFlow();
-      // Mock zone lookup - success: false with authentication error in message
-      mockFetch.mockResolvedValueOnce(
-        new Response(
+      globalThis.fetch = createUrlMockFetch({
+        ...baseFlowMocks(),
+        '/zones?name=': () => new Response(
           JSON.stringify({
             success: false,
             errors: [{ code: 9103, message: 'Unknown X-Auth-Key or X-Auth-Email' }],
             result: null,
           }),
           { status: 400 }
-        )
-      );
+        ),
+      });
 
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -572,40 +589,24 @@ describe('Setup Routes', () => {
     it('returns permission error when worker route creation returns auth error', async () => {
       const app = createTestApp();
 
-      mockSuccessfulBaseFlow();
-      // Mock zone lookup - success
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: [{ id: 'zone123' }] }),
-          { status: 200 }
-        )
-      );
-      // Mock subdomain lookup
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: { subdomain: 'test-account' } }),
-          { status: 200 }
-        )
-      );
-      // Mock DNS record lookup - no existing record
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: [] }),
-          { status: 200 }
-        )
-      );
-      // Mock DNS record creation - success
-      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
-      // Mock worker route creation - 403 auth error
-      mockFetch.mockResolvedValueOnce(
-        new Response(
+      globalThis.fetch = createUrlMockFetch({
+        ...baseFlowMocks(),
+        '/zones?name=': mockResponses.zoneLookup,
+        '/workers/subdomain': mockResponses.subdomainLookup,
+        '~/dns_records': (_url: string, init?: RequestInit) => {
+          if (!init?.method || init.method === 'GET') {
+            return mockResponses.dnsRecordLookupEmpty();
+          }
+          return mockResponses.dnsRecordCreate();
+        },
+        '/workers/routes': () => new Response(
           JSON.stringify({
             success: false,
             errors: [{ code: 10000, message: 'Authentication error' }],
           }),
           { status: 403 }
-        )
-      );
+        ),
+      });
 
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -627,38 +628,24 @@ describe('Setup Routes', () => {
     it('returns permission error when DNS record creation returns auth error', async () => {
       const app = createTestApp();
 
-      mockSuccessfulBaseFlow();
-      // Mock zone lookup - success
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: [{ id: 'zone123' }] }),
-          { status: 200 }
-        )
-      );
-      // Mock subdomain lookup
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: { subdomain: 'test-account' } }),
-          { status: 200 }
-        )
-      );
-      // Mock DNS record lookup - no existing record
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: [] }),
-          { status: 200 }
-        )
-      );
-      // Mock DNS record creation - 403 auth error
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            success: false,
-            errors: [{ code: 10000, message: 'Authentication error' }],
-          }),
-          { status: 403 }
-        )
-      );
+      globalThis.fetch = createUrlMockFetch({
+        ...baseFlowMocks(),
+        '/zones?name=': mockResponses.zoneLookup,
+        '/workers/subdomain': mockResponses.subdomainLookup,
+        '~/dns_records': (_url: string, init?: RequestInit) => {
+          if (!init?.method || init.method === 'GET') {
+            return mockResponses.dnsRecordLookupEmpty();
+          }
+          // POST/PUT for create/update — return auth error
+          return new Response(
+            JSON.stringify({
+              success: false,
+              errors: [{ code: 10000, message: 'Authentication error' }],
+            }),
+            { status: 403 }
+          );
+        },
+      });
 
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -679,41 +666,26 @@ describe('Setup Routes', () => {
     it('continues when DNS record already exists (code 81057)', async () => {
       const app = createTestApp();
 
-      mockSuccessfulBaseFlow();
-      // Mock zone lookup
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: [{ id: 'zone123' }] }),
-          { status: 200 }
-        )
-      );
-      // Mock subdomain lookup
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: { subdomain: 'test-account' } }),
-          { status: 200 }
-        )
-      );
-      // Mock DNS record lookup - no existing record
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: [] }),
-          { status: 200 }
-        )
-      );
-      // Mock DNS record creation - already exists (code 81057)
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            success: false,
-            errors: [{ code: 81057, message: 'The record already exists.' }],
-          }),
-          { status: 400 }
-        )
-      );
-      // Mock worker route creation - success
-      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
-      mockAccessAppFlow();
+      globalThis.fetch = createUrlMockFetch({
+        ...baseFlowMocks(),
+        '/zones?name=': mockResponses.zoneLookup,
+        '/workers/subdomain': mockResponses.subdomainLookup,
+        '~/dns_records': (_url: string, init?: RequestInit) => {
+          if (!init?.method || init.method === 'GET') {
+            return mockResponses.dnsRecordLookupEmpty();
+          }
+          // POST create — "already exists" error
+          return new Response(
+            JSON.stringify({
+              success: false,
+              errors: [{ code: 81057, message: 'The record already exists.' }],
+            }),
+            { status: 400 }
+          );
+        },
+        '/workers/routes': mockResponses.workerRouteCreate,
+        ...accessAppFlowMocks(),
+      });
 
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -735,33 +707,22 @@ describe('Setup Routes', () => {
     it('uses hostname from workers.dev URL when subdomain API fails', async () => {
       const app = createTestApp();
 
-      mockSuccessfulBaseFlow();
-      // Mock zone lookup
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: [{ id: 'zone123' }] }),
-          { status: 200 }
-        )
-      );
-      // Mock subdomain lookup - fails (API error)
-      mockFetch.mockResolvedValueOnce(
-        new Response(
+      globalThis.fetch = createUrlMockFetch({
+        ...baseFlowMocks(),
+        '/zones?name=': mockResponses.zoneLookup,
+        '/workers/subdomain': () => new Response(
           JSON.stringify({ success: false, result: null }),
           { status: 200 }
-        )
-      );
-      // Mock DNS record lookup - no existing record
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: [] }),
-          { status: 200 }
-        )
-      );
-      // Mock DNS record creation
-      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
-      // Mock worker route creation
-      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
-      mockAccessAppFlow();
+        ),
+        '~/dns_records': (_url: string, init?: RequestInit) => {
+          if (!init?.method || init.method === 'GET') {
+            return mockResponses.dnsRecordLookupEmpty();
+          }
+          return mockResponses.dnsRecordCreate();
+        },
+        '/workers/routes': mockResponses.workerRouteCreate,
+        ...accessAppFlowMocks(),
+      });
 
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -774,6 +735,7 @@ describe('Setup Routes', () => {
       expect(body.success).toBe(true);
 
       // Verify DNS record was created with fallback subdomain from hostname
+      const mockFetch = globalThis.fetch as ReturnType<typeof createUrlMockFetch>;
       const dnsCall = mockFetch.mock.calls.find(
         call => typeof call[0] === 'string' &&
           call[0].includes('/dns_records') &&
@@ -787,10 +749,7 @@ describe('Setup Routes', () => {
 
     it('stores R2 endpoint in KV during configure', async () => {
       const app = createTestApp();
-
-      mockSuccessfulBaseFlow();
-      mockCustomDomainFlow();
-      mockAccessAppFlow();
+      mockFullSuccessFlow();
 
       await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -807,63 +766,60 @@ describe('Setup Routes', () => {
     it('falls back to deploying latest version when secrets API returns error 10215', async () => {
       const app = createTestApp();
 
-      // Mock accounts fetch success
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: [{ id: 'acc123' }] }),
-          { status: 200 }
-        )
-      );
+      // Track whether the deployment fallback has been triggered
+      let secretAttempts = 0;
+      let deployedVersion = false;
 
-      // Mock R2 credential derivation (token verify to get ID)
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            success: true,
-            result: { id: 'r2-key-id', status: 'active' },
-          }),
-          { status: 200 }
-        )
-      );
-
-      // First secret attempt: fails with error 10215 (version not deployed)
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            success: false,
-            errors: [{ code: 10215, message: 'Secret edit failed. Latest version not deployed.' }]
-          }),
-          { status: 400 }
-        )
-      );
-
-      // Fallback: list versions
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            success: true,
-            result: { items: [{ id: 'version-abc-123' }] }
-          }),
-          { status: 200 }
-        )
-      );
-
-      // Fallback: deploy latest version
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: { id: 'deploy-123' } }),
-          { status: 200 }
-        )
-      );
-
-      // Retry first secret + remaining 2 secrets (all succeed) = 3 total
-      for (let i = 0; i < 3; i++) {
-        mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
-      }
-
-      // Custom domain + access app flows
-      mockCustomDomainFlow();
-      mockAccessAppFlow();
+      globalThis.fetch = createUrlMockFetch({
+        '/accounts': mockResponses.accounts,
+        '/user/tokens/verify': mockResponses.tokenVerify,
+        '/secrets': () => {
+          secretAttempts++;
+          // First secret attempt fails with 10215; after deploy, all succeed
+          if (secretAttempts === 1 && !deployedVersion) {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                errors: [{ code: 10215, message: 'Secret edit failed. Latest version not deployed.' }]
+              }),
+              { status: 400 }
+            );
+          }
+          return new Response('', { status: 200 });
+        },
+        '/versions': () => {
+          return new Response(
+            JSON.stringify({
+              success: true,
+              result: { items: [{ id: 'version-abc-123' }] }
+            }),
+            { status: 200 }
+          );
+        },
+        '/deployments': () => {
+          deployedVersion = true;
+          return new Response(
+            JSON.stringify({ success: true, result: { id: 'deploy-123' } }),
+            { status: 200 }
+          );
+        },
+        '/zones?name=': mockResponses.zoneLookup,
+        '/workers/subdomain': mockResponses.subdomainLookup,
+        '~/dns_records': (_url: string, init?: RequestInit) => {
+          if (!init?.method || init.method === 'GET') {
+            return mockResponses.dnsRecordLookupEmpty();
+          }
+          return mockResponses.dnsRecordCreate();
+        },
+        '/workers/routes': mockResponses.workerRouteCreate,
+        '~/access/apps': (_url: string, init?: RequestInit) => {
+          if (!init?.method || init.method === 'GET') {
+            return mockResponses.accessAppsLookupEmpty();
+          }
+          return mockResponses.accessAppCreate();
+        },
+        '~/policies': mockResponses.accessPolicyCreate,
+      });
 
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -884,6 +840,7 @@ describe('Setup Routes', () => {
       expect(body.adminSecret).toBeDefined();
 
       // Verify the versions list and deployment calls were made
+      const mockFetch = globalThis.fetch as ReturnType<typeof createUrlMockFetch>;
       const fetchCalls = mockFetch.mock.calls.map(call => call[0]);
       expect(fetchCalls).toContainEqual(
         expect.stringContaining('/workers/scripts/claudeflare/versions')
@@ -896,61 +853,57 @@ describe('Setup Routes', () => {
     it('only deploys latest version once even if multiple secrets fail with 10215', async () => {
       const app = createTestApp();
 
-      // Mock accounts fetch success
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: [{ id: 'acc123' }] }),
-          { status: 200 }
-        )
-      );
+      let secretAttempts = 0;
+      let deployedVersion = false;
 
-      // Mock R2 credential derivation
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            success: true,
-            result: { id: 'r2-key-id', status: 'active' },
-          }),
-          { status: 200 }
-        )
-      );
-
-      // First secret: fails with 10215
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            success: false,
-            errors: [{ code: 10215, message: 'Latest version not deployed.' }]
-          }),
-          { status: 400 }
-        )
-      );
-
-      // Fallback: list versions + deploy
-      mockFetch.mockResolvedValueOnce(
-        new Response(
+      globalThis.fetch = createUrlMockFetch({
+        '/accounts': mockResponses.accounts,
+        '/user/tokens/verify': mockResponses.tokenVerify,
+        '/secrets': () => {
+          secretAttempts++;
+          // First secret attempt fails with 10215; after deploy, all succeed
+          if (secretAttempts === 1 && !deployedVersion) {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                errors: [{ code: 10215, message: 'Latest version not deployed.' }]
+              }),
+              { status: 400 }
+            );
+          }
+          return new Response('', { status: 200 });
+        },
+        '/versions': () => new Response(
           JSON.stringify({
             success: true,
             result: { items: [{ id: 'version-abc' }] }
           }),
           { status: 200 }
-        )
-      );
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: { id: 'deploy-1' } }),
-          { status: 200 }
-        )
-      );
-
-      // Retry first secret (succeeds) + remaining 2 secrets = 3 total
-      for (let i = 0; i < 3; i++) {
-        mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
-      }
-
-      // Custom domain + access app flows
-      mockCustomDomainFlow();
-      mockAccessAppFlow();
+        ),
+        '/deployments': () => {
+          deployedVersion = true;
+          return new Response(
+            JSON.stringify({ success: true, result: { id: 'deploy-1' } }),
+            { status: 200 }
+          );
+        },
+        '/zones?name=': mockResponses.zoneLookup,
+        '/workers/subdomain': mockResponses.subdomainLookup,
+        '~/dns_records': (_url: string, init?: RequestInit) => {
+          if (!init?.method || init.method === 'GET') {
+            return mockResponses.dnsRecordLookupEmpty();
+          }
+          return mockResponses.dnsRecordCreate();
+        },
+        '/workers/routes': mockResponses.workerRouteCreate,
+        '~/access/apps': (_url: string, init?: RequestInit) => {
+          if (!init?.method || init.method === 'GET') {
+            return mockResponses.accessAppsLookupEmpty();
+          }
+          return mockResponses.accessAppCreate();
+        },
+        '~/policies': mockResponses.accessPolicyCreate,
+      });
 
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -961,6 +914,7 @@ describe('Setup Routes', () => {
       expect(res.status).toBe(200);
 
       // Count deployment calls - should be exactly 1
+      const mockFetch = globalThis.fetch as ReturnType<typeof createUrlMockFetch>;
       const deploymentCalls = mockFetch.mock.calls.filter(
         call => typeof call[0] === 'string' && call[0].includes('/deployments')
       );
@@ -969,10 +923,7 @@ describe('Setup Routes', () => {
 
     it('returns accountId in configure response', async () => {
       const app = createTestApp();
-
-      mockSuccessfulBaseFlow();
-      mockCustomDomainFlow();
-      mockAccessAppFlow();
+      mockFullSuccessFlow();
 
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -988,36 +939,27 @@ describe('Setup Routes', () => {
     it('updates existing DNS record instead of failing when record exists', async () => {
       const app = createTestApp();
 
-      mockSuccessfulBaseFlow();
-      // Mock zone lookup
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: [{ id: 'zone123' }] }),
-          { status: 200 }
-        )
-      );
-      // Mock subdomain lookup
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: { subdomain: 'test-account' } }),
-          { status: 200 }
-        )
-      );
-      // Mock DNS record lookup - returns existing CNAME record
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            success: true,
-            result: [{ id: 'dns-record-123', type: 'CNAME' }],
-          }),
-          { status: 200 }
-        )
-      );
-      // Mock DNS record UPDATE (PUT) - success
-      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
-      // Mock worker route creation
-      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
-      mockAccessAppFlow();
+      globalThis.fetch = createUrlMockFetch({
+        ...baseFlowMocks(),
+        '/zones?name=': mockResponses.zoneLookup,
+        '/workers/subdomain': mockResponses.subdomainLookup,
+        '~/dns_records': (url: string, init?: RequestInit) => {
+          if (!init?.method || init.method === 'GET') {
+            // DNS record lookup — returns existing CNAME record
+            return new Response(
+              JSON.stringify({
+                success: true,
+                result: [{ id: 'dns-record-123', type: 'CNAME' }],
+              }),
+              { status: 200 }
+            );
+          }
+          // PUT update — success
+          return new Response('', { status: 200 });
+        },
+        '/workers/routes': mockResponses.workerRouteCreate,
+        ...accessAppFlowMocks(),
+      });
 
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -1036,6 +978,7 @@ describe('Setup Routes', () => {
       );
 
       // Verify DNS record was updated with PUT, not created with POST
+      const mockFetch = globalThis.fetch as ReturnType<typeof createUrlMockFetch>;
       const dnsUpdateCall = mockFetch.mock.calls.find(
         call => typeof call[0] === 'string' &&
           call[0].includes('/dns_records/dns-record-123') &&
@@ -1047,37 +990,45 @@ describe('Setup Routes', () => {
     it('updates existing Access app instead of failing when app exists', async () => {
       const app = createTestApp();
 
-      mockSuccessfulBaseFlow();
-      mockCustomDomainFlow();
-      // Mock Access app lookup - returns existing app for this domain
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            success: true,
-            result: [{ id: 'existing-app-456', domain: 'claude.example.com', name: 'Claudeflare' }],
-          }),
-          { status: 200 }
-        )
-      );
-      // Mock Access app UPDATE (PUT) - success
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: { id: 'existing-app-456' } }),
-          { status: 200 }
-        )
-      );
-      // Mock Access policy lookup - returns existing policy
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            success: true,
-            result: [{ id: 'policy-789', name: 'Allow users' }],
-          }),
-          { status: 200 }
-        )
-      );
-      // Mock Access policy UPDATE (PUT) - success
-      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      globalThis.fetch = createUrlMockFetch({
+        ...baseFlowMocks(),
+        ...customDomainFlowMocks(),
+        // Access app flow: existing app found, update instead of create
+        // Use more specific patterns to differentiate policy URLs from app URLs
+        '~/access/apps': (url: string, init?: RequestInit) => {
+          // Policy-related URLs contain /policies
+          if (url.includes('/policies')) {
+            if (!init?.method || init.method === 'GET') {
+              // Policy lookup — returns existing policy
+              return new Response(
+                JSON.stringify({
+                  success: true,
+                  result: [{ id: 'policy-789', name: 'Allow users' }],
+                }),
+                { status: 200 }
+              );
+            }
+            // PUT update policy — success
+            return new Response('', { status: 200 });
+          }
+          // App-level URLs
+          if (!init?.method || init.method === 'GET') {
+            // Access app lookup — returns existing app for this domain
+            return new Response(
+              JSON.stringify({
+                success: true,
+                result: [{ id: 'existing-app-456', domain: 'claude.example.com', name: 'Claudeflare' }],
+              }),
+              { status: 200 }
+            );
+          }
+          // PUT update Access app — success
+          return new Response(
+            JSON.stringify({ success: true, result: { id: 'existing-app-456' } }),
+            { status: 200 }
+          );
+        },
+      });
 
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -1099,6 +1050,7 @@ describe('Setup Routes', () => {
       );
 
       // Verify Access app was updated with PUT, not created with POST
+      const mockFetch = globalThis.fetch as ReturnType<typeof createUrlMockFetch>;
       const accessAppUpdateCall = mockFetch.mock.calls.find(
         call => typeof call[0] === 'string' &&
           call[0].includes('/access/apps/existing-app-456') &&
@@ -1118,28 +1070,24 @@ describe('Setup Routes', () => {
     it('falls back to create when DNS record lookup fails', async () => {
       const app = createTestApp();
 
-      mockSuccessfulBaseFlow();
-      // Mock zone lookup
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: [{ id: 'zone123' }] }),
-          { status: 200 }
-        )
-      );
-      // Mock subdomain lookup
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: { subdomain: 'test-account' } }),
-          { status: 200 }
-        )
-      );
-      // Mock DNS record lookup - fails with network error
-      mockFetch.mockRejectedValueOnce(new Error('Network error'));
-      // Mock DNS record creation (POST) - success
-      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
-      // Mock worker route creation
-      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
-      mockAccessAppFlow();
+      let dnsLookupCalled = false;
+
+      globalThis.fetch = createUrlMockFetch({
+        ...baseFlowMocks(),
+        '/zones?name=': mockResponses.zoneLookup,
+        '/workers/subdomain': mockResponses.subdomainLookup,
+        '~/dns_records': (_url: string, init?: RequestInit) => {
+          if (!init?.method || init.method === 'GET') {
+            dnsLookupCalled = true;
+            // Simulate network error for lookup
+            throw new Error('Network error');
+          }
+          // POST create — success
+          return new Response('', { status: 200 });
+        },
+        '/workers/routes': mockResponses.workerRouteCreate,
+        ...accessAppFlowMocks(),
+      });
 
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -1155,6 +1103,7 @@ describe('Setup Routes', () => {
       expect(body.success).toBe(true);
 
       // Verify DNS record was created with POST (fallback behavior)
+      const mockFetch = globalThis.fetch as ReturnType<typeof createUrlMockFetch>;
       const dnsCreateCall = mockFetch.mock.calls.find(
         call => typeof call[0] === 'string' &&
           call[0].endsWith('/dns_records') &&
@@ -1166,19 +1115,25 @@ describe('Setup Routes', () => {
     it('falls back to create when Access app lookup fails', async () => {
       const app = createTestApp();
 
-      mockSuccessfulBaseFlow();
-      mockCustomDomainFlow();
-      // Mock Access app lookup - fails with network error
-      mockFetch.mockRejectedValueOnce(new Error('Network error'));
-      // Mock access app creation (POST) - success
-      mockFetch.mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({ success: true, result: { id: 'app123' } }),
-          { status: 200 }
-        )
-      );
-      // Mock access policy creation
-      mockFetch.mockResolvedValueOnce(new Response('', { status: 200 }));
+      let accessLookupCalled = false;
+
+      globalThis.fetch = createUrlMockFetch({
+        ...baseFlowMocks(),
+        ...customDomainFlowMocks(),
+        '~/access/apps': (_url: string, init?: RequestInit) => {
+          if (!init?.method || init.method === 'GET') {
+            accessLookupCalled = true;
+            // Simulate network error for lookup
+            throw new Error('Network error');
+          }
+          // POST create — success
+          return new Response(
+            JSON.stringify({ success: true, result: { id: 'app123' } }),
+            { status: 200 }
+          );
+        },
+        '~/policies': mockResponses.accessPolicyCreate,
+      });
 
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -1194,6 +1149,7 @@ describe('Setup Routes', () => {
       expect(body.success).toBe(true);
 
       // Verify Access app was created with POST (fallback behavior)
+      const mockFetch = globalThis.fetch as ReturnType<typeof createUrlMockFetch>;
       const accessCreateCall = mockFetch.mock.calls.find(
         call => typeof call[0] === 'string' &&
           call[0].endsWith('/access/apps') &&
@@ -1204,10 +1160,7 @@ describe('Setup Routes', () => {
 
     it('stores combined allowedOrigins in KV including custom domain and .workers.dev', async () => {
       const app = createTestApp();
-
-      mockSuccessfulBaseFlow();
-      mockCustomDomainFlow();
-      mockAccessAppFlow();
+      mockFullSuccessFlow();
 
       await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -1233,10 +1186,7 @@ describe('Setup Routes', () => {
 
     it('stores allowedOrigins with custom domain and .workers.dev even when no user origins provided', async () => {
       const app = createTestApp();
-
-      mockSuccessfulBaseFlow();
-      mockCustomDomainFlow();
-      mockAccessAppFlow();
+      mockFullSuccessFlow();
 
       await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
@@ -1258,10 +1208,7 @@ describe('Setup Routes', () => {
 
     it('stores custom domain in KV', async () => {
       const app = createTestApp();
-
-      mockSuccessfulBaseFlow();
-      mockCustomDomainFlow();
-      mockAccessAppFlow();
+      mockFullSuccessFlow();
 
       await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',

@@ -1,4 +1,10 @@
 /**
+ * @dormant Reserved for future credential encryption feature.
+ * Currently only used in tests. The ENCRYPTION_KEY env var is
+ * defined in types.ts but not wired into production routes.
+ */
+
+/**
  * AES-GCM encryption utilities for credentials at rest
  *
  * Uses the Web Crypto API (available in Cloudflare Workers) to provide

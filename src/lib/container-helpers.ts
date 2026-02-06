@@ -4,6 +4,7 @@ import type { DurableObjectStub } from '@cloudflare/workers-types';
 import { getContainer } from '@cloudflare/containers';
 import { SESSION_ID_PATTERN, MAX_HEALTH_CHECK_ATTEMPTS, HEALTH_CHECK_INTERVAL_MS } from './constants';
 import { containerHealthCB } from './circuit-breakers';
+import { toErrorMessage } from './error-types';
 
 // Type for context variables set by container middleware
 type ContainerVariables = {
@@ -37,6 +38,7 @@ export function getContainerContext<V extends ContainerVariables>(
 // Health Check Utilities
 // ============================================================================
 
+/** @internal Test utility — not used in production */
 export interface HealthCheckOptions {
   maxAttempts?: number;
   delayMs?: number;
@@ -51,6 +53,8 @@ export interface HealthData {
 }
 
 /**
+ * @internal Test utility — not used in production
+ *
  * Wait for a container to become healthy by polling the health endpoint.
  * Returns ok:true with health data on success, ok:false on failure after all attempts.
  */
@@ -87,6 +91,8 @@ export async function waitForContainerHealth(
 // ============================================================================
 
 /**
+ * @internal Test utility — not used in production
+ *
  * Verify that a container is configured with the expected bucket name.
  * Throws an error if the bucket names don't match.
  */
@@ -140,7 +146,7 @@ export async function checkContainerHealth(
   } catch (error) {
     return {
       healthy: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: toErrorMessage(error)
     };
   }
 }

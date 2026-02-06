@@ -1,3 +1,5 @@
+import { toError } from './error-types';
+
 /**
  * Configuration options for exponential backoff
  */
@@ -98,7 +100,7 @@ export async function withBackoff<T>(
     try {
       return await fn();
     } catch (error) {
-      lastError = error instanceof Error ? error : new Error(String(error));
+      lastError = toError(error);
 
       if (attempt === options.maxAttempts) {
         throw new MaxRetriesExceededError(attempt, lastError);

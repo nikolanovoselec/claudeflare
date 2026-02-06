@@ -181,6 +181,9 @@ export function resetSetupCache() {
 // ============================================================================
 // Global Error Handler
 // ============================================================================
+// Convention: Routes should throw AppError subclasses for error handling.
+// Exception: Routes with domain-specific error response shapes (e.g., startup-status)
+// may catch and return directly when the shape differs from AppError.toJSON().
 app.onError((err, c) => {
   const requestId = c.get('requestId') || 'unknown';
 

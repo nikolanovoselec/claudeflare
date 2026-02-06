@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
 import { createLogger } from '../lib/logger';
-import { ValidationError, AuthError, SetupError } from '../lib/error-types';
+import { ValidationError, AuthError, SetupError, toError, toErrorMessage } from '../lib/error-types';
 import { resetCorsOriginsCache } from '../lib/cors-cache';
 import { createRateLimiter } from '../middleware/rate-limit';
 // R2 permission IDs no longer needed — we derive S3 credentials from the user's token
@@ -61,7 +61,7 @@ async function handleGetAccount(
     if (error instanceof SetupError) {
       throw error;
     }
-    logger.error('Failed to get account', error instanceof Error ? error : new Error(String(error)));
+    logger.error('Failed to get account', toError(error));
     steps[stepIndex].status = 'error';
     steps[stepIndex].error = 'Failed to connect to Cloudflare API';
     throw new SetupError('get_account', 'Failed to connect to Cloudflare API', steps);
@@ -81,7 +81,7 @@ async function handleDeriveR2Credentials(
   token: string,
   steps: SetupStep[]
 ): Promise<{ accessKeyId: string; secretAccessKey: string }> {
-  steps.push({ step: 'create_r2_token', status: 'pending' });
+  steps.push({ step: 'derive_r2_credentials', status: 'pending' });
   const stepIndex = steps.length - 1;
 
   try {
@@ -99,7 +99,7 @@ async function handleDeriveR2Credentials(
       const errorMsg = verifyData.errors?.map(e => e.message).join(', ') || 'Token verification failed';
       steps[stepIndex].status = 'error';
       steps[stepIndex].error = `Failed to derive R2 credentials: ${errorMsg}`;
-      throw new SetupError('create_r2_token', `Failed to derive R2 credentials: ${errorMsg}`, steps);
+      throw new SetupError('derive_r2_credentials', `Failed to derive R2 credentials: ${errorMsg}`, steps);
     }
 
     const tokenId = verifyData.result.id;
@@ -120,10 +120,10 @@ async function handleDeriveR2Credentials(
     if (error instanceof SetupError) {
       throw error;
     }
-    logger.error('Failed to derive R2 credentials', error instanceof Error ? error : new Error(String(error)));
+    logger.error('Failed to derive R2 credentials', toError(error));
     steps[stepIndex].status = 'error';
     steps[stepIndex].error = 'Failed to derive R2 credentials';
-    throw new SetupError('create_r2_token', 'Failed to derive R2 credentials', steps);
+    throw new SetupError('derive_r2_credentials', 'Failed to derive R2 credentials', steps);
   }
 }
 
@@ -195,7 +195,7 @@ async function deployLatestVersion(
 
     return true;
   } catch (error) {
-    logger.error('Error deploying latest version', error instanceof Error ? error : new Error(String(error)));
+    logger.error('Error deploying latest version', toError(error));
     return false;
   }
 }
@@ -308,7 +308,7 @@ async function handleSetSecrets(
     if (error instanceof SetupError) {
       throw error;
     }
-    logger.error('Failed to set secrets', error instanceof Error ? error : new Error(String(error)));
+    logger.error('Failed to set secrets', toError(error));
     steps[stepIndex].status = 'error';
     steps[stepIndex].error = 'Failed to configure worker secrets';
     throw new SetupError('set_secrets', 'Failed to configure worker secrets', steps);
@@ -316,20 +316,40 @@ async function handleSetSecrets(
 }
 
 /**
- * Step 4: Configure custom domain with DNS CNAME record and worker route
+ * Detect common Cloudflare auth/permission errors from API responses.
+ * Returns a descriptive error message if an auth issue is detected, or null otherwise.
  */
-async function handleConfigureCustomDomain(
-  token: string,
-  accountId: string,
-  customDomain: string,
-  requestUrl: string,
-  steps: SetupStep[]
-): Promise<string> {
-  steps.push({ step: 'configure_custom_domain', status: 'pending' });
-  const stepIndex = steps.length - 1;
+function detectCloudflareAuthError(
+  status: number,
+  errors: Array<{ code?: number; message?: string }>
+): string | null {
+  const isAuthStatus = status === 401 || status === 403;
+  const hasAuthErrorCode = errors.some(e => e.code === 9103 || e.code === 10000);
+  const hasAuthMessage = errors.some(e =>
+    e.message?.toLowerCase().includes('authentication')
+    || e.message?.toLowerCase().includes('permission')
+    || e.message?.toLowerCase().includes('invalid access token')
+  );
 
-  // Get zone ID for the custom domain
-  const domainParts = customDomain.split('.');
+  if (isAuthStatus || hasAuthErrorCode || hasAuthMessage) {
+    const details = errors.map(e => `${e.code ?? '?'}: ${e.message ?? 'unknown'}`).join(', ');
+    return `Authentication/permission error (HTTP ${status}): ${details}`;
+  }
+
+  return null;
+}
+
+/**
+ * Resolve the Cloudflare zone ID for a given domain.
+ * Looks up the zone by the root domain (last two parts of the FQDN).
+ */
+async function resolveZone(
+  token: string,
+  domain: string,
+  steps: SetupStep[],
+  stepIndex: number
+): Promise<string> {
+  const domainParts = domain.split('.');
   const zoneName = domainParts.slice(-2).join('.');
 
   let zonesRes: Response;
@@ -339,7 +359,7 @@ async function handleConfigureCustomDomain(
       { headers: { 'Authorization': `Bearer ${token}` } }
     );
   } catch (error) {
-    logger.error('Failed to fetch zones API', error instanceof Error ? error : new Error(String(error)));
+    logger.error('Failed to fetch zones API', toError(error));
     steps[stepIndex].status = 'error';
     steps[stepIndex].error = 'Failed to connect to Cloudflare Zones API';
     throw new SetupError('configure_custom_domain', 'Failed to connect to Cloudflare Zones API', steps);
@@ -351,7 +371,6 @@ async function handleConfigureCustomDomain(
     errors?: Array<{ code: number; message: string }>;
   };
 
-  // Check for authentication/permission errors from the Zones API
   if (!zonesData.success) {
     const cfErrors = zonesData.errors || [];
     const errorMessages = cfErrors.map(e => `${e.code}: ${e.message}`).join(', ');
@@ -361,13 +380,8 @@ async function handleConfigureCustomDomain(
       errors: cfErrors,
     });
 
-    // Detect auth/permission errors (HTTP 403, or Cloudflare error codes 9103/10000)
-    const isAuthError = zonesRes.status === 403
-      || zonesRes.status === 401
-      || cfErrors.some(e => e.code === 9103 || e.code === 10000)
-      || cfErrors.some(e => e.message?.toLowerCase().includes('authentication') || e.message?.toLowerCase().includes('permission'));
-
-    if (isAuthError) {
+    const authError = detectCloudflareAuthError(zonesRes.status, cfErrors);
+    if (authError) {
       const permError = 'API token lacks Zone permissions required for custom domain configuration. '
         + 'Add "Zone > Zone > Read", "Zone > DNS > Edit", and "Zone > Workers Routes > Edit" permissions to your token, '
         + 'or skip custom domain setup.';
@@ -387,14 +401,24 @@ async function handleConfigureCustomDomain(
     throw new SetupError('configure_custom_domain', `Zone not found for domain: ${zoneName}`, steps);
   }
 
-  const zoneId = zonesData.result[0].id;
+  return zonesData.result[0].id;
+}
 
-  // Extract worker name from request hostname
-  const workerName = getWorkerNameFromHostname(requestUrl);
-
-  // Get the account subdomain for workers.dev URL
-  // Format: {workerName}.{account-subdomain}.workers.dev
-  // We need to resolve account subdomain from the API
+/**
+ * Create or update a DNS CNAME record pointing the custom domain to the workers.dev target.
+ * Resolves the account subdomain, looks up existing records, and performs upsert.
+ */
+async function upsertDnsRecord(
+  token: string,
+  accountId: string,
+  zoneId: string,
+  domain: string,
+  workerName: string,
+  requestUrl: string,
+  steps: SetupStep[],
+  stepIndex: number
+): Promise<void> {
+  // Resolve account subdomain for workers.dev target
   let accountSubdomain: string;
   try {
     const subdomainRes = await fetch(
@@ -408,10 +432,8 @@ async function handleConfigureCustomDomain(
     };
 
     if (!subdomainData.success || !subdomainData.result?.subdomain) {
-      // Fallback: use the request URL if it's already on workers.dev
       const hostname = new URL(requestUrl).hostname;
       if (hostname.endsWith('.workers.dev')) {
-        // Extract account subdomain from hostname: {worker}.{account-subdomain}.workers.dev
         const parts = hostname.split('.');
         if (parts.length >= 3) {
           accountSubdomain = parts[parts.length - 3];
@@ -425,23 +447,21 @@ async function handleConfigureCustomDomain(
       accountSubdomain = subdomainData.result.subdomain;
     }
   } catch (error) {
-    logger.error('Failed to get account subdomain', error instanceof Error ? error : new Error(String(error)));
+    logger.error('Failed to get account subdomain', toError(error));
     steps[stepIndex].status = 'error';
     steps[stepIndex].error = 'Failed to determine workers.dev subdomain for DNS record';
     throw new SetupError('configure_custom_domain', 'Failed to determine workers.dev subdomain for DNS record', steps);
   }
 
   const workersDevTarget = `${workerName}.${accountSubdomain}.workers.dev`;
-
-  // Step 4a: Create or update DNS CNAME record pointing to workers.dev
-  // Extract subdomain part (e.g., "claude" from "claude.example.com")
+  const domainParts = domain.split('.');
   const subdomain = domainParts.length > 2 ? domainParts.slice(0, -2).join('.') : '@';
 
   // Check if DNS record already exists
   let existingDnsRecordId: string | null = null;
   try {
     const dnsLookupRes = await fetch(
-      `${CF_API_BASE}/zones/${zoneId}/dns_records?name=${customDomain}`,
+      `${CF_API_BASE}/zones/${zoneId}/dns_records?name=${domain}`,
       { headers: { 'Authorization': `Bearer ${token}` } }
     );
     const dnsLookupData = await dnsLookupRes.json() as {
@@ -449,18 +469,16 @@ async function handleConfigureCustomDomain(
       result?: Array<{ id: string; type: string }>;
     };
     if (dnsLookupData.success && dnsLookupData.result?.length) {
-      // Find a CNAME record (prefer CNAME, but accept any record to update)
       const cnameRecord = dnsLookupData.result.find(r => r.type === 'CNAME');
       existingDnsRecordId = cnameRecord?.id || dnsLookupData.result[0]?.id || null;
       if (existingDnsRecordId) {
-        logger.info('Found existing DNS record, will update', { domain: customDomain, recordId: existingDnsRecordId });
+        logger.info('Found existing DNS record, will update', { domain, recordId: existingDnsRecordId });
       }
     }
   } catch (lookupError) {
-    // If lookup fails, fall back to create (POST)
     logger.warn('DNS record lookup failed, falling back to create', {
-      domain: customDomain,
-      error: lookupError instanceof Error ? lookupError.message : String(lookupError)
+      domain,
+      error: toErrorMessage(lookupError)
     });
   }
 
@@ -491,12 +509,11 @@ async function handleConfigureCustomDomain(
     const dnsError = await dnsRecordRes.json() as { errors?: Array<{ code: number; message: string }> };
     // Record might already exist - that's OK (code 81057) - only relevant for POST
     if (dnsMethod === 'POST' && dnsError.errors?.some(e => e.code === 81057)) {
-      // Record already exists but lookup didn't find it - log and continue
-      logger.info('DNS record already exists (detected via create error)', { domain: customDomain, subdomain, target: workersDevTarget });
+      logger.info('DNS record already exists (detected via create error)', { domain, subdomain, target: workersDevTarget });
     } else {
       const dnsErrMsg = dnsError.errors?.[0]?.message || `Failed to ${existingDnsRecordId ? 'update' : 'create'} DNS record`;
       logger.error(`DNS record ${existingDnsRecordId ? 'update' : 'creation'} failed`, new Error(dnsErrMsg), {
-        domain: customDomain,
+        domain,
         subdomain,
         target: workersDevTarget,
         zoneId,
@@ -505,12 +522,8 @@ async function handleConfigureCustomDomain(
         errors: dnsError.errors,
       });
 
-      // Detect auth errors on DNS creation/update
-      const isDnsAuthError = dnsRecordRes.status === 403
-        || dnsRecordRes.status === 401
-        || dnsError.errors?.some(e => e.message?.toLowerCase().includes('authentication') || e.message?.toLowerCase().includes('permission'));
-
-      if (isDnsAuthError) {
+      const authError = detectCloudflareAuthError(dnsRecordRes.status, dnsError.errors || []);
+      if (authError) {
         const permError = 'API token lacks DNS permissions required for custom domain configuration. '
           + 'Add "Zone > DNS > Edit" permission to your token, or skip custom domain setup.';
         steps[stepIndex].status = 'error';
@@ -523,10 +536,22 @@ async function handleConfigureCustomDomain(
       throw new SetupError('configure_custom_domain', dnsErrMsg, steps);
     }
   } else {
-    logger.info(`DNS record ${existingDnsRecordId ? 'updated' : 'created'}`, { domain: customDomain, subdomain, target: workersDevTarget });
+    logger.info(`DNS record ${existingDnsRecordId ? 'updated' : 'created'}`, { domain, subdomain, target: workersDevTarget });
   }
+}
 
-  // Step 4b: Add worker route for custom domain
+/**
+ * Create a worker route mapping the custom domain pattern to the worker script.
+ * Silently succeeds if the route already exists (error code 10020).
+ */
+async function createWorkerRoute(
+  token: string,
+  zoneId: string,
+  domain: string,
+  workerName: string,
+  steps: SetupStep[],
+  stepIndex: number
+): Promise<void> {
   const routeRes = await fetch(
     `${CF_API_BASE}/zones/${zoneId}/workers/routes`,
     {
@@ -536,7 +561,7 @@ async function handleConfigureCustomDomain(
         'Content-Type': 'application/json'
       },
       body: JSON.stringify({
-        pattern: `${customDomain}/*`,
+        pattern: `${domain}/*`,
         script: workerName
       })
     }
@@ -548,18 +573,14 @@ async function handleConfigureCustomDomain(
     if (!routeError.errors?.some(e => e.code === 10020)) {
       const routeErrMsg = routeError.errors?.[0]?.message || 'Failed to add worker route';
       logger.error('Worker route creation failed', new Error(routeErrMsg), {
-        domain: customDomain,
+        domain,
         zoneId,
         status: routeRes.status,
         errors: routeError.errors,
       });
 
-      // Detect auth errors on route creation too
-      const isRouteAuthError = routeRes.status === 403
-        || routeRes.status === 401
-        || routeError.errors?.some(e => e.message?.toLowerCase().includes('authentication') || e.message?.toLowerCase().includes('permission'));
-
-      if (isRouteAuthError) {
+      const authError = detectCloudflareAuthError(routeRes.status, routeError.errors || []);
+      if (authError) {
         const permError = 'API token lacks Zone permissions required for worker route creation. '
           + 'Add "Zone > Workers Routes > Edit" permission to your token, or skip custom domain setup.';
         steps[stepIndex].status = 'error';
@@ -572,6 +593,33 @@ async function handleConfigureCustomDomain(
       throw new SetupError('configure_custom_domain', routeErrMsg, steps);
     }
   }
+}
+
+/**
+ * Step 4: Configure custom domain with DNS CNAME record and worker route.
+ * Orchestrates zone resolution, DNS upsert, and worker route creation.
+ */
+async function handleConfigureCustomDomain(
+  token: string,
+  accountId: string,
+  customDomain: string,
+  requestUrl: string,
+  steps: SetupStep[]
+): Promise<string> {
+  steps.push({ step: 'configure_custom_domain', status: 'pending' });
+  const stepIndex = steps.length - 1;
+
+  // Resolve zone ID for the custom domain
+  const zoneId = await resolveZone(token, customDomain, steps, stepIndex);
+
+  // Extract worker name from request hostname
+  const workerName = getWorkerNameFromHostname(requestUrl);
+
+  // Create or update DNS CNAME record pointing to workers.dev
+  await upsertDnsRecord(token, accountId, zoneId, customDomain, workerName, requestUrl, steps, stepIndex);
+
+  // Add worker route for custom domain
+  await createWorkerRoute(token, zoneId, customDomain, workerName, steps, stepIndex);
 
   steps[stepIndex].status = 'success';
   return zoneId;
@@ -613,7 +661,7 @@ async function handleCreateAccessApp(
     // If lookup fails, fall back to create (POST)
     logger.warn('Access app lookup failed, falling back to create', {
       domain: customDomain,
-      error: lookupError instanceof Error ? lookupError.message : String(lookupError)
+      error: toErrorMessage(lookupError)
     });
   }
 
@@ -712,7 +760,7 @@ async function handleCreateAccessApp(
       // If policy lookup fails, create a new policy
       logger.warn('Access policy lookup failed, creating new policy', {
         appId,
-        error: policyLookupError instanceof Error ? policyLookupError.message : String(policyLookupError)
+        error: toErrorMessage(policyLookupError)
       });
     }
   }
@@ -799,7 +847,7 @@ app.get('/detect-token', async (c) => {
       account: { id: account.id, name: account.name },
     });
   } catch (error) {
-    logger.error('Token detection error', error instanceof Error ? error : new Error(String(error)));
+    logger.error('Token detection error', toError(error));
     return c.json({ detected: true, valid: false, error: 'Failed to verify token' });
   }
 });
@@ -924,7 +972,7 @@ app.post('/configure', async (c) => {
     if (error instanceof SetupError || error instanceof ValidationError) {
       throw error;
     }
-    logger.error('Configuration error', error instanceof Error ? error : new Error(String(error)));
+    logger.error('Configuration error', toError(error));
     throw new SetupError('unknown', 'Configuration failed', steps);
   }
 });

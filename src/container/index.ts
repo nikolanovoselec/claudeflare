@@ -2,6 +2,7 @@ import { Container } from '@cloudflare/containers';
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import type { Env } from '../types';
 import { TERMINAL_SERVER_PORT, IDLE_TIMEOUT_MS } from '../lib/constants';
+import { getR2Config } from '../lib/r2-config';
 
 /**
  * Bug 3 fix: Smart hibernation configuration
@@ -19,6 +20,9 @@ const DESTROYED_FLAG_KEY = '_destroyed';
  * Each user gets one container that persists their workspace via s3fs mount to R2.
  * The container runs a terminal server that handles multiple PTY sessions.
  */
+// Class name must be lowercase 'container' to match wrangler.toml class_name
+// and existing DO migrations. Renaming would require a destructive migration
+// that risks losing all existing Durable Objects. See wrangler.toml migrations.
 export class container extends Container<Env> {
   // Port where the container's HTTP server listens
   // Terminal server handles all endpoints: WebSocket, health check, metrics
@@ -49,20 +53,13 @@ export class container extends Container<Env> {
 
       this._bucketName = await this.ctx.storage.get<string>('bucketName') || null;
 
-      // Resolve R2 config: prefer env vars, fall back to KV
-      if (this.env.R2_ACCOUNT_ID) {
-        this._r2AccountId = this.env.R2_ACCOUNT_ID;
-        this._r2Endpoint = this.env.R2_ENDPOINT || `https://${this._r2AccountId}.r2.cloudflarestorage.com`;
-      } else {
-        try {
-          const kvAccountId = await this.env.KV.get('setup:account_id');
-          if (kvAccountId) {
-            this._r2AccountId = kvAccountId;
-            this._r2Endpoint = `https://${kvAccountId}.r2.cloudflarestorage.com`;
-          }
-        } catch (e) {
-          console.error('[container] Failed to resolve R2 config from KV:', e);
-        }
+      // Resolve R2 config via shared helper (env vars first, KV fallback)
+      try {
+        const r2Config = await getR2Config(this.env);
+        this._r2AccountId = r2Config.accountId;
+        this._r2Endpoint = r2Config.endpoint;
+      } catch {
+        // R2 not configured yet — will use empty values in updateEnvVars
       }
 
       // If no bucket name stored, this is an orphan/zombie DO - self-destruct

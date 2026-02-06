@@ -50,16 +50,7 @@ class_name = "container"
 # Migrations
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["ClaudeflareContainer"]
-
-[[migrations]]
-tag = "v2"
 new_sqlite_classes = ["container"]
-
-# Step 2: Delete old class (all its DOs will be deleted)
-[[migrations]]
-tag = "v3"
-deleted_classes = ["ClaudeflareContainer"]
 
 # Static assets (frontend) with SPA routing
 [assets]

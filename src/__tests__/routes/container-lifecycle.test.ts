@@ -1,0 +1,346 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { Hono } from 'hono';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
+import type { Env } from '../../types';
+import type { AuthVariables } from '../../middleware/auth';
+import { ContainerError } from '../../lib/error-types';
+
+// ---------------------------------------------------------------------------
+// Mock KV storage (same pattern as session.test.ts)
+// ---------------------------------------------------------------------------
+function createMockKV() {
+  const store = new Map<string, string>();
+  return {
+    get: vi.fn(async (key: string, type?: string) => {
+      const value = store.get(key);
+      if (!value) return null;
+      return type === 'json' ? JSON.parse(value) : value;
+    }),
+    put: vi.fn(async (key: string, value: string) => {
+      store.set(key, value);
+    }),
+    delete: vi.fn(async (key: string) => {
+      store.delete(key);
+    }),
+    list: vi.fn(async ({ prefix }: { prefix: string }) => {
+      const keys = Array.from(store.keys())
+        .filter((k) => k.startsWith(prefix))
+        .map((name) => ({ name }));
+      return { keys };
+    }),
+    _store: store,
+    _set: (key: string, value: unknown) => store.set(key, JSON.stringify(value)),
+    _clear: () => store.clear(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Mock container stub
+// ---------------------------------------------------------------------------
+function createMockContainer() {
+  return {
+    fetch: vi.fn().mockResolvedValue(new Response(JSON.stringify({ bucketName: null }), { status: 200 })),
+    destroy: vi.fn().mockResolvedValue(undefined),
+    getState: vi.fn().mockResolvedValue({ status: 'stopped' }),
+    startAndWaitForPorts: vi.fn().mockResolvedValue(undefined),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Shared mutable state - vi.hoisted ensures this runs before vi.mock factories
+// ---------------------------------------------------------------------------
+const testState = vi.hoisted(() => ({
+  container: null as ReturnType<typeof createMockContainer> | null,
+  createBucketResult: { success: true, created: false } as { success: boolean; error?: string; created?: boolean },
+}));
+
+// ---------------------------------------------------------------------------
+// Module-level mocks
+// ---------------------------------------------------------------------------
+vi.mock('@cloudflare/containers', () => ({
+  getContainer: vi.fn(() => testState.container),
+}));
+
+vi.mock('../../lib/r2-admin', () => ({
+  createBucketIfNotExists: vi.fn(async () => testState.createBucketResult),
+}));
+
+vi.mock('../../lib/r2-config', () => ({
+  getR2Config: vi.fn(async () => ({ accountId: 'test-account', endpoint: 'https://test.r2.cloudflarestorage.com' })),
+}));
+
+// Mock circuit breakers to be pass-through
+vi.mock('../../lib/circuit-breakers', () => ({
+  containerHealthCB: { execute: (fn: () => Promise<unknown>) => fn(), reset: vi.fn() },
+  containerInternalCB: { execute: (fn: () => Promise<unknown>) => fn(), reset: vi.fn() },
+  containerSessionsCB: { execute: (fn: () => Promise<unknown>) => fn(), reset: vi.fn() },
+}));
+
+import lifecycleRoutes from '../../routes/container/lifecycle';
+import { createBucketIfNotExists } from '../../lib/r2-admin';
+
+describe('Container Lifecycle Routes', () => {
+  let mockKV: ReturnType<typeof createMockKV>;
+
+  // Mock execution context for waitUntil support
+  const mockExecutionCtx = {
+    waitUntil: vi.fn(),
+    passThroughOnException: vi.fn(),
+  };
+
+  beforeEach(() => {
+    mockKV = createMockKV();
+    testState.container = createMockContainer();
+    testState.createBucketResult = { success: true, created: false };
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * Creates a test app and returns a fetch helper that provides ExecutionContext.
+   * Lifecycle routes use c.executionCtx.waitUntil(), which requires the
+   * ExecutionContext parameter in app.fetch().
+   */
+  function createTestApp(bucketName = 'test-bucket') {
+    const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
+
+    // Error handler
+    app.onError((err, c) => {
+      if (err instanceof ContainerError) {
+        return c.json(err.toJSON(), err.statusCode as ContentfulStatusCode);
+      }
+      return c.json({ error: err.message }, 500);
+    });
+
+    // Simulate auth middleware: set user, bucketName, env
+    app.use('*', async (c, next) => {
+      c.env = {
+        KV: mockKV as unknown as KVNamespace,
+        CONTAINER: {} as DurableObjectNamespace,
+        CLOUDFLARE_API_TOKEN: 'test-token',
+      } as unknown as Env;
+      c.set('user', { email: 'test@example.com', authenticated: true });
+      c.set('bucketName', bucketName);
+      return next();
+    });
+
+    app.route('/container', lifecycleRoutes);
+
+    // Return a fetch helper that includes ExecutionContext
+    const fetch = (path: string, init?: RequestInit) => {
+      const req = new Request(`http://localhost${path}`, init);
+      return app.fetch(req, {} as Env, mockExecutionCtx as unknown as ExecutionContext);
+    };
+
+    return fetch;
+  }
+
+  // Shorthand for the mock container
+  function container() {
+    return testState.container!;
+  }
+
+  // =========================================================================
+  // POST /container/start
+  // =========================================================================
+  describe('POST /container/start', () => {
+    it('returns starting status when container is stopped', async () => {
+      const fetch = createTestApp();
+      container().getState.mockResolvedValue({ status: 'stopped' });
+      container().fetch.mockResolvedValue(
+        new Response(JSON.stringify({ bucketName: null }), { status: 200 })
+      );
+
+      const res = await fetch('/container/start?sessionId=abcdef1234567890abcdef12', {
+        method: 'POST',
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as { success: boolean; status: string };
+      expect(body.success).toBe(true);
+      expect(body.status).toBe('starting');
+    });
+
+    it('returns already_running when container is running with correct bucket', async () => {
+      const fetch = createTestApp('test-bucket');
+      container().getState.mockResolvedValue({ status: 'running' });
+      container().fetch.mockResolvedValue(
+        new Response(JSON.stringify({ bucketName: 'test-bucket' }), { status: 200 })
+      );
+
+      const res = await fetch('/container/start?sessionId=abcdef1234567890abcdef12', {
+        method: 'POST',
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as { success: boolean; status: string; containerState: string };
+      expect(body.success).toBe(true);
+      expect(body.status).toBe('already_running');
+      expect(body.containerState).toBe('running');
+    });
+
+    it('returns already_running when container is healthy with correct bucket', async () => {
+      const fetch = createTestApp('test-bucket');
+      container().getState.mockResolvedValue({ status: 'healthy' });
+      container().fetch.mockResolvedValue(
+        new Response(JSON.stringify({ bucketName: 'test-bucket' }), { status: 200 })
+      );
+
+      const res = await fetch('/container/start?sessionId=abcdef1234567890abcdef12', {
+        method: 'POST',
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as { success: boolean; status: string };
+      expect(body.success).toBe(true);
+      expect(body.status).toBe('already_running');
+    });
+
+    it('returns 500 when missing sessionId', async () => {
+      const fetch = createTestApp();
+
+      const res = await fetch('/container/start', {
+        method: 'POST',
+      });
+
+      expect(res.status).toBe(500);
+    });
+
+    it('creates R2 bucket before starting container', async () => {
+      const fetch = createTestApp('my-bucket');
+      container().getState.mockResolvedValue({ status: 'stopped' });
+      container().fetch.mockResolvedValue(
+        new Response(JSON.stringify({ bucketName: null }), { status: 200 })
+      );
+
+      await fetch('/container/start?sessionId=abcdef1234567890abcdef12', {
+        method: 'POST',
+      });
+
+      expect(createBucketIfNotExists).toHaveBeenCalledWith(
+        'test-account',
+        'test-token',
+        'my-bucket'
+      );
+    });
+
+    it('returns error when bucket creation fails', async () => {
+      const fetch = createTestApp();
+      testState.createBucketResult = { success: false, error: 'Permission denied' };
+
+      const res = await fetch('/container/start?sessionId=abcdef1234567890abcdef12', {
+        method: 'POST',
+      });
+
+      expect(res.status).toBe(500);
+      const body = await res.json() as { code: string };
+      expect(body.code).toBe('CONTAINER_ERROR');
+    });
+
+    it('restarts container when bucket name changed', async () => {
+      const fetch = createTestApp('new-bucket');
+      container().getState.mockResolvedValue({ status: 'running' });
+
+      // First fetch: getBucketName returns different bucket
+      // Second fetch: setBucketName succeeds
+      container().fetch
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ bucketName: 'old-bucket' }), { status: 200 })
+        )
+        .mockResolvedValueOnce(new Response('', { status: 200 })); // setBucketName
+
+      const res = await fetch('/container/start?sessionId=abcdef1234567890abcdef12', {
+        method: 'POST',
+      });
+
+      expect(res.status).toBe(200);
+      expect(container().destroy).toHaveBeenCalled();
+    });
+  });
+
+  // =========================================================================
+  // POST /container/destroy
+  // =========================================================================
+  describe('POST /container/destroy', () => {
+    it('destroys the container and returns success', async () => {
+      const fetch = createTestApp();
+      container().getState.mockResolvedValue({ status: 'running' });
+
+      const res = await fetch('/container/destroy?sessionId=abcdef1234567890abcdef12', {
+        method: 'POST',
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as { success: boolean; message: string };
+      expect(body.success).toBe(true);
+      expect(body.message).toBe('Container destroyed');
+      expect(container().destroy).toHaveBeenCalled();
+    });
+
+    it('returns 500 when destroy fails', async () => {
+      const fetch = createTestApp();
+      container().getState.mockResolvedValue({ status: 'running' });
+      container().destroy.mockRejectedValue(new Error('Destroy failed'));
+
+      const res = await fetch('/container/destroy?sessionId=abcdef1234567890abcdef12', {
+        method: 'POST',
+      });
+
+      expect(res.status).toBe(500);
+      const body = await res.json() as { code: string };
+      expect(body.code).toBe('CONTAINER_ERROR');
+    });
+
+    it('returns 500 when missing sessionId', async () => {
+      const fetch = createTestApp();
+
+      const res = await fetch('/container/destroy', {
+        method: 'POST',
+      });
+
+      expect(res.status).toBe(500);
+    });
+  });
+
+  // =========================================================================
+  // POST /container/explicit-start
+  // =========================================================================
+  describe('POST /container/explicit-start', () => {
+    it('returns state before and after start', async () => {
+      const fetch = createTestApp();
+      container().getState
+        .mockResolvedValueOnce({ status: 'stopped' })  // stateBefore
+        .mockResolvedValueOnce({ status: 'running' }); // stateAfter
+
+      const res = await fetch('/container/explicit-start?sessionId=abcdef1234567890abcdef12', {
+        method: 'POST',
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as {
+        success: boolean;
+        stateBefore: { status: string };
+        stateAfter: { status: string };
+      };
+      expect(body.success).toBe(true);
+      expect(body.stateBefore.status).toBe('stopped');
+      expect(body.stateAfter.status).toBe('running');
+      expect(container().startAndWaitForPorts).toHaveBeenCalled();
+    });
+
+    it('returns 500 when start fails completely', async () => {
+      const fetch = createTestApp();
+      container().getState.mockRejectedValue(new Error('DO not found'));
+
+      const res = await fetch('/container/explicit-start?sessionId=abcdef1234567890abcdef12', {
+        method: 'POST',
+      });
+
+      expect(res.status).toBe(500);
+      const body = await res.json() as { code: string };
+      expect(body.code).toBe('CONTAINER_ERROR');
+    });
+  });
+});

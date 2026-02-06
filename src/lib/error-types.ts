@@ -92,3 +92,13 @@ export class CircuitBreakerOpenError extends AppError {
     super('CIRCUIT_BREAKER_OPEN', 503, `Service ${service} is temporarily unavailable`, 'Service temporarily unavailable. Please try again shortly.');
   }
 }
+
+/** Convert unknown catch values to Error instances */
+export function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+/** Extract error message from unknown catch values */
+export function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}

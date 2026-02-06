@@ -8,7 +8,7 @@ import type { Env } from '../../types';
 import { getContainerContext } from '../../lib/container-helpers';
 import { AuthVariables } from '../../middleware/auth';
 import { isBucketNameResponse } from '../../lib/type-guards';
-import { ContainerError, AuthError } from '../../lib/error-types';
+import { ContainerError, AuthError, toError, toErrorMessage } from '../../lib/error-types';
 import { containerLogger, containerHealthCB, containerInternalCB } from './shared';
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
@@ -105,7 +105,7 @@ app.get('/debug', async (c) => {
       healthData,
     });
   } catch (error) {
-    throw new ContainerError('debug', error instanceof Error ? error.message : 'Unknown error');
+    throw new ContainerError('debug', toErrorMessage(error));
   }
 });
 
@@ -137,14 +137,8 @@ app.get('/mount-test', async (c) => {
       mountTest: result,
     });
   } catch (error) {
-    reqLogger.error('Mount test error', error instanceof Error ? error : new Error(String(error)));
-    return c.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      },
-      500
-    );
+    reqLogger.error('Mount test error', toError(error));
+    throw new ContainerError('mount-test', toErrorMessage(error));
   }
 });
 
@@ -177,8 +171,8 @@ app.get('/sync-log', async (c) => {
       log: logData.log,
     });
   } catch (error) {
-    reqLogger.error('Sync log error', error instanceof Error ? error : new Error(String(error)));
-    throw new ContainerError('sync-log', error instanceof Error ? error.message : 'Unknown error');
+    reqLogger.error('Sync log error', toError(error));
+    throw new ContainerError('sync-log', toErrorMessage(error));
   }
 });
 
@@ -199,7 +193,7 @@ app.get('/state', async (c) => {
       state,
     });
   } catch (error) {
-    throw new ContainerError('state', error instanceof Error ? error.message : 'Unknown error');
+    throw new ContainerError('state', toErrorMessage(error));
   }
 });
 

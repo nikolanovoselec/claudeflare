@@ -4,6 +4,7 @@ import { authMiddleware, type AuthVariables } from '../middleware/auth';
 import { getAllUsers, syncAccessPolicy } from '../lib/access-policy';
 import { getBucketName } from '../lib/access';
 import { createLogger } from '../lib/logger';
+import { toError } from '../lib/error-types';
 
 const logger = createLogger('users');
 
@@ -46,7 +47,7 @@ app.post('/', async (c) => {
     }
   } catch (e) {
     // Non-fatal: user added to KV even if Access sync fails
-    logger.error('Failed to sync Access policy', e instanceof Error ? e : new Error(String(e)));
+    logger.error('Failed to sync Access policy', toError(e));
   }
 
   return c.json({ success: true, email });
@@ -80,7 +81,7 @@ app.delete('/:email', async (c) => {
     }
   } catch (e) {
     // Non-fatal
-    logger.error('Failed to delete R2 bucket', e instanceof Error ? e : new Error(String(e)));
+    logger.error('Failed to delete R2 bucket', toError(e));
   }
 
   // Sync Access policy
@@ -92,7 +93,7 @@ app.delete('/:email', async (c) => {
     }
   } catch (e) {
     // Non-fatal
-    logger.error('Failed to sync Access policy', e instanceof Error ? e : new Error(String(e)));
+    logger.error('Failed to sync Access policy', toError(e));
   }
 
   return c.json({ success: true, email });

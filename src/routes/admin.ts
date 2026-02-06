@@ -6,7 +6,7 @@ import { Hono } from 'hono';
 import type { Env } from '../types';
 import { isAdminRequest } from '../lib/type-guards';
 import { DO_ID_PATTERN } from '../lib/constants';
-import { AuthError, ValidationError } from '../lib/error-types';
+import { AppError, AuthError, ValidationError, toError, toErrorMessage } from '../lib/error-types';
 import { createLogger } from '../lib/logger';
 
 const logger = createLogger('admin');
@@ -75,16 +75,13 @@ app.post('/destroy-by-id', async (c) => {
       message: 'Container destroyed via raw DO ID',
     });
   } catch (error) {
-    reqLogger.error('Admin destroy-by-id error', error instanceof Error ? error : new Error(String(error)));
+    reqLogger.error('Admin destroy-by-id error', toError(error));
 
     if (error instanceof AuthError || error instanceof ValidationError) {
       throw error;
     }
 
-    return c.json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    }, 500);
+    throw new AppError('ADMIN_ERROR', 500, toErrorMessage(error), 'Admin operation failed. Please try again.');
   }
 });
 

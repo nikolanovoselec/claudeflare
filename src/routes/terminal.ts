@@ -7,7 +7,7 @@ import { getContainerId, checkContainerHealth } from '../lib/container-helpers';
 import { getUserFromRequest, getBucketName } from '../lib/access';
 import { createLogger } from '../lib/logger';
 import { containerSessionsCB } from '../lib/circuit-breakers';
-import { NotFoundError } from '../lib/error-types';
+import { NotFoundError, toError } from '../lib/error-types';
 
 const logger = createLogger('terminal');
 
@@ -160,7 +160,7 @@ export async function handleWebSocketUpgrade(
     logger.info('Container WebSocket response', { status: response.status });
     return response;
   } catch (error) {
-    logger.error('WebSocket upgrade error', error instanceof Error ? error : new Error(String(error)));
+    logger.error('WebSocket upgrade error', toError(error));
     // Don't expose internal error details to client
     return new Response(JSON.stringify({
       error: 'WebSocket connection failed'

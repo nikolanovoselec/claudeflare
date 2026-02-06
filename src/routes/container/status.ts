@@ -6,13 +6,35 @@ import { Hono } from 'hono';
 import type { Env } from '../../types';
 import { getContainerContext, checkContainerHealth } from '../../lib/container-helpers';
 import { AuthVariables } from '../../middleware/auth';
-import { ContainerError } from '../../lib/error-types';
+import { ContainerError, toError, toErrorMessage } from '../../lib/error-types';
 import {
   containerLogger,
   containerHealthCB,
   containerSessionsCB,
   fetchWithTimeout,
 } from './shared';
+
+/** Shape returned by the container health endpoint (port 8080) */
+type HealthData = {
+  status?: string;
+  syncStatus?: string;
+  syncError?: string | null;
+  userPath?: string;
+  terminalPid?: number;
+  cpu?: string;
+  mem?: string;
+  hdd?: string;
+};
+
+/** Copy cpu/mem/hdd metrics from health data into the response details object */
+function populateMetrics(
+  details: Record<string, unknown>,
+  healthData: HealthData | null,
+): void {
+  if (healthData?.cpu !== undefined) details.cpu = healthData.cpu;
+  if (healthData?.mem !== undefined) details.mem = healthData.mem;
+  if (healthData?.hdd !== undefined) details.hdd = healthData.hdd;
+}
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
@@ -43,7 +65,7 @@ app.get('/health', async (c) => {
       container: healthResult.data,
     });
   } catch (error) {
-    throw new ContainerError('health', error instanceof Error ? error.message : 'Unknown error');
+    throw new ContainerError('health', toErrorMessage(error));
   }
 });
 
@@ -135,16 +157,7 @@ app.get('/startup-status', async (c) => {
     );
 
     // Parse health data if available (includes sync status and system metrics)
-    let healthData: {
-      status?: string;
-      syncStatus?: string;
-      syncError?: string | null;
-      userPath?: string;
-      terminalPid?: number;
-      cpu?: string;
-      mem?: string;
-      hdd?: string;
-    } = {};
+    let healthData: HealthData = {};
     let healthServerOk = false;
 
     if (healthRes && healthRes.ok) {
@@ -179,10 +192,7 @@ app.get('/startup-status', async (c) => {
       response.details.syncStatus = syncStatus;
       response.details.healthServerOk = true;
       response.details.terminalPid = healthData.terminalPid;
-      // Include metrics when health server provides them
-      response.details.cpu = healthData.cpu;
-      response.details.mem = healthData.mem;
-      response.details.hdd = healthData.hdd;
+      populateMetrics(response.details, healthData);
       return c.json(response);
     }
 
@@ -216,10 +226,7 @@ app.get('/startup-status', async (c) => {
       response.details.healthServerOk = true;
       response.details.terminalServerOk = false;
       response.details.terminalPid = healthData.terminalPid;
-      // Include metrics when health server provides them
-      response.details.cpu = healthData.cpu;
-      response.details.mem = healthData.mem;
-      response.details.hdd = healthData.hdd;
+      populateMetrics(response.details, healthData);
       return c.json(response);
     }
 
@@ -233,10 +240,7 @@ app.get('/startup-status', async (c) => {
       response.details.healthServerOk = true;
       response.details.terminalServerOk = false;
       response.details.terminalPid = healthData.terminalPid;
-      // Include metrics when health server provides them
-      response.details.cpu = healthData.cpu;
-      response.details.mem = healthData.mem;
-      response.details.hdd = healthData.hdd;
+      populateMetrics(response.details, healthData);
       return c.json(response);
     }
 
@@ -255,10 +259,7 @@ app.get('/startup-status', async (c) => {
       response.details.healthServerOk = true;
       response.details.terminalServerOk = true;
       response.details.terminalPid = healthData.terminalPid;
-      // Include metrics when health server provides them
-      response.details.cpu = healthData.cpu;
-      response.details.mem = healthData.mem;
-      response.details.hdd = healthData.hdd;
+      populateMetrics(response.details, healthData);
       return c.json(response);
     }
 
@@ -277,23 +278,20 @@ app.get('/startup-status', async (c) => {
     response.details.healthServerOk = true;
     response.details.terminalServerOk = true;
     response.details.terminalPid = healthData.terminalPid;
-    // System metrics
-    response.details.cpu = healthData.cpu;
-    response.details.mem = healthData.mem;
-    response.details.hdd = healthData.hdd;
+    populateMetrics(response.details, healthData);
     return c.json(response);
   } catch (error) {
-    reqLogger.error('Startup status error', error instanceof Error ? error : new Error(String(error)));
+    reqLogger.error('Startup status error', toError(error));
     return c.json({
       stage: 'error',
       progress: 0,
-      message: error instanceof Error ? error.message : 'Unknown error',
+      message: toErrorMessage(error),
       details: {
         bucketName: '',
         container: '',
         path: '/home/user/workspace',
       },
-      error: error instanceof Error ? error.message : 'Unknown error',
+      error: toErrorMessage(error),
     });
   }
 });

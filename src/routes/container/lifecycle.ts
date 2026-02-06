@@ -10,7 +10,7 @@ import { getR2Config } from '../../lib/r2-config';
 import { getContainerContext, getSessionIdFromRequest, getContainerId } from '../../lib/container-helpers';
 import { AuthVariables } from '../../middleware/auth';
 import { isBucketNameResponse } from '../../lib/type-guards';
-import { ContainerError, AuthError, ValidationError } from '../../lib/error-types';
+import { ContainerError, AuthError, ValidationError, toError, toErrorMessage } from '../../lib/error-types';
 import { BUCKET_NAME_SETTLE_DELAY_MS, CONTAINER_ID_DISPLAY_LENGTH } from '../../lib/constants';
 import { containerLogger, containerInternalCB } from './shared';
 
@@ -78,7 +78,7 @@ app.post('/start', async (c) => {
         await new Promise(resolve => setTimeout(resolve, BUCKET_NAME_SETTLE_DELAY_MS));
         reqLogger.info('Set bucket name', { bucketName, previousBucketName: storedBucketName });
       } catch (error) {
-        reqLogger.error('Failed to set bucket name', error instanceof Error ? error : new Error(String(error)));
+        reqLogger.error('Failed to set bucket name', toError(error));
       }
     }
 
@@ -98,7 +98,7 @@ app.post('/start', async (c) => {
         // Container will be started below
         currentState = { status: 'stopped' };
       } catch (error) {
-        reqLogger.error('Failed to destroy container', error instanceof Error ? error : new Error(String(error)));
+        reqLogger.error('Failed to destroy container', toError(error));
       }
     }
 
@@ -121,7 +121,7 @@ app.post('/start', async (c) => {
           await container.startAndWaitForPorts();
           reqLogger.info('Container started and ports ready', { containerId: shortContainerId });
         } catch (error) {
-          reqLogger.error('Failed to start container', error instanceof Error ? error : new Error(String(error)), { containerId: shortContainerId });
+          reqLogger.error('Failed to start container', toError(error), { containerId: shortContainerId });
         }
       })()
     );
@@ -135,7 +135,7 @@ app.post('/start', async (c) => {
     });
   } catch (error) {
     const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
-    reqLogger.error('Container start error', error instanceof Error ? error : new Error(String(error)));
+    reqLogger.error('Container start error', toError(error));
     if (error instanceof ContainerError) {
       throw error;
     }
@@ -162,7 +162,7 @@ app.post('/explicit-start', async (c) => {
       await container.startAndWaitForPorts();
       reqLogger.info('startAndWaitForPorts() completed', { containerId });
     } catch (startError) {
-      reqLogger.error('start() failed', startError instanceof Error ? startError : new Error(String(startError)), { containerId });
+      reqLogger.error('start() failed', toError(startError), { containerId });
     }
 
     // Step 3: Get state after start
@@ -177,8 +177,8 @@ app.post('/explicit-start', async (c) => {
       message: 'Container start attempted',
     });
   } catch (error) {
-    reqLogger.error('Explicit container start error', error instanceof Error ? error : new Error(String(error)));
-    throw new ContainerError('explicit-start', error instanceof Error ? error.message : 'Unknown error');
+    reqLogger.error('Explicit container start error', toError(error));
+    throw new ContainerError('explicit-start', toErrorMessage(error));
   }
 });
 
@@ -203,8 +203,8 @@ app.post('/destroy', async (c) => {
     // Don't call getState() after destroy() — it resurrects the DO (gotcha #6)
     return c.json({ success: true, message: 'Container destroyed' });
   } catch (error) {
-    reqLogger.error('Container destroy error', error instanceof Error ? error : new Error(String(error)));
-    throw new ContainerError('destroy', error instanceof Error ? error.message : 'Unknown error');
+    reqLogger.error('Container destroy error', toError(error));
+    throw new ContainerError('destroy', toErrorMessage(error));
   }
 });
 
