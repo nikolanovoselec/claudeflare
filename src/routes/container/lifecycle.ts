@@ -157,7 +157,7 @@ app.post('/explicit-start', async (c) => {
     const stateBefore = await container.getState();
     reqLogger.info('State before start', { containerId, state: stateBefore });
 
-    // Step 2: Start container and wait for requiredPorts [8080, 8081]
+    // Step 2: Start container and wait for port 8080
     try {
       await container.startAndWaitForPorts();
       reqLogger.info('startAndWaitForPorts() completed', { containerId });
@@ -198,18 +198,10 @@ app.post('/destroy', async (c) => {
     // Destroy the container
     await container.destroy();
 
-    // Get state after destroy
-    const stateAfter = await container.getState();
+    reqLogger.info('Container destroyed', { containerId, stateBefore });
 
-    reqLogger.info('Container destroyed', { containerId, stateBefore, stateAfter });
-
-    return c.json({
-      success: true,
-      containerId,
-      stateBefore,
-      stateAfter,
-      message: 'Container destroyed',
-    });
+    // Don't call getState() after destroy() — it resurrects the DO (gotcha #6)
+    return c.json({ success: true, message: 'Container destroyed' });
   } catch (error) {
     reqLogger.error('Container destroy error', error instanceof Error ? error : new Error(String(error)));
     throw new ContainerError('destroy', error instanceof Error ? error.message : 'Unknown error');

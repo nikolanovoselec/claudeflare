@@ -4,10 +4,8 @@
  * All routes require DEV_MODE to be enabled
  */
 import { Hono } from 'hono';
-import { switchPort } from '@cloudflare/containers';
 import type { Env } from '../../types';
 import { getContainerContext } from '../../lib/container-helpers';
-import { HEALTH_SERVER_PORT } from '../../lib/constants';
 import { AuthVariables } from '../../middleware/auth';
 import { isBucketNameResponse } from '../../lib/type-guards';
 import { ContainerError, AuthError } from '../../lib/error-types';
@@ -75,13 +73,10 @@ app.get('/debug', async (c) => {
       containerState = { status: 'unknown', error: String(error) };
     }
 
-    // Get health from port 8081 (has mount status)
+    // Get health status
     let healthData: Record<string, unknown> = {};
     try {
-      const healthRequest = switchPort(
-        new Request('http://container/health', { method: 'GET' }),
-        HEALTH_SERVER_PORT
-      );
+      const healthRequest = new Request('http://container/health', { method: 'GET' });
       const healthRes = await containerHealthCB.execute(() => container.fetch(healthRequest));
       if (healthRes.ok) {
         healthData = await healthRes.json() as Record<string, unknown>;
@@ -164,10 +159,7 @@ app.get('/sync-log', async (c) => {
     const { containerId, container } = getContainerContext(c);
 
     // Fetch sync log via the health server (add endpoint to entrypoint.sh)
-    const logRequest = switchPort(
-      new Request('http://container/sync-log', { method: 'GET' }),
-      HEALTH_SERVER_PORT
-    );
+    const logRequest = new Request('http://container/sync-log', { method: 'GET' });
     const logRes = await containerHealthCB.execute(() => container.fetch(logRequest));
 
     if (!logRes.ok) {

@@ -311,26 +311,24 @@ const InitProgressComponent: Component<InitProgressProps> = (props) => {
       </ul>
 
       {/* Details section - always visible */}
-      <Show when={true}>
-        <div class="init-progress-details-section">
-          <div class="init-progress-details-title">Details</div>
-          <div class="init-progress-details-grid">
-            <For each={stageDetails()}>
-              {(detail) => (
-                <div class="init-progress-detail">
-                  <span class="init-progress-detail-key">{detail.key}</span>
-                  <span class={`init-progress-detail-value ${detail.status ? `init-progress-detail-value--${detail.status}` : ''}`}>
-                    <Show when={detail.status}>
-                      <span class={`init-progress-status-dot init-progress-status-dot--${detail.status}`} />
-                    </Show>
-                    {detail.value}
-                  </span>
-                </div>
-              )}
-            </For>
-          </div>
+      <div class="init-progress-details-section">
+        <div class="init-progress-details-title">Details</div>
+        <div class="init-progress-details-grid">
+          <For each={stageDetails()}>
+            {(detail) => (
+              <div class="init-progress-detail">
+                <span class="init-progress-detail-key">{detail.key}</span>
+                <span class={`init-progress-detail-value ${detail.status ? `init-progress-detail-value--${detail.status}` : ''}`}>
+                  <Show when={detail.status}>
+                    <span class={`init-progress-status-dot init-progress-status-dot--${detail.status}`} />
+                  </Show>
+                  {detail.value}
+                </span>
+              </div>
+            )}
+          </For>
         </div>
-      </Show>
+      </div>
 
       {/* Open button and total time - shown when complete */}
       <Show when={isComplete()}>

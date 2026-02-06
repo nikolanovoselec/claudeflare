@@ -13,6 +13,7 @@ import { getContainerId } from '../../lib/container-helpers';
 import { createLogger } from '../../lib/logger';
 import { containerSessionsCB } from '../../lib/circuit-breakers';
 import { ValidationError, NotFoundError } from '../../lib/error-types';
+import { listAllKvKeys } from '../../lib/access-policy';
 
 const logger = createLogger('session-crud');
 
@@ -36,11 +37,11 @@ app.get('/', async (c) => {
   const bucketName = c.get('bucketName');
   const prefix = getSessionPrefix(bucketName);
 
-  // List all sessions for this user from KV
-  const list = await c.env.KV.list({ prefix });
+  // List all sessions for this user from KV (with pagination for >1000 keys)
+  const keys = await listAllKvKeys(c.env.KV, prefix);
 
   // Fetch session data for each key (parallel for better performance)
-  const sessionPromises = list.keys.map(key => c.env.KV.get<Session>(key.name, 'json'));
+  const sessionPromises = keys.map(key => c.env.KV.get<Session>(key.name, 'json'));
   const sessionResults = await Promise.all(sessionPromises);
   const sessions: Session[] = sessionResults.filter((s): s is Session => s !== null);
 
@@ -126,7 +127,10 @@ app.patch('/:id', async (c) => {
 
   // Update fields
   if (body.name) {
-    session.name = body.name;
+    if (body.name.length > MAX_SESSION_NAME_LENGTH) {
+      throw new ValidationError(`Session name too long (max ${MAX_SESSION_NAME_LENGTH} characters)`);
+    }
+    session.name = body.name.replace(/[<>&"']/g, '');
   }
   session.lastAccessedAt = new Date().toISOString();
 

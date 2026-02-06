@@ -59,8 +59,9 @@ async function detectToken(): Promise<void> {
     } else {
       setState('tokenDetectError', data.error || 'Token not detected');
     }
-  } catch {
-    setState('tokenDetectError', 'Failed to detect token');
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Failed to detect token';
+    setState('tokenDetectError', msg);
   } finally {
     setState('tokenDetecting', false);
   }
@@ -142,8 +143,9 @@ async function configure(): Promise<boolean> {
       setState({ configureError: data.error || 'Configuration failed' });
       return false;
     }
-  } catch {
-    setState({ configureError: 'Configuration request failed' });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : 'Configuration request failed';
+    setState({ configureError: msg });
     return false;
   } finally {
     setState({ configuring: false });

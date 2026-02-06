@@ -1,6 +1,8 @@
 import type { Env } from '../types';
+import { createLogger } from './logger';
 
 const CF_API_BASE = 'https://api.cloudflare.com/client/v4';
+const logger = createLogger('access-policy');
 
 export interface UserEntry {
   email: string;
@@ -9,12 +11,27 @@ export interface UserEntry {
 }
 
 /**
+ * List all KV keys with a given prefix, handling pagination.
+ * KV returns max 1000 keys per call; this loops until all are fetched.
+ */
+export async function listAllKvKeys(kv: KVNamespace, prefix: string): Promise<KVNamespaceListKey<unknown>[]> {
+  const keys: KVNamespaceListKey<unknown>[] = [];
+  let cursor: string | undefined;
+  do {
+    const result = await kv.list({ prefix, cursor });
+    keys.push(...result.keys);
+    cursor = result.list_complete ? undefined : result.cursor;
+  } while (cursor);
+  return keys;
+}
+
+/**
  * Get all user entries from KV (keys starting with "user:")
  */
 export async function getAllUsers(kv: KVNamespace): Promise<UserEntry[]> {
-  const list = await kv.list({ prefix: 'user:' });
+  const keys = await listAllKvKeys(kv, 'user:');
   const users: UserEntry[] = [];
-  for (const key of list.keys) {
+  for (const key of keys) {
     const data = await kv.get(key.name, 'json');
     if (data) {
       users.push({ email: key.name.replace('user:', ''), ...(data as Omit<UserEntry, 'email'>) });
@@ -44,7 +61,10 @@ export async function syncAccessPolicy(
   });
   const appsData = await appsRes.json() as any;
 
-  if (!appsData.success) return;
+  if (!appsData.success) {
+    logger.error('syncAccessPolicy: Failed to fetch Access apps', new Error('API request failed'), { response: appsData });
+    return;
+  }
 
   const app = appsData.result?.find((a: any) => a.domain === domain);
   if (!app) return;
@@ -61,7 +81,7 @@ export async function syncAccessPolicy(
   const policy = policiesData.result[0];
 
   // Update policy with email includes
-  await fetch(
+  const updateRes = await fetch(
     `${CF_API_BASE}/accounts/${accountId}/access/apps/${app.id}/policies/${policy.id}`,
     {
       method: 'PUT',
@@ -75,4 +95,14 @@ export async function syncAccessPolicy(
       }),
     }
   );
+
+  if (!updateRes.ok) {
+    const updateData = await updateRes.json().catch(() => null);
+    logger.error('syncAccessPolicy: Failed to update Access policy', new Error(`HTTP ${updateRes.status}`), {
+      status: updateRes.status,
+      response: updateData,
+      appId: app.id,
+      policyId: policy.id,
+    });
+  }
 }

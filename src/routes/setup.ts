@@ -3,11 +3,22 @@ import type { Env } from '../types';
 import { createLogger } from '../lib/logger';
 import { ValidationError, AuthError, SetupError } from '../lib/error-types';
 import { resetCorsOriginsCache } from '../lib/cors-cache';
+import { createRateLimiter } from '../middleware/rate-limit';
 // R2 permission IDs no longer needed — we derive S3 credentials from the user's token
 
 const logger = createLogger('setup');
 
 const app = new Hono<{ Bindings: Env }>();
+
+/**
+ * Rate limiter for setup configure endpoint
+ * Limits to 5 configure attempts per minute
+ */
+const setupRateLimiter = createRateLimiter({
+  windowMs: 60000,
+  maxRequests: 5,
+  keyPrefix: 'setup-configure',
+});
 
 // Constants
 const CF_API_BASE = 'https://api.cloudflare.com/client/v4';
@@ -800,7 +811,25 @@ app.get('/detect-token', async (c) => {
  * Body: { customDomain: string, allowedUsers: string[], allowedOrigins?: string[] }
  * Token is read from env (CLOUDFLARE_API_TOKEN), not from request body.
  */
+app.use('/configure', setupRateLimiter);
 app.post('/configure', async (c) => {
+  // After initial setup is complete, require admin auth to reconfigure
+  const isComplete = await c.env.KV.get('setup:complete');
+  if (isComplete === 'true') {
+    const authHeader = c.req.header('Authorization');
+    const providedSecret = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (!providedSecret || !c.env.ADMIN_SECRET) {
+      throw new AuthError('Reconfiguration requires admin authentication');
+    }
+    // Timing-safe comparison
+    const encoder = new TextEncoder();
+    const a = encoder.encode(providedSecret);
+    const b = encoder.encode(c.env.ADMIN_SECRET);
+    if (a.byteLength !== b.byteLength || !crypto.subtle.timingSafeEqual(a, b)) {
+      throw new AuthError('Unauthorized');
+    }
+  }
+
   const {
     customDomain,
     allowedUsers,
@@ -908,7 +937,14 @@ app.post('/reset', async (c) => {
   const authHeader = c.req.header('Authorization');
   const providedSecret = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
 
-  if (!providedSecret || providedSecret !== c.env.ADMIN_SECRET) {
+  if (!providedSecret || !c.env.ADMIN_SECRET) {
+    throw new AuthError('Unauthorized');
+  }
+  // Timing-safe comparison
+  const encoder = new TextEncoder();
+  const a = encoder.encode(providedSecret);
+  const b = encoder.encode(c.env.ADMIN_SECRET);
+  if (a.byteLength !== b.byteLength || !crypto.subtle.timingSafeEqual(a, b)) {
     throw new AuthError('Unauthorized');
   }
 

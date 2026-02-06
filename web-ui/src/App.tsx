@@ -10,7 +10,8 @@ async function checkSetupStatus(): Promise<boolean> {
     const res = await fetch('/api/setup/status');
     const data = await res.json();
     return data.configured === true;
-  } catch {
+  } catch (e) {
+    console.error('Failed to check setup status:', e);
     // If status check fails, assume setup is needed
     return false;
   }

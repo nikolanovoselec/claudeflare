@@ -194,14 +194,14 @@ describe('Setup Store', () => {
       await setupStore.detectToken();
 
       expect(setupStore.tokenDetected).toBe(false);
-      expect(setupStore.tokenDetectError).toBe('Failed to detect token');
+      expect(setupStore.tokenDetectError).toBe('Network error');
     });
 
     it('should clear previous error on new detection attempt', async () => {
       // First call fails
       mockFetch.mockRejectedValue(new Error('Network error'));
       await setupStore.detectToken();
-      expect(setupStore.tokenDetectError).toBe('Failed to detect token');
+      expect(setupStore.tokenDetectError).toBe('Network error');
 
       // Second call succeeds
       mockFetch.mockResolvedValue(
@@ -483,7 +483,7 @@ describe('Setup Store', () => {
       const result = await setupStore.configure();
 
       expect(result).toBe(false);
-      expect(setupStore.configureError).toBe('Configuration request failed');
+      expect(setupStore.configureError).toBe('Network error');
     });
 
     it('should store configure steps', async () => {

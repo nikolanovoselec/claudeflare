@@ -7,7 +7,7 @@ import { getContainerId, checkContainerHealth } from '../lib/container-helpers';
 import { getUserFromRequest, getBucketName } from '../lib/access';
 import { createLogger } from '../lib/logger';
 import { containerSessionsCB } from '../lib/circuit-breakers';
-import { WebSocketUpgradeError, NotFoundError } from '../lib/error-types';
+import { NotFoundError } from '../lib/error-types';
 
 const logger = createLogger('terminal');
 
@@ -98,11 +98,6 @@ export async function handleWebSocketUpgrade(
     });
   }
 
-  const url = new URL(request.url);
-  const browserSessionId = url.searchParams.get('browserSession');
-
-  logger.info('WebSocket upgrade requested', { fullSessionId, browserSessionId });
-
   try {
     // Authenticate user
     const user = getUserFromRequest(request, env);
@@ -111,6 +106,17 @@ export async function handleWebSocketUpgrade(
         status: 401,
         headers: { 'Content-Type': 'application/json' }
       });
+    }
+
+    // Check user allowlist in KV (same check as authMiddleware)
+    if (env.DEV_MODE !== 'true') {
+      const userEntry = await env.KV.get(`user:${user.email}`);
+      if (!userEntry) {
+        return new Response(JSON.stringify({ error: 'User not in allowlist' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
     }
 
     const bucketName = getBucketName(user.email);
@@ -169,101 +175,6 @@ const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
 // Use shared auth middleware
 app.use('*', authMiddleware);
-
-/**
- * GET /api/terminal/:sessionId/ws
- * WebSocket upgrade handler for terminal connections
- *
- * This route:
- * 1. Authenticates the user via Cloudflare Access headers
- * 2. Validates that the session exists and belongs to the user
- * 3. Forwards the WebSocket connection directly to the container's terminal server
- *
- * Note: Cloudflare Containers automatically handle WebSocket upgrade when
- * using container.fetch() with a WebSocket request.
- */
-app.get('/:sessionId/ws', async (c) => {
-  const reqLogger = logger.child({ requestId: c.req.header('X-Request-ID') });
-  const bucketName = c.get('bucketName');
-  const fullSessionId = c.req.param('sessionId');
-
-  // Parse compound session ID: "baseSessionId-terminalId" or just "baseSessionId"
-  // Terminal IDs are 1-6, so we look for pattern ending in -1 through -6
-  const compoundMatch = fullSessionId.match(/^(.+)-([1-6])$/);
-  const baseSessionId = compoundMatch ? compoundMatch[1] : fullSessionId;
-  const terminalId = compoundMatch ? compoundMatch[2] : '1';
-
-  // Verify this is a WebSocket upgrade request
-  const upgradeHeader = c.req.header('Upgrade');
-  if (!upgradeHeader || upgradeHeader.toLowerCase() !== 'websocket') {
-    throw new WebSocketUpgradeError();
-  }
-
-  // Validate that the BASE session exists and belongs to this user
-  const sessionKey = getSessionKey(bucketName, baseSessionId);
-  const session = await c.env.KV.get<Session>(sessionKey, 'json');
-
-  if (!session) {
-    throw new NotFoundError('Session');
-  }
-
-  // Update last accessed timestamp (don't await to not block WebSocket)
-  c.executionCtx.waitUntil(
-    (async () => {
-      session.lastAccessedAt = new Date().toISOString();
-      await c.env.KV.put(sessionKey, JSON.stringify(session));
-    })()
-  );
-
-  // Get the container for this session (container is per-session, not per-terminal)
-  const containerId = getContainerId(bucketName, baseSessionId);
-  const container = getContainer(c.env.CONTAINER, containerId);
-
-  // Construct the WebSocket URL to the container's terminal server
-  // Terminal server runs on port 8080 (default) at /terminal path
-  // Pass compound session ID so each terminal gets its own PTY
-  const terminalUrl = new URL(c.req.url);
-  terminalUrl.pathname = '/terminal';
-  terminalUrl.searchParams.set('session', fullSessionId);
-  terminalUrl.searchParams.set('name', `${session.name} - Terminal ${terminalId}`);
-
-  try {
-    // Forward the original request with all WebSocket headers
-    // This is exactly how the working claude-cloudflare project does it
-    // NO switchPort - terminal server is on default port 8080
-    reqLogger.info('Forwarding WebSocket to container', { port: 8080, url: terminalUrl.toString() });
-
-    // Get the raw request and create a new Request with the container URL
-    // but preserving all the original headers (especially WebSocket upgrade headers)
-    const rawRequest = c.req.raw;
-    const containerRequest = new Request(terminalUrl.toString(), {
-      method: rawRequest.method,
-      headers: rawRequest.headers,
-      // Note: WebSocket requests don't have a body, but include this for completeness
-      body: rawRequest.body,
-      // Preserve the duplex setting for streaming
-    });
-
-    // container.fetch() with proper WebSocket headers will handle upgrade
-    const response = await container.fetch(containerRequest);
-
-    reqLogger.info('Container response received', { status: response.status });
-
-    return response;
-  } catch (error) {
-    reqLogger.error('Error connecting to container', error instanceof Error ? error : new Error(String(error)));
-
-    // Check if it's a container not running error
-    if (
-      error instanceof Error &&
-      error.message.includes('Container not running')
-    ) {
-      return c.json({ error: 'Container not running. Please start the session first.' }, 503);
-    }
-
-    return c.json({ error: 'Failed to connect to terminal. Please try again.' }, 500);
-  }
-});
 
 /**
  * GET /api/terminal/:sessionId/status

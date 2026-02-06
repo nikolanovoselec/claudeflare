@@ -3,6 +3,9 @@ import type { Env } from '../types';
 import { authMiddleware, type AuthVariables } from '../middleware/auth';
 import { getAllUsers, syncAccessPolicy } from '../lib/access-policy';
 import { getBucketName } from '../lib/access';
+import { createLogger } from '../lib/logger';
+
+const logger = createLogger('users');
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 app.use('*', authMiddleware);
@@ -43,6 +46,7 @@ app.post('/', async (c) => {
     }
   } catch (e) {
     // Non-fatal: user added to KV even if Access sync fails
+    logger.error('Failed to sync Access policy', e instanceof Error ? e : new Error(String(e)));
   }
 
   return c.json({ success: true, email });
@@ -76,6 +80,7 @@ app.delete('/:email', async (c) => {
     }
   } catch (e) {
     // Non-fatal
+    logger.error('Failed to delete R2 bucket', e instanceof Error ? e : new Error(String(e)));
   }
 
   // Sync Access policy
@@ -87,6 +92,7 @@ app.delete('/:email', async (c) => {
     }
   } catch (e) {
     // Non-fatal
+    logger.error('Failed to sync Access policy', e instanceof Error ? e : new Error(String(e)));
   }
 
   return c.json({ success: true, email });

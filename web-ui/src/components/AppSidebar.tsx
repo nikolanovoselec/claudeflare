@@ -1,4 +1,4 @@
-import { Component, Show, Accessor } from 'solid-js';
+import { Component, Show } from 'solid-js';
 import { mdiMenu, mdiChevronLeft } from '@mdi/js';
 import Icon from './Icon';
 import SessionList from './SessionList';

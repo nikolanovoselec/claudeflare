@@ -1,18 +1,15 @@
 import { describe, it, expect } from 'vitest';
 import {
   TERMINAL_SERVER_PORT,
-  HEALTH_SERVER_PORT,
   SESSION_ID_PATTERN,
   MAX_HEALTH_CHECK_ATTEMPTS,
   HEALTH_CHECK_INTERVAL_MS,
-  TERMINAL_REFRESH_DELAY_MS,
   DEFAULT_ALLOWED_ORIGINS,
 } from '../../lib/constants';
 
 describe('constants', () => {
   it('exports port constants', () => {
     expect(TERMINAL_SERVER_PORT).toBe(8080);
-    expect(HEALTH_SERVER_PORT).toBe(8080); // Consolidated into terminal server
   });
 
   it('exports session ID validation pattern', () => {
@@ -30,10 +27,6 @@ describe('constants', () => {
   it('exports retry/polling constants', () => {
     expect(MAX_HEALTH_CHECK_ATTEMPTS).toBe(30);
     expect(HEALTH_CHECK_INTERVAL_MS).toBe(1000);
-  });
-
-  it('exports terminal refresh delay', () => {
-    expect(TERMINAL_REFRESH_DELAY_MS).toBe(150);
   });
 
   it('exports default allowed origins', () => {

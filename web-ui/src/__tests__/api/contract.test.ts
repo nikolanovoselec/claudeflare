@@ -138,7 +138,7 @@ describe('Frontend-Backend Contract Tests', () => {
       });
 
       it('should accept session with all status values', async () => {
-        const validStatuses = ['stopped', 'starting', 'running', 'error'];
+        const validStatuses = ['stopped', 'initializing', 'running', 'error'];
 
         for (const status of validStatuses) {
           mockFetch.mockResolvedValueOnce({

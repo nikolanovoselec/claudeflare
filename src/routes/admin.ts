@@ -15,16 +15,22 @@ const app = new Hono<{ Bindings: Env }>();
 
 /**
  * Verify admin authentication
- * Accepts secret from Authorization header (preferred) or query param (legacy)
+ * Accepts secret from Authorization header only
  */
 function verifyAdminAuth(c: { env: Env; req: { header: (name: string) => string | undefined; query: (name: string) => string | undefined } }): void {
   const adminSecret = c.env.ADMIN_SECRET;
   const authHeader = c.req.header('Authorization');
   const providedSecret = authHeader?.startsWith('Bearer ')
     ? authHeader.slice(7)
-    : c.req.query('secret');
+    : null;
 
-  if (!adminSecret || !providedSecret || adminSecret !== providedSecret) {
+  if (!adminSecret || !providedSecret) {
+    throw new AuthError('Unauthorized');
+  }
+  const encoder = new TextEncoder();
+  const a = encoder.encode(adminSecret);
+  const b = encoder.encode(providedSecret);
+  if (a.byteLength !== b.byteLength || !crypto.subtle.timingSafeEqual(a, b)) {
     throw new AuthError('Unauthorized');
   }
 }

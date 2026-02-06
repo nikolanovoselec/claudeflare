@@ -5,25 +5,6 @@ import { SessionSchema, StartupStatusSchema, UserSchema } from '../lib/schemas';
 
 const BASE_URL = '/api';
 
-/**
- * Generate a unique browser session ID (8 alphanumeric chars)
- * Called once per browser tab
- */
-function generateSessionId(): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let result = '';
-  for (let i = 0; i < 8; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
-
-/**
- * Unique session ID for this browser tab
- * Each tab gets its own container
- */
-const BROWSER_SESSION_ID = generateSessionId();
-
 class ApiError extends Error {
   constructor(
     public status: number,
@@ -143,6 +124,12 @@ export async function deleteSession(id: string): Promise<void> {
   });
 }
 
+// Session status response schema
+export const SessionStatusResponseSchema = z.object({
+  status: z.string(),
+  ptyActive: z.boolean().optional(),
+});
+
 /**
  * Get session and container status
  * @see src/routes/session.ts GET /:id/status for backend implementation
@@ -150,7 +137,7 @@ export async function deleteSession(id: string): Promise<void> {
 export async function getSessionStatus(
   id: string
 ): Promise<{ status: string; ptyActive?: boolean }> {
-  return fetchApi(`/sessions/${id}/status`);
+  return fetchApi(`/sessions/${id}/status`, {}, SessionStatusResponseSchema);
 }
 
 // Get container startup status (polling endpoint)
@@ -193,11 +180,15 @@ export function startSession(
     }
 
     // Start polling for status
+    let consecutiveErrors = 0;
+    const MAX_CONSECUTIVE_ERRORS = 10;
+
     const poll = async () => {
       if (cancelled) return;
 
       try {
         const status = await getStartupStatus(id);
+        consecutiveErrors = 0;
 
         // Convert status to InitProgress format with real-time details
         const details: { key: string; value: string; status?: 'ok' | 'error' | 'pending' }[] = [];
@@ -277,8 +268,13 @@ export function startSession(
           onError(status.error || 'Container startup failed');
         }
       } catch (e) {
+        consecutiveErrors++;
         console.error('Polling error:', e);
-        // Don't stop polling on network errors, just log
+        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+          if (pollInterval) clearInterval(pollInterval);
+          onError('Polling failed after too many consecutive errors');
+          return;
+        }
       }
     };
 
@@ -311,8 +307,23 @@ export interface UserEntry {
   addedAt: string;
 }
 
+const UserEntrySchema = z.object({
+  email: z.string(),
+  addedBy: z.string(),
+  addedAt: z.string(),
+});
+
+const GetUsersResponseSchema = z.object({
+  users: z.array(UserEntrySchema),
+});
+
+const UserMutationResponseSchema = z.object({
+  success: z.boolean(),
+  email: z.string(),
+});
+
 export async function getUsers(): Promise<UserEntry[]> {
-  const data = await fetchApi<{ users: UserEntry[] }>('/users');
+  const data = await fetchApi('/users', {}, GetUsersResponseSchema);
   return data.users;
 }
 
@@ -320,13 +331,13 @@ export async function addUser(email: string): Promise<void> {
   await fetchApi('/users', {
     method: 'POST',
     body: JSON.stringify({ email }),
-  });
+  }, UserMutationResponseSchema);
 }
 
 export async function removeUser(email: string): Promise<void> {
   await fetchApi(`/users/${encodeURIComponent(email)}`, {
     method: 'DELETE',
-  });
+  }, UserMutationResponseSchema);
 }
 
 // WebSocket URL helper - uses compound session ID for multiple terminals per session
@@ -336,5 +347,5 @@ export function getTerminalWebSocketUrl(sessionId: string, terminalId: string = 
   // Compound session ID: sessionId-terminalId (e.g., "abc123-1", "abc123-2")
   // Backend treats each as a unique PTY session within the same container
   const compoundSessionId = `${sessionId}-${terminalId}`;
-  return `${protocol}//${host}/api/terminal/${compoundSessionId}/ws?browserSession=${BROWSER_SESSION_ID}`;
+  return `${protocol}//${host}/api/terminal/${compoundSessionId}/ws`;
 }

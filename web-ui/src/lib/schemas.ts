@@ -5,7 +5,7 @@ export const SessionSchema = z.object({
   name: z.string(),
   createdAt: z.string(),
   lastAccessedAt: z.string(),
-  status: z.enum(['stopped', 'starting', 'running', 'error']).optional(),
+  status: z.enum(['stopped', 'initializing', 'running', 'error']).optional(),
 });
 
 export const StartupStatusSchema = z.object({
@@ -20,7 +20,3 @@ export const UserSchema = z.object({
   authenticated: z.boolean(),
 });
 
-// Export types derived from schemas
-export type SessionFromSchema = z.infer<typeof SessionSchema>;
-export type StartupStatusFromSchema = z.infer<typeof StartupStatusSchema>;
-export type UserFromSchema = z.infer<typeof UserSchema>;

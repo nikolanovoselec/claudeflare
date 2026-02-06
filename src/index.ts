@@ -106,9 +106,16 @@ app.use('*', async (c, next) => {
   } else if (await isAllowedOrigin(origin, c.env)) {
     // Check against configurable allowed patterns
     allowedOrigin = origin;
-  } else if (origin.includes('localhost') || origin.includes('127.0.0.1')) {
-    // Allow localhost in development
-    allowedOrigin = origin;
+  } else if (c.env.DEV_MODE === 'true') {
+    // Allow localhost only in development mode
+    try {
+      const originUrl = new URL(origin);
+      if (originUrl.hostname === 'localhost' || originUrl.hostname === '127.0.0.1') {
+        allowedOrigin = origin;
+      }
+    } catch {
+      // Invalid origin URL, skip
+    }
   }
 
   // Handle preflight OPTIONS requests
@@ -120,7 +127,7 @@ app.use('*', async (c, next) => {
         'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
         'Access-Control-Allow-Headers': 'Content-Type, Authorization',
         'Access-Control-Allow-Credentials': 'true',
-        'Access-Control-Max-Age': CORS_MAX_AGE_SECONDS,
+        'Access-Control-Max-Age': CORS_MAX_AGE_SECONDS.toString(),
       },
     });
   }

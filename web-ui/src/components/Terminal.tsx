@@ -5,6 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import { terminalStore } from '../stores/terminal';
 import { sessionStore } from '../stores/session';
+import { CSS_TRANSITION_DELAY_MS } from '../lib/constants';
 import InitProgress from './InitProgress';
 
 interface TerminalProps {
@@ -18,21 +19,12 @@ interface TerminalProps {
   onInitComplete?: () => void;
 }
 
-// Patterns that indicate Claude has fully loaded
-const CLAUDE_READY_PATTERNS = [
-  'Welcome back',        // Claude welcome message
-  'Tips for getting',    // Tips section
-  '~/workspace',         // Working directory shown
-  'Try "',               // Suggestion prompt
-];
-
 const Terminal: Component<TerminalProps> = (props) => {
   let containerRef: HTMLDivElement | undefined;
   let terminal: XTerm | undefined;
   let fitAddon: FitAddon | undefined;
   let cleanup: (() => void) | undefined;
   let resizeObserver: ResizeObserver | undefined;
-  let outputBuffer = '';  // Buffer to accumulate terminal output for pattern matching
 
   const [dimensions, setDimensions] = createSignal({ cols: 80, rows: 24 });
 
@@ -230,7 +222,7 @@ const Terminal: Component<TerminalProps> = (props) => {
           terminal.scrollToBottom();
           terminal.refresh(0, terminal.rows - 1);
         });
-      }, 50); // 50ms delay for CSS transitions to complete
+      }, CSS_TRANSITION_DELAY_MS);
     }
   });
 

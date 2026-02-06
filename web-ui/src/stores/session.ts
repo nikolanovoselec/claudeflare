@@ -1,5 +1,4 @@
 import { createStore, produce } from 'solid-js/store';
-import { createSignal, createEffect } from 'solid-js';
 import type { Session, SessionWithStatus, SessionStatus, InitProgress, TerminalTab, SessionTerminals, TileLayout, TilingState } from '../types';
 import * as api from '../api/client';
 import { terminalStore } from './terminal';
@@ -66,9 +65,6 @@ const [state, setState] = createStore<SessionState>({
   terminalsPerSession: loadTerminalsFromStorage(),
   sessionMetrics: {},
 });
-
-// Derived signals
-const [isLoading, setIsLoading] = createSignal(false);
 
 // Get active session
 function getActiveSession(): SessionWithStatus | undefined {

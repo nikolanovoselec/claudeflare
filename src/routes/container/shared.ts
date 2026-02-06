@@ -15,6 +15,7 @@ export const CONTAINER_FETCH_TIMEOUT = 5000;
 /**
  * Fetch with timeout wrapper for container operations
  * Returns null if request times out instead of hanging indefinitely
+ * Real (non-timeout) errors are re-thrown to the caller
  */
 export async function fetchWithTimeout(
   fetchFn: () => Promise<Response>,
@@ -28,14 +29,17 @@ export async function fetchWithTimeout(
       fetchFn(),
       new Promise<never>((_, reject) => {
         controller.signal.addEventListener('abort', () => {
-          reject(new Error('Fetch timeout'));
+          reject(new DOMException('The operation was aborted.', 'AbortError'));
         });
       }),
     ]);
-    clearTimeout(timeoutId);
     return response;
   } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return null; // Timeout — return null as before
+    }
+    throw error; // Real errors should propagate
+  } finally {
     clearTimeout(timeoutId);
-    return null;
   }
 }

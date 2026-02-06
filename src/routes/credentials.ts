@@ -30,17 +30,6 @@ function getCredentialStatusKey(bucketName: string): string {
 }
 
 /**
- * POST /api/credentials
- * Upload credentials JSON to R2 (encrypted if ENCRYPTION_KEY is set)
- *
- * Body: { claudeAiOauth: { accessToken, refreshToken, expiresAt, scopes } }
- */
-app.post('/', async (c) => {
-  // R2 STORAGE binding removed — credential upload not available
-  throw new CredentialsError('upload: R2 STORAGE binding no longer available');
-});
-
-/**
  * GET /api/credentials
  * Check if credentials exist and get status
  *

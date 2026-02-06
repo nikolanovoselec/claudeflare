@@ -140,8 +140,8 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
       await addUser(email);
       setUserEmail('');
       await loadUsers();
-    } catch (e: any) {
-      setUserError(e.message || 'Failed to add user');
+    } catch (e) {
+      setUserError(e instanceof Error ? e.message : 'Failed to add user');
     }
   };
 
@@ -150,8 +150,8 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
       setUserError('');
       await removeUser(email);
       await loadUsers();
-    } catch (e: any) {
-      setUserError(e.message || 'Failed to remove user');
+    } catch (e) {
+      setUserError(e instanceof Error ? e.message : 'Failed to remove user');
     }
   };
 

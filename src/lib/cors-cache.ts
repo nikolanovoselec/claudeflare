@@ -5,11 +5,16 @@
 
 // Cache KV-stored origins per isolate (avoids KV read on every request)
 let cachedKvOrigins: string[] | null = null;
+let cacheTimestamp = 0;
+const CORS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
- * Get the cached KV origins.
+ * Get the cached KV origins. Returns null if cache is empty or expired.
  */
 export function getCachedKvOrigins(): string[] | null {
+  if (cachedKvOrigins !== null && Date.now() - cacheTimestamp > CORS_CACHE_TTL_MS) {
+    cachedKvOrigins = null; // Expired
+  }
   return cachedKvOrigins;
 }
 
@@ -18,6 +23,7 @@ export function getCachedKvOrigins(): string[] | null {
  */
 export function setCachedKvOrigins(origins: string[]): void {
   cachedKvOrigins = origins;
+  cacheTimestamp = Date.now();
 }
 
 /**
@@ -26,4 +32,5 @@ export function setCachedKvOrigins(origins: string[]): void {
  */
 export function resetCorsOriginsCache(): void {
   cachedKvOrigins = null;
+  cacheTimestamp = 0;
 }

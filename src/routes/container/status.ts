@@ -3,10 +3,8 @@
  * Handles GET /health, /state, /startup-status
  */
 import { Hono } from 'hono';
-import { switchPort } from '@cloudflare/containers';
 import type { Env } from '../../types';
 import { getContainerContext, checkContainerHealth } from '../../lib/container-helpers';
-import { TERMINAL_SERVER_PORT, HEALTH_SERVER_PORT } from '../../lib/constants';
 import { AuthVariables } from '../../middleware/auth';
 import { ContainerError } from '../../lib/error-types';
 import {
@@ -131,10 +129,7 @@ app.get('/startup-status', async (c) => {
 
     // Step 2: Check health server (port 8080) - now consolidated into terminal server
     // Returns sync status from /tmp/sync-status.json and system metrics (cpu/mem/hdd)
-    const healthRequest = switchPort(
-      new Request('http://container/health', { method: 'GET' }),
-      HEALTH_SERVER_PORT
-    );
+    const healthRequest = new Request('http://container/health', { method: 'GET' });
     const healthRes = await fetchWithTimeout(() =>
       containerHealthCB.execute(() => container.fetch(healthRequest))
     );
@@ -206,10 +201,7 @@ app.get('/startup-status', async (c) => {
 
     // Sync complete (success or skipped) - now check terminal server
     // Step 4: Check terminal server (port 8080) - THIS IS THE CRITICAL CHECK
-    const terminalHealthRequest = switchPort(
-      new Request('http://container/health', { method: 'GET' }),
-      TERMINAL_SERVER_PORT
-    );
+    const terminalHealthRequest = new Request('http://container/health', { method: 'GET' });
     const terminalHealthRes = await fetchWithTimeout(() =>
       containerHealthCB.execute(() => container.fetch(terminalHealthRequest))
     );
@@ -249,10 +241,7 @@ app.get('/startup-status', async (c) => {
     }
 
     // Terminal server is responding! Now verify sessions endpoint
-    const sessionsRequest = switchPort(
-      new Request('http://container/sessions', { method: 'GET' }),
-      TERMINAL_SERVER_PORT
-    );
+    const sessionsRequest = new Request('http://container/sessions', { method: 'GET' });
     const sessionsRes = await fetchWithTimeout(() =>
       containerSessionsCB.execute(() => container.fetch(sessionsRequest))
     );

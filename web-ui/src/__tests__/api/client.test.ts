@@ -1011,7 +1011,7 @@ describe('API Client', () => {
 
       const url = getTerminalWebSocketUrl('session-123', '2');
 
-      expect(url).toMatch(/^wss:\/\/claudeflare\.workers\.dev\/api\/terminal\/session-123-2\/ws\?browserSession=/);
+      expect(url).toBe('wss://claudeflare.workers.dev/api/terminal/session-123-2/ws');
     });
 
     it('should use ws: protocol for http:', () => {
@@ -1027,7 +1027,7 @@ describe('API Client', () => {
 
       const url = getTerminalWebSocketUrl('session-123', '1');
 
-      expect(url).toMatch(/^ws:\/\/localhost:3000\/api\/terminal\/session-123-1\/ws\?browserSession=/);
+      expect(url).toBe('ws://localhost:3000/api/terminal/session-123-1/ws');
     });
 
     it('should default to terminal ID 1', () => {
