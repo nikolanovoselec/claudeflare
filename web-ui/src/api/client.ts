@@ -304,6 +304,31 @@ export async function stopSession(id: string): Promise<void> {
   });
 }
 
+// User management
+export interface UserEntry {
+  email: string;
+  addedBy: string;
+  addedAt: string;
+}
+
+export async function getUsers(): Promise<UserEntry[]> {
+  const data = await fetchApi<{ users: UserEntry[] }>('/users');
+  return data.users;
+}
+
+export async function addUser(email: string): Promise<void> {
+  await fetchApi('/users', {
+    method: 'POST',
+    body: JSON.stringify({ email }),
+  });
+}
+
+export async function removeUser(email: string): Promise<void> {
+  await fetchApi(`/users/${encodeURIComponent(email)}`, {
+    method: 'DELETE',
+  });
+}
+
 // WebSocket URL helper - uses compound session ID for multiple terminals per session
 export function getTerminalWebSocketUrl(sessionId: string, terminalId: string = '1'): string {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

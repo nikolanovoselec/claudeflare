@@ -95,6 +95,22 @@
   animation: fadeInUp 200ms ease-out 100ms backwards;
 }
 
+.settings-panel.open .settings-section-3 {
+  animation: fadeInUp 200ms ease-out 150ms backwards;
+}
+
+/* Error message */
+.settings-error {
+  padding: var(--space-2) 0;
+  font-size: var(--text-xs);
+  color: var(--color-error);
+}
+
+/* Hint text */
+.settings-hint {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
 
 .settings-section-header {
   display: flex;
@@ -229,7 +245,8 @@
   }
 
   .settings-panel.open .settings-section-1,
-  .settings-panel.open .settings-section-2 {
+  .settings-panel.open .settings-section-2,
+  .settings-panel.open .settings-section-3 {
     animation: none;
   }
 }

@@ -3,8 +3,13 @@ import {
   mdiClose,
   mdiPaletteOutline,
   mdiConsole,
+  mdiAccountGroupOutline,
 } from '@mdi/js';
 import Icon from './Icon';
+import Button from './ui/Button';
+import Input from './ui/Input';
+import { getUsers, addUser, removeUser } from '../api/client';
+import type { UserEntry } from '../api/client';
 import '../styles/settings-panel.css';
 
 export interface Settings {
@@ -47,6 +52,7 @@ export const saveSettings = (settings: Settings): void => {
 export interface SettingsPanelProps {
   isOpen: boolean;
   onClose: () => void;
+  currentUserEmail?: string;
 }
 
 const fontSizeOptions = [12, 13, 14, 15, 16];
@@ -85,6 +91,12 @@ const scrollbackOptions = [1000, 5000, 10000, 50000];
 const SettingsPanel: Component<SettingsPanelProps> = (props) => {
   const [settings, setSettings] = createSignal<Settings>(defaultSettings);
 
+  // User management state
+  const [users, setUsers] = createSignal<UserEntry[]>([]);
+  const [usersLoading, setUsersLoading] = createSignal(false);
+  const [userEmail, setUserEmail] = createSignal('');
+  const [userError, setUserError] = createSignal('');
+
   // Load settings on mount
   onMount(() => {
     setSettings(loadSettings());
@@ -97,6 +109,56 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
 
   const updateSetting = <K extends keyof Settings>(key: K, value: Settings[K]) => {
     setSettings((prev) => ({ ...prev, [key]: value }));
+  };
+
+  // User management functions
+  const loadUsers = async () => {
+    setUsersLoading(true);
+    setUserError('');
+    try {
+      const result = await getUsers();
+      setUsers(result);
+    } catch (e) {
+      setUserError('Failed to load users');
+    } finally {
+      setUsersLoading(false);
+    }
+  };
+
+  // Load users when panel opens
+  createEffect(() => {
+    if (props.isOpen) {
+      loadUsers();
+    }
+  });
+
+  const handleAddUser = async () => {
+    const email = userEmail().trim().toLowerCase();
+    if (!email || !email.includes('@')) return;
+    try {
+      setUserError('');
+      await addUser(email);
+      setUserEmail('');
+      await loadUsers();
+    } catch (e: any) {
+      setUserError(e.message || 'Failed to add user');
+    }
+  };
+
+  const handleRemoveUser = async (email: string) => {
+    try {
+      setUserError('');
+      await removeUser(email);
+      await loadUsers();
+    } catch (e: any) {
+      setUserError(e.message || 'Failed to remove user');
+    }
+  };
+
+  const handleUserEmailKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      handleAddUser();
+    }
   };
 
   // Handle Escape key to close panel
@@ -246,6 +308,67 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
                 </For>
               </select>
             </div>
+          </section>
+
+          {/* User Management Section */}
+          <section class="settings-section settings-section-3" data-testid="settings-user-management">
+            <div class="settings-section-header">
+              <Icon path={mdiAccountGroupOutline} size={16} />
+              <h3 class="settings-section-title">User Management</h3>
+            </div>
+
+            {/* Add user form */}
+            <div class="setting-row" style="flex-direction: column; align-items: stretch">
+              <div style="display: flex; gap: 8px; width: 100%; align-items: flex-start">
+                <div style="flex: 1" onKeyDown={handleUserEmailKeyDown}>
+                  <Input
+                    value={userEmail()}
+                    onInput={(value) => { setUserEmail(value); setUserError(''); }}
+                    placeholder="user@example.com"
+                  />
+                </div>
+                <Button onClick={handleAddUser} variant="secondary" size="sm">Add</Button>
+              </div>
+            </div>
+
+            {/* Error */}
+            <Show when={userError()}>
+              <div class="settings-error" data-testid="settings-user-error">{userError()}</div>
+            </Show>
+
+            {/* User list */}
+            <Show when={usersLoading()}>
+              <div class="setting-row" style="justify-content: center">
+                <span class="settings-hint">Loading users...</span>
+              </div>
+            </Show>
+            <Show when={!usersLoading()}>
+              <For each={users()}>
+                {(user) => (
+                  <div class="setting-row" style="display: flex; justify-content: space-between; align-items: center" data-testid="settings-user-row">
+                    <div style="min-width: 0; flex: 1">
+                      <span style="font-size: var(--text-sm); color: var(--color-text-primary)">{user.email}</span>
+                      <span class="settings-hint" style="margin-left: 8px; font-size: var(--text-xs)">
+                        added by {user.addedBy}
+                      </span>
+                    </div>
+                    <Button
+                      onClick={() => handleRemoveUser(user.email)}
+                      variant="ghost"
+                      size="sm"
+                      disabled={user.email === props.currentUserEmail}
+                    >
+                      Remove
+                    </Button>
+                  </div>
+                )}
+              </For>
+            </Show>
+            <Show when={!usersLoading() && users().length === 0 && !userError()}>
+              <div class="setting-row" style="justify-content: center">
+                <span class="settings-hint">No users added yet</span>
+              </div>
+            </Show>
           </section>
 
         </div>

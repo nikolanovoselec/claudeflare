@@ -5,6 +5,7 @@ import containerRoutes from './routes/container/index';
 import sessionRoutes from './routes/session/index';
 import terminalRoutes, { validateWebSocketRoute, handleWebSocketUpgrade } from './routes/terminal';
 import credentialsRoutes from './routes/credentials';
+import usersRoutes from './routes/users';
 import setupRoutes from './routes/setup';
 import adminRoutes from './routes/admin';
 import { DEFAULT_ALLOWED_ORIGINS, REQUEST_ID_LENGTH, CORS_MAX_AGE_SECONDS } from './lib/constants';
@@ -103,9 +104,21 @@ app.route('/api/container', containerRoutes);
 app.route('/api/sessions', sessionRoutes);
 app.route('/api/terminal', terminalRoutes);
 app.route('/api/credentials', credentialsRoutes);
+app.route('/api/users', usersRoutes);
 
 // 404 fallback - only for API routes
 app.notFound((c) => c.json({ error: 'Not found' }, 404));
+
+// Cache setup status per isolate (avoids KV read on every request)
+let setupComplete: boolean | null = null;
+
+/**
+ * Reset the in-memory setup cache. Call this when setup completes
+ * so the next request re-checks KV.
+ */
+export function resetSetupCache() {
+  setupComplete = null;
+}
 
 // ============================================================================
 // Global Error Handler
@@ -153,6 +166,22 @@ export default {
     // Non-API routes fall through to static assets (SPA)
     if (url.pathname.startsWith('/api/') || url.pathname === '/health') {
       return app.fetch(request, env, ctx);
+    }
+
+    // Setup redirect: if setup is not complete, redirect non-setup pages to /setup
+    const path = url.pathname;
+    if (path !== '/setup' && !path.startsWith('/setup/')) {
+      // Check setup status (with in-memory cache)
+      if (setupComplete === null) {
+        const status = await env.KV.get('setup:complete');
+        setupComplete = status === 'true';
+      }
+      if (!setupComplete) {
+        return new Response(null, {
+          status: 302,
+          headers: { Location: '/setup' },
+        });
+      }
     }
 
     // For all other routes, serve from static assets

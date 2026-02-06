@@ -27,6 +27,14 @@ export async function authMiddleware(c: Context<{ Bindings: Env; Variables: Auth
     return c.json({ error: 'Not authenticated' }, 401);
   }
 
+  // Check user allowlist in KV (skip in DEV_MODE)
+  if (c.env.DEV_MODE !== 'true') {
+    const userEntry = await c.env.KV.get(`user:${user.email}`);
+    if (!userEntry) {
+      return c.json({ error: 'Forbidden: user not in allowlist' }, 403);
+    }
+  }
+
   const bucketName = getBucketName(user.email);
   c.set('user', user);
   c.set('bucketName', bucketName);

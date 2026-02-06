@@ -1,7 +1,5 @@
 # Claudeflare
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/nikolanovoselec/claudeflare)
-
 Run Claude Code in your browser via Cloudflare Containers.
 
 ## What is this?
@@ -68,36 +66,38 @@ Browser (multiple tabs)
 
 ### API Token Permissions
 
-The setup wizard requires a Cloudflare API token with these permissions:
+The Cloudflare API token (set via GitHub Actions secret) requires these permissions:
 
-**Required:**
 - Account > Workers Scripts > Edit
 - Account > Workers R2 Storage > Edit
 - Account > Workers KV Storage > Edit
 - Account > Containers > Edit
-
-**Optional (for custom domain with Cloudflare Access):**
 - Account > Access: Apps and Policies > Edit
 - Zone > Zone > Read
 - Zone > DNS > Edit
 - Zone > Workers Routes > Edit
 
+All permissions are required because custom domain configuration is mandatory.
+
 ## Deployment
 
 ### One-Click Deploy
 
-Click the Deploy to Cloudflare button above to fork the repo and deploy via Workers Builds.
-After deployment, visit your worker URL to complete the setup wizard.
+> ![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)
+>
+> This button is intentionally not a link. Cloudflare Containers are a new feature
+> and one-click deploy doesn't support container image builds yet. I expect support
+> will be added in the future. For now, use GitHub Actions below — it takes 2 minutes.
 
-> **Note:** The Deploy button creates the Worker and assets, but does NOT build the container image
-> (Workers Builds doesn't have Docker). You'll need to set up GitHub Actions CI/CD for full
-> container support — the setup wizard guides you through this.
+### GitHub Actions (Recommended)
+
+Deployment is handled via GitHub Actions. Fork the repo, configure secrets, and push to main.
 
 ### Manual Deploy
 
 ```bash
 # Clone the repo
-git clone https://github.com/nikolanovoselec/claudeflare.git
+git clone https://github.com/your-username/claudeflare.git
 cd claudeflare
 
 # Install dependencies
@@ -117,7 +117,7 @@ The repo includes GitHub Actions workflows:
 
 | Workflow | Trigger | What it does |
 |----------|---------|-------------|
-| `deploy.yml` | Push to main, manual | Full deploy: tests + typecheck + Docker build + wrangler deploy |
+| `deploy.yml` | Push to main, manual | Full deploy: tests + typecheck + Docker build + wrangler deploy + set CLOUDFLARE_API_TOKEN secret |
 | `test.yml` | Pull requests | Tests + typecheck only (no deploy) |
 | `e2e.yml` | Manual | E2E tests against a deployed worker |
 
@@ -128,22 +128,26 @@ The repo includes GitHub Actions workflows:
 | `CLOUDFLARE_API_TOKEN` | API token with Workers Scripts Edit + R2 Edit permissions |
 | `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID |
 
-**Optional GitHub Variable:**
+**Optional GitHub Variables:**
 
-| Variable | Description |
-|----------|-------------|
-| `CLOUDFLARE_WORKER_NAME` | Custom worker name for forks (defaults to "claudeflare") |
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `CLOUDFLARE_WORKER_NAME` | No | Custom worker name for forks (defaults to `claudeflare`) |
+| `ACCOUNT_SUBDOMAIN` | For E2E | Your Cloudflare account subdomain (Workers & Pages → Overview) |
 
 ### Setup Wizard
 
-After deployment, the setup wizard guides you through initial configuration:
+After deployment, the setup wizard guides you through initial configuration (3 steps):
 
-1. **API Token** - Enter a Cloudflare API token with required permissions
-2. **Custom Domain** (optional) - The wizard automatically:
+1. **Welcome** - Auto-detects the Cloudflare API token from the worker environment (`CLOUDFLARE_API_TOKEN`, set by GitHub Actions)
+2. **Configure** - Enter your custom domain (required), allowed user emails, and optional allowed origins
+3. **Progress** - The wizard automatically:
    - Creates a DNS CNAME record pointing to your workers.dev URL
    - Adds a worker route for the custom domain
-   - Creates a Cloudflare Access application for authentication
-3. **Secrets** - R2 credentials and admin secret are derived and stored automatically
+   - Creates a Cloudflare Access application with user allowlist
+   - Derives and stores R2 credentials and admin secret
+
+The token is never entered manually -- it is read from `c.env.CLOUDFLARE_API_TOKEN` which is set as a worker secret by the GitHub Actions deploy workflow.
 
 The setup uses an upsert pattern, so you can re-run it without manually deleting existing DNS records or Access apps.
 
@@ -151,15 +155,13 @@ The setup uses an upsert pattern, so you can re-run it without manually deleting
 
 ### Wrangler Secrets
 
-These secrets are set automatically by the setup wizard:
-
-| Secret | Description |
-|--------|-------------|
-| `R2_ACCESS_KEY_ID` | Derived from API token ID |
-| `R2_SECRET_ACCESS_KEY` | SHA-256 hash of API token |
-| `CLOUDFLARE_API_TOKEN` | API token for R2 bucket creation |
-| `ADMIN_SECRET` | Generated randomly for admin endpoints |
-| `ENCRYPTION_KEY` | (Optional) AES-256 key for encrypting credentials at rest |
+| Secret | Set By | Description |
+|--------|--------|-------------|
+| `CLOUDFLARE_API_TOKEN` | GitHub Actions (`deploy.yml`) | API token for R2 bucket creation |
+| `R2_ACCESS_KEY_ID` | Setup wizard | Derived from API token ID |
+| `R2_SECRET_ACCESS_KEY` | Setup wizard | SHA-256 hash of API token |
+| `ADMIN_SECRET` | Setup wizard | Generated randomly for admin endpoints |
+| `ENCRYPTION_KEY` | Manual (optional) | AES-256 key for encrypting credentials at rest |
 
 ### Environment Variables (wrangler.toml)
 
@@ -204,7 +206,9 @@ Tests cover:
 - Error types (AppError hierarchy)
 - Circuit breaker pattern
 - Exponential backoff logic
-- Setup and session route handlers
+- Auth middleware (user allowlist checks)
+- Edge-level redirect (GET / -> 302 /setup)
+- Setup, session, and user management route handlers
 
 ### Frontend Unit Tests
 
@@ -224,10 +228,17 @@ Tests cover:
 Located in `e2e/`. Tests API endpoints against the deployed worker.
 
 ```bash
-npm run test:e2e
+# Set your account subdomain (found in CF dashboard > Workers & Pages > Overview)
+ACCOUNT_SUBDOMAIN=your-subdomain npm run test:e2e
+
+# With a custom worker name
+ACCOUNT_SUBDOMAIN=your-subdomain CLOUDFLARE_WORKER_NAME=my-worker npm run test:e2e
 ```
 
-Set `E2E_BASE_URL` environment variable to test against a different deployment.
+> **Important:** E2E tests require:
+> 1. `DEV_MODE = "true"` deployed to the worker (bypasses internal auth)
+> 2. **No Cloudflare Access on the workers.dev domain** -- if you enabled one-click Access on workers.dev, E2E requests will be blocked at the edge before reaching the worker. Disable it or use a test-specific URL.
+> 3. Re-deploy with `DEV_MODE = "false"` after testing
 
 ## Container Specs
 
@@ -249,6 +260,12 @@ Set `E2E_BASE_URL` environment variable to test against a different deployment.
 | `POST` | `/api/sessions` | Create session |
 | `DELETE` | `/api/sessions/:id` | Delete session |
 | `GET` | `/api/user` | Get authenticated user |
+| `GET` | `/api/users` | List allowed users |
+| `POST` | `/api/users` | Add allowed user |
+| `DELETE` | `/api/users/:email` | Remove allowed user |
+| `GET` | `/api/setup/status` | Check setup status (`{ configured, tokenDetected }`) |
+| `GET` | `/api/setup/detect-token` | Auto-detect token from env |
+| `POST` | `/api/setup/configure` | Run configuration (`{ customDomain, allowedUsers, allowedOrigins? }`) |
 | `WS` | `/api/terminal/:sessionId-:terminalId/ws` | Terminal WebSocket (compound ID) |
 
 ## Project Structure
@@ -261,8 +278,9 @@ src/
     container/          # Container lifecycle (start, stop, health)
     session/            # Session CRUD and lifecycle
     admin.ts            # Admin-only endpoints
+    users.ts            # User management API (GET/POST/DELETE)
   middleware/           # Shared middleware
-    auth.ts             # Authentication middleware
+    auth.ts             # Authentication middleware (checks user allowlist in KV)
     rate-limit.ts       # Rate limiting middleware
   lib/                  # Utility modules
     constants.ts        # Centralized config values
@@ -271,6 +289,7 @@ src/
     error-types.ts      # Centralized error classes (AppError, etc.)
     type-guards.ts      # Runtime type validation
     access.ts           # Auth helpers
+    access-policy.ts    # Shared user/Access operations helper
     r2-admin.ts         # R2 bucket management
     kv-keys.ts          # KV key utilities
     circuit-breaker.ts  # Circuit breaker for resilience
@@ -278,7 +297,12 @@ src/
     backoff.ts          # Exponential backoff with jitter
     crypto.ts           # AES-GCM encryption utilities
   container/            # Container Durable Object
-  __tests__/            # Unit tests (lib + routes)
+  __tests__/            # Unit tests (lib + middleware + routes)
+    index.test.ts       # Edge-level redirect tests
+    middleware/
+      auth.test.ts      # Auth middleware tests
+    routes/
+      users.test.ts     # User management route tests
 
 e2e/
   setup.ts              # E2E test setup
@@ -290,6 +314,11 @@ host/
 web-ui/
   src/                  # SolidJS frontend with xterm.js
     components/         # Terminal, SessionCard, Layout, AppSidebar, TerminalArea
+      setup/            # Setup wizard steps
+        SetupWizard.tsx
+        WelcomeStep.tsx     # Auto-detects token on mount
+        ConfigureStep.tsx   # Custom domain + email tags + allowed origins
+        ProgressStep.tsx
     stores/             # Session, terminal, setup state management
     api/                # API client
     lib/                # Frontend constants, Zod schemas, terminal config

@@ -229,7 +229,7 @@ const Layout: Component<LayoutProps> = (props) => {
       <StatusBar isConnected={isConnected()} lastSyncTime={lastSyncTime()} />
 
       {/* Settings Panel - slides in from right */}
-      <SettingsPanel isOpen={isSettingsOpen()} onClose={handleSettingsClose} />
+      <SettingsPanel isOpen={isSettingsOpen()} onClose={handleSettingsClose} currentUserEmail={props.userName} />
 
       <style>{`
         .layout {

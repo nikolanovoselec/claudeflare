@@ -2,9 +2,9 @@ import puppeteer, { Browser, Page, LaunchOptions } from 'puppeteer';
 
 /**
  * Base URL for the web UI
- * Can be overridden with E2E_BASE_URL environment variable
+ * Constructed from ACCOUNT_SUBDOMAIN + CLOUDFLARE_WORKER_NAME
  */
-export const BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:5173';
+export { BASE_URL } from '../config';
 
 /**
  * Default timeout for page operations (ms)

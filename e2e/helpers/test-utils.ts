@@ -1,4 +1,5 @@
 import puppeteer, { Browser, Page } from 'puppeteer';
+import { BASE_URL } from '../config';
 
 /**
  * E2E Test Utilities
@@ -7,8 +8,8 @@ import puppeteer, { Browser, Page } from 'puppeteer';
  * Extends the base helpers with container-specific and journey-specific functions.
  */
 
-// Configuration constants
-export const BASE_URL = process.env.E2E_BASE_URL || 'https://claudeflare.your-subdomain.workers.dev';
+// Re-export BASE_URL for consumers that import it from here
+export { BASE_URL } from '../config';
 export const TEST_EMAIL = 'user@example.com';
 
 // Timeouts

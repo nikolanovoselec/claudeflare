@@ -7,7 +7,6 @@ import {
   mdiCircleOutline,
   mdiLoading,
   mdiRocketLaunchOutline,
-  mdiMapMarkerOutline,
   mdiShieldLockOutline,
   mdiKeyOutline,
   mdiInformationOutline,
@@ -50,11 +49,9 @@ const ProgressStep: Component = () => {
   };
 
   const handleLaunch = () => {
-    // If custom domain, redirect there (will trigger CF Access login)
     if (setupStore.customDomainUrl) {
       window.location.href = setupStore.customDomainUrl;
     } else {
-      // Otherwise just reload (setup is complete, will show main app)
       window.location.reload();
     }
   };
@@ -124,7 +121,7 @@ const ProgressStep: Component = () => {
                   class="progress-button secondary"
                   onClick={() => setupStore.prevStep()}
                 >
-                  ← Back
+                  Back
                 </button>
                 <button class="progress-button primary" onClick={handleRetry}>
                   Retry
@@ -140,35 +137,28 @@ const ProgressStep: Component = () => {
         </h2>
 
         <div class="success-section">
-          <p class="success-message">Your Claudeflare instance is ready:</p>
+          <p class="success-message">Your Claudeflare instance is ready.</p>
 
-          <div class="url-list">
+          <Show when={setupStore.customDomainUrl}>
             <div class="url-item">
               <span class="url-icon">
-                <Icon path={mdiMapMarkerOutline} size={20} />
+                <Icon path={mdiShieldLockOutline} size={20} />
               </span>
               <div class="url-content">
-                <span class="url-label">workers.dev (unprotected):</span>
-                <a href={setupStore.workersDevUrl || ''} class="url-value">
-                  {setupStore.workersDevUrl}
+                <span class="url-label">Custom domain (with Access):</span>
+                <a href={setupStore.customDomainUrl || ''} class="url-value">
+                  {setupStore.customDomainUrl}
                 </a>
+                <span class="url-note">Protected by Cloudflare Access</span>
               </div>
             </div>
+          </Show>
 
-            <Show when={setupStore.customDomainUrl}>
-              <div class="url-item">
-                <span class="url-icon">
-                  <Icon path={mdiShieldLockOutline} size={20} />
-                </span>
-                <div class="url-content">
-                  <span class="url-label">Custom domain (with Access):</span>
-                  <a href={setupStore.customDomainUrl || ''} class="url-value">
-                    {setupStore.customDomainUrl}
-                  </a>
-                  <span class="url-note">Protected by Cloudflare Access</span>
-                </div>
-              </div>
-            </Show>
+          <div class="access-note">
+            <Icon path={mdiInformationOutline} size={16} class="note-icon" />
+            <span>
+              To protect your workers.dev URL, enable one-click Access in the Cloudflare dashboard.
+            </span>
           </div>
 
           <Show when={setupStore.adminSecret}>
@@ -183,65 +173,6 @@ const ProgressStep: Component = () => {
               </span>
             </div>
           </Show>
-
-          <div class="cicd-section">
-            <h3 class="cicd-title">
-              <Icon path={mdiCog} size={18} class="cicd-icon" />
-              Enable Continuous Deployment
-            </h3>
-            <p class="cicd-description">
-              To enable automatic deploys with container support, add these
-              GitHub Actions secrets to your forked repository:
-            </p>
-            <div class="cicd-steps">
-              <div class="cicd-step">
-                <span class="cicd-step-number">1</span>
-                <div class="cicd-step-content">
-                  <span class="cicd-step-label">Go to your repo Settings → Secrets and variables → Actions</span>
-                </div>
-              </div>
-              <div class="cicd-step">
-                <span class="cicd-step-number">2</span>
-                <div class="cicd-step-content">
-                  <span class="cicd-step-label">Add repository secrets:</span>
-                  <div class="cicd-secrets">
-                    <div class="cicd-secret">
-                      <code class="cicd-secret-name">CLOUDFLARE_API_TOKEN</code>
-                      <span class="cicd-secret-hint">Use the same token you entered in step 2</span>
-                    </div>
-                    <Show when={setupStore.accountId}>
-                      <div class="cicd-secret">
-                        <code class="cicd-secret-name">CLOUDFLARE_ACCOUNT_ID</code>
-                        <code class="cicd-secret-value">{setupStore.accountId}</code>
-                      </div>
-                    </Show>
-                  </div>
-                </div>
-              </div>
-              <div class="cicd-step">
-                <span class="cicd-step-number">3</span>
-                <div class="cicd-step-content">
-                  <span class="cicd-step-label">Add a repository variable (Settings → Secrets and variables → Actions → Variables tab):</span>
-                  <div class="cicd-secrets">
-                    <div class="cicd-secret">
-                      <code class="cicd-secret-name">CLOUDFLARE_WORKER_NAME</code>
-                      <span class="cicd-secret-hint">The worker name you chose during deployment (e.g., claudeflare)</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div class="cicd-step">
-                <span class="cicd-step-number">4</span>
-                <div class="cicd-step-content">
-                  <span class="cicd-step-label">Push a change or go to Actions → Deploy → Run workflow</span>
-                </div>
-              </div>
-            </div>
-            <p class="cicd-note">
-              <Icon path={mdiInformationOutline} size={14} class="note-icon" />
-              GitHub Actions builds the container image (requires Docker, which Workers Builds doesn't provide).
-            </p>
-          </div>
 
           <button class="launch-button" onClick={handleLaunch}>
             <Icon path={mdiRocketLaunchOutline} size={20} />
@@ -427,12 +358,6 @@ const ProgressStep: Component = () => {
           text-align: center;
         }
 
-        .url-list {
-          display: flex;
-          flex-direction: column;
-          gap: 16px;
-        }
-
         .url-item {
           display: flex;
           gap: 12px;
@@ -472,6 +397,22 @@ const ProgressStep: Component = () => {
         .url-note {
           font-size: 12px;
           color: var(--color-success);
+        }
+
+        .access-note {
+          display: flex;
+          align-items: flex-start;
+          gap: 8px;
+          padding: 12px;
+          background: rgba(124, 58, 237, 0.1);
+          border-radius: 8px;
+          font-size: 13px;
+          color: var(--color-text-secondary);
+        }
+
+        .access-note .note-icon {
+          flex-shrink: 0;
+          color: var(--color-accent);
         }
 
         .admin-secret-section {
@@ -544,117 +485,6 @@ const ProgressStep: Component = () => {
 
         .note-icon {
           flex-shrink: 0;
-        }
-
-        .cicd-section {
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-          padding: 16px;
-          background: var(--color-bg-tertiary);
-          border: 1px solid var(--color-border);
-          border-radius: 8px;
-        }
-
-        .cicd-title {
-          margin: 0;
-          font-size: 16px;
-          font-weight: 600;
-          color: var(--color-text-primary);
-          display: flex;
-          align-items: center;
-          gap: 8px;
-        }
-
-        .cicd-icon {
-          color: var(--color-text-secondary);
-        }
-
-        .cicd-description {
-          margin: 0;
-          font-size: 14px;
-          color: var(--color-text-secondary);
-        }
-
-        .cicd-steps {
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-        }
-
-        .cicd-step {
-          display: flex;
-          gap: 12px;
-          align-items: flex-start;
-        }
-
-        .cicd-step-number {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          width: 24px;
-          height: 24px;
-          background: var(--color-accent);
-          color: white;
-          border-radius: 50%;
-          font-size: 12px;
-          font-weight: 600;
-          flex-shrink: 0;
-        }
-
-        .cicd-step-content {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-        }
-
-        .cicd-step-label {
-          font-size: 14px;
-          color: var(--color-text-primary);
-        }
-
-        .cicd-secrets {
-          display: flex;
-          flex-direction: column;
-          gap: 6px;
-        }
-
-        .cicd-secret {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          flex-wrap: wrap;
-        }
-
-        .cicd-secret-name {
-          padding: 2px 8px;
-          background: var(--color-bg-primary);
-          border-radius: 4px;
-          font-size: 13px;
-          color: var(--color-accent);
-        }
-
-        .cicd-secret-value {
-          padding: 2px 8px;
-          background: var(--color-bg-primary);
-          border-radius: 4px;
-          font-size: 12px;
-          color: var(--color-text-secondary);
-          word-break: break-all;
-        }
-
-        .cicd-secret-hint {
-          font-size: 12px;
-          color: var(--color-text-tertiary);
-        }
-
-        .cicd-note {
-          margin: 0;
-          font-size: 13px;
-          color: var(--color-text-secondary);
-          display: flex;
-          align-items: center;
-          gap: 4px;
         }
       `}</style>
     </div>

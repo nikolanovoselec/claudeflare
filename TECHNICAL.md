@@ -2,7 +2,7 @@
 
 Browser-based Claude Code on Cloudflare Workers with per-session containers and R2 persistence.
 
-**Live URL:** https://claudeflare.your-subdomain.workers.dev (via Cloudflare Access)
+**Workers.dev URL:** `https://<CLOUDFLARE_WORKER_NAME>.<ACCOUNT_SUBDOMAIN>.workers.dev` — used only for initial setup. After the setup wizard configures a custom domain, all traffic should go through the custom domain (protected by CF Access). The workers.dev URL should then be gated behind one-click Access in the Cloudflare dashboard.
 
 ---
 
@@ -82,6 +82,7 @@ function isAllowedOrigin(origin: string, env: Env): boolean {
 
 **Route Registration:**
 - `/api/user` - User info endpoints
+- `/api/users` - User management (add/remove allowed users)
 - `/api/container` - Container lifecycle (start, stop, destroy, health)
 - `/api/sessions` - Session CRUD
 - `/api/terminal` - WebSocket terminal proxy
@@ -904,6 +905,9 @@ For API/CLI clients. Mapped to email via `SERVICE_TOKEN_EMAIL` env var.
 Request
    |
    v
+Edge-level redirect: GET / -> 302 /setup (if setup:complete not in KV)
+   |
+   v
 CORS Middleware (src/index.ts)
    |
    v
@@ -915,6 +919,9 @@ Auth Middleware (src/middleware/auth.ts)
    |   +-- cf-access-client-id? -> Service token auth
    |   +-- DEV_MODE=true? -> Test user bypass
    |   +-- None -> 401 Unauthorized
+   |
+   +-- Check user allowlist in KV (user:{email} key)
+   |   +-- Not found -> 403 Forbidden
    |
    +-- getBucketName() derives bucket from email
    |
@@ -1036,10 +1043,18 @@ Error codes:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/setup/status` | Check if setup is complete |
-| POST | `/api/setup/verify-token` | Verify token permissions |
-| POST | `/api/setup/configure` | Run full configuration |
+| GET | `/api/setup/status` | Check if setup is complete (`{ configured, tokenDetected }`) |
+| GET | `/api/setup/detect-token` | Auto-detect token from env |
+| POST | `/api/setup/configure` | Run full configuration (`{ customDomain, allowedUsers, allowedOrigins? }`) |
 | POST | `/api/setup/reset` | Reset setup state (requires ADMIN_SECRET) |
+
+### User Management Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/users` | List allowed users |
+| POST | `/api/users` | Add allowed user |
+| DELETE | `/api/users/:email` | Remove allowed user |
 
 ### Examples
 
@@ -1125,14 +1140,16 @@ claudeflare/
 |   |   |   +-- crud.ts       # GET/POST/PATCH/DELETE session endpoints
 |   |   |   +-- lifecycle.ts  # start/stop/status session endpoints
 |   |   +-- admin.ts          # Admin-only endpoints (destroy-by-id)
-|   |   +-- terminal.ts       # WebSocket terminal proxy
+|   |   +-- terminal.ts       # Terminal WebSocket proxy
 |   |   +-- user.ts           # User info
+|   |   +-- users.ts          # User management API (GET/POST /api/users, DELETE /api/users/:email)
 |   |   +-- credentials.ts    # Credential management (DEV_MODE gated)
 |   |   +-- setup.ts          # Setup wizard API
 |   +-- middleware/
-|   |   +-- auth.ts           # Shared auth middleware (authMiddleware)
+|   |   +-- auth.ts           # Shared auth middleware (checks user allowlist in KV)
 |   +-- lib/
 |   |   +-- access.ts         # CF Access auth helpers
+|   |   +-- access-policy.ts  # Shared user/Access operations helper
 |   |   +-- r2-admin.ts       # R2 bucket API
 |   |   +-- kv-keys.ts        # KV key utilities
 |   |   +-- constants.ts      # Centralized constants (ports, patterns, R2 IDs)
@@ -1146,8 +1163,13 @@ claudeflare/
 |   +-- container/
 |   |   +-- index.ts          # ClaudeflareContainer DO class
 |   +-- __tests__/
+|       +-- index.test.ts    # Edge-level redirect tests
 |       +-- lib/              # Unit tests for lib modules
+|       +-- middleware/       # Auth and rate-limit tests
+|       |   +-- auth.test.ts
+|       |   +-- rate-limit.test.ts
 |       +-- routes/           # Unit tests for route handlers
+|           +-- users.test.ts # User management route tests
 |
 +-- e2e/
 |   +-- setup.ts              # E2E test setup
@@ -1487,7 +1509,7 @@ export default defineConfig({
 
 **Run:** `npm run test:e2e`
 
-**Environment:** Tests run against the deployed worker. Set `E2E_BASE_URL` to override.
+**Environment:** Tests run against the deployed worker. URL is constructed from `ACCOUNT_SUBDOMAIN` + `CLOUDFLARE_WORKER_NAME`.
 
 ---
 

@@ -1,75 +1,102 @@
-import { Component } from 'solid-js';
+import { Component, Show, onMount } from 'solid-js';
 import {
-  mdiShieldLockOutline,
-  mdiCloudOutline,
-  mdiLightningBolt,
+  mdiCheckCircleOutline,
+  mdiAlertCircleOutline,
+  mdiLoading,
 } from '@mdi/js';
 import Icon from '../Icon';
 import { setupStore } from '../../stores/setup';
+import Button from '../ui/Button';
 
 const WelcomeStep: Component = () => {
+  onMount(() => {
+    setupStore.detectToken();
+  });
+
   return (
     <div class="welcome-step">
       <h2 class="welcome-title">Welcome to Claudeflare</h2>
       <p class="welcome-description">
-        Let's set up your personal Claude Code environment. This wizard will
-        configure everything you need in just a few minutes.
+        Let's configure your personal Claude Code environment.
       </p>
 
-      <div class="welcome-features">
-        <div class="welcome-feature">
-          <div class="welcome-feature-icon">
-            <Icon path={mdiShieldLockOutline} size={24} />
+      <div class="token-detect-section">
+        {/* Detecting state */}
+        <Show when={setupStore.tokenDetecting}>
+          <div class="token-status token-status--detecting">
+            <span class="token-status-icon token-status-icon--spin">
+              <Icon path={mdiLoading} size={24} />
+            </span>
+            <div class="token-status-text">
+              <strong>Detecting API token...</strong>
+              <span>Checking for a pre-configured Cloudflare API token</span>
+            </div>
           </div>
-          <div class="welcome-feature-text">
-            <strong>Secure & Private</strong>
-            <span>Your data stays in your Cloudflare account</span>
-          </div>
-        </div>
-        <div class="welcome-feature">
-          <div class="welcome-feature-icon">
-            <Icon path={mdiCloudOutline} size={24} />
-          </div>
-          <div class="welcome-feature-text">
-            <strong>Cloud-Native</strong>
-            <span>Runs on Cloudflare Containers with R2 storage</span>
-          </div>
-        </div>
-        <div class="welcome-feature">
-          <div class="welcome-feature-icon">
-            <Icon path={mdiLightningBolt} size={24} />
-          </div>
-          <div class="welcome-feature-text">
-            <strong>Persistent Sessions</strong>
-            <span>Your workspace syncs automatically to R2</span>
-          </div>
-        </div>
-      </div>
+        </Show>
 
-      <div class="welcome-steps-preview">
-        <h3>Setup Overview</h3>
-        <ol>
-          <li>
-            <strong>Create API Token</strong> – One token with 4 permissions
-          </li>
-          <li>
-            <strong>Optional: Custom Domain</strong> – Add Cloudflare Access protection
-          </li>
-          <li>
-            <strong>Auto-Configure</strong> – We set up R2, secrets, and Access
-          </li>
-        </ol>
-      </div>
+        {/* Detected + valid */}
+        <Show when={!setupStore.tokenDetecting && setupStore.tokenDetected && setupStore.accountInfo}>
+          <div class="token-status token-status--success">
+            <span class="token-status-icon">
+              <Icon path={mdiCheckCircleOutline} size={24} />
+            </span>
+            <div class="token-status-text">
+              <strong>API Token Detected</strong>
+              <span>
+                Account: {setupStore.accountInfo!.name} ({setupStore.accountInfo!.id})
+              </span>
+            </div>
+          </div>
 
-      <button class="welcome-button" onClick={() => setupStore.nextStep()}>
-        Get Started →
-      </button>
+          <Button onClick={() => setupStore.nextStep()}>
+            Get Started
+          </Button>
+        </Show>
+
+        {/* Detected but invalid / error */}
+        <Show when={!setupStore.tokenDetecting && setupStore.tokenDetectError}>
+          <div class="token-status token-status--error">
+            <span class="token-status-icon">
+              <Icon path={mdiAlertCircleOutline} size={24} />
+            </span>
+            <div class="token-status-text">
+              <strong>Token Error</strong>
+              <span>{setupStore.tokenDetectError}</span>
+            </div>
+          </div>
+
+          <div class="token-error-help">
+            <p>
+              The API token could not be verified. This usually means you need to
+              re-deploy with a valid <code>CLOUDFLARE_API_TOKEN</code> secret set
+              via GitHub Actions.
+            </p>
+          </div>
+        </Show>
+
+        {/* Not detected at all */}
+        <Show when={!setupStore.tokenDetecting && !setupStore.tokenDetected && !setupStore.tokenDetectError}>
+          <div class="token-status token-status--error">
+            <span class="token-status-icon">
+              <Icon path={mdiAlertCircleOutline} size={24} />
+            </span>
+            <div class="token-status-text">
+              <strong>No Token Found</strong>
+              <span>
+                Deploy via GitHub Actions first with a <code>CLOUDFLARE_API_TOKEN</code> secret
+                to set up the API token automatically.
+              </span>
+            </div>
+          </div>
+        </Show>
+      </div>
 
       <style>{`
         .welcome-step {
           display: flex;
           flex-direction: column;
           gap: 24px;
+          align-items: center;
         }
 
         .welcome-title {
@@ -88,93 +115,109 @@ const WelcomeStep: Component = () => {
           line-height: 1.6;
         }
 
-        .welcome-features {
+        .token-detect-section {
+          width: 100%;
           display: flex;
           flex-direction: column;
+          gap: 16px;
+          align-items: center;
+        }
+
+        .token-status {
+          width: 100%;
+          display: flex;
+          align-items: flex-start;
           gap: 12px;
           padding: 16px;
-          background: var(--color-bg-tertiary);
           border-radius: 12px;
         }
 
-        .welcome-feature {
-          display: flex;
-          align-items: center;
-          gap: 12px;
+        .token-status--detecting {
+          background: var(--color-bg-tertiary);
+          color: var(--color-text-secondary);
         }
 
-        .welcome-feature-icon {
-          width: 40px;
+        .token-status--success {
+          background: rgba(34, 197, 94, 0.1);
+          border: 1px solid rgba(34, 197, 94, 0.2);
+        }
+
+        .token-status--error {
+          background: rgba(239, 68, 68, 0.1);
+          border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .token-status-icon {
           display: flex;
           align-items: center;
-          justify-content: center;
+          flex-shrink: 0;
+        }
+
+        .token-status--detecting .token-status-icon {
           color: var(--color-accent);
         }
 
-        .welcome-feature-text {
+        .token-status--success .token-status-icon {
+          color: var(--color-success);
+        }
+
+        .token-status--error .token-status-icon {
+          color: var(--color-error);
+        }
+
+        .token-status-icon--spin {
+          animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+          from { transform: rotate(0deg); }
+          to { transform: rotate(360deg); }
+        }
+
+        .token-status-text {
           display: flex;
           flex-direction: column;
-          gap: 2px;
+          gap: 4px;
         }
 
-        .welcome-feature-text strong {
+        .token-status-text strong {
+          font-size: 15px;
           color: var(--color-text-primary);
-          font-size: 14px;
         }
 
-        .welcome-feature-text span {
-          color: var(--color-text-secondary);
+        .token-status-text span {
           font-size: 13px;
+          color: var(--color-text-secondary);
         }
 
-        .welcome-steps-preview {
-          padding: 16px;
+        .token-status-text code {
+          padding: 2px 6px;
           background: var(--color-bg-primary);
-          border: 1px solid var(--color-border);
-          border-radius: 12px;
+          border-radius: 4px;
+          font-size: 12px;
+          color: var(--color-accent);
         }
 
-        .welcome-steps-preview h3 {
-          margin: 0 0 12px 0;
-          font-size: 14px;
-          font-weight: 600;
-          color: var(--color-text-secondary);
-          text-transform: uppercase;
-          letter-spacing: 0.5px;
-        }
-
-        .welcome-steps-preview ol {
-          margin: 0;
-          padding-left: 20px;
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-        }
-
-        .welcome-steps-preview li {
-          color: var(--color-text-secondary);
-          font-size: 14px;
-        }
-
-        .welcome-steps-preview li strong {
-          color: var(--color-text-primary);
-        }
-
-        .welcome-button {
-          padding: 16px 32px;
-          font-size: 16px;
-          font-weight: 600;
-          color: white;
-          background: var(--color-accent);
+        .token-error-help {
+          width: 100%;
+          padding: 12px 16px;
+          background: var(--color-bg-tertiary);
           border-radius: 8px;
-          cursor: pointer;
-          transition: all 0.2s ease;
-          align-self: center;
         }
 
-        .welcome-button:hover {
-          background: var(--color-accent-hover);
-          transform: translateY(-1px);
+        .token-error-help p {
+          margin: 0;
+          font-size: 13px;
+          color: var(--color-text-secondary);
+          line-height: 1.6;
+        }
+
+        .token-error-help code {
+          padding: 2px 6px;
+          background: var(--color-bg-primary);
+          border-radius: 4px;
+          font-size: 12px;
+          color: var(--color-accent);
         }
       `}</style>
     </div>

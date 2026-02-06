@@ -1,8 +1,7 @@
-import { Component, Show, Switch, Match } from 'solid-js';
+import { Component, Switch, Match } from 'solid-js';
 import { setupStore } from '../../stores/setup';
 import WelcomeStep from './WelcomeStep';
-import TokenStep from './TokenStep';
-import DomainStep from './DomainStep';
+import ConfigureStep from './ConfigureStep';
 import ProgressStep from './ProgressStep';
 
 const SetupWizard: Component = () => {
@@ -28,7 +27,7 @@ const SetupWizard: Component = () => {
         <div class="progress-bar setup-progress">
           <div
             class="progress-bar-fill"
-            style={{ width: `${(setupStore.step / 4) * 100}%` }}
+            style={{ width: `${(setupStore.step / 3) * 100}%` }}
           />
         </div>
 
@@ -38,12 +37,9 @@ const SetupWizard: Component = () => {
               <WelcomeStep />
             </Match>
             <Match when={setupStore.step === 2}>
-              <TokenStep />
+              <ConfigureStep />
             </Match>
             <Match when={setupStore.step === 3}>
-              <DomainStep />
-            </Match>
-            <Match when={setupStore.step === 4}>
               <ProgressStep />
             </Match>
           </Switch>

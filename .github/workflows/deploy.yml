@@ -68,3 +68,9 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy --name ${{ vars.CLOUDFLARE_WORKER_NAME || 'claudeflare' }}
+
+      - name: Set API token as worker secret
+        run: echo "${{ secrets.CLOUDFLARE_API_TOKEN }}" | npx wrangler secret put CLOUDFLARE_API_TOKEN --name ${{ vars.CLOUDFLARE_WORKER_NAME || 'claudeflare' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

@@ -116,42 +116,15 @@ async function handleDeriveR2Credentials(
 }
 
 /**
- * Resolve the deployed worker's script name via the Cloudflare API.
- * Workers Builds may rename the worker (e.g., user picks "my-app" during deploy).
- * We find the script whose subdomain matches the current request hostname.
+ * Extract the worker name from the request hostname.
+ * For workers.dev: first part of hostname (e.g., "claudeflare" from "claudeflare.test.workers.dev")
+ * For custom domains or other: default to "claudeflare"
  */
-async function resolveWorkerName(
-  token: string,
-  accountId: string,
-  requestUrl: string
-): Promise<string> {
+function getWorkerNameFromHostname(requestUrl: string): string {
   const hostname = new URL(requestUrl).hostname;
 
   if (hostname.endsWith('.workers.dev')) {
     return hostname.split('.')[0];
-  }
-
-  // For custom domains or local dev, look up via the API
-  try {
-    const res = await fetch(
-      `${CF_API_BASE}/accounts/${accountId}/workers/scripts`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    const data = await res.json() as {
-      success: boolean;
-      result?: Array<{ id: string }>;
-    };
-    // If only one script exists, it must be ours
-    if (data.success && data.result?.length === 1) {
-      return data.result[0].id;
-    }
-    // Multiple scripts — look for one containing "claudeflare"
-    if (data.success && data.result) {
-      const match = data.result.find(s => s.id.includes('claudeflare'));
-      if (match) return match.id;
-    }
-  } catch {
-    // Fall through to default
   }
 
   return 'claudeflare';
@@ -258,11 +231,13 @@ async function putSecret(
 const VERSION_NOT_DEPLOYED_ERR_CODE = 10215;
 
 /**
- * Step 3: Set worker secrets (R2 credentials, API token, admin secret)
+ * Step 3: Set worker secrets (R2 credentials, admin secret)
  *
  * Uses the standard secrets API (PUT .../secrets). If Cloudflare returns
  * error 10215 (latest version not deployed — common after `wrangler versions upload`),
  * falls back by deploying the latest version first, then retrying.
+ *
+ * Note: CLOUDFLARE_API_TOKEN is NOT set here — it's already set by GitHub Actions.
  */
 async function handleSetSecrets(
   token: string,
@@ -274,8 +249,8 @@ async function handleSetSecrets(
 ): Promise<string> {
   steps.push({ step: 'set_secrets', status: 'pending' });
   const stepIndex = steps.length - 1;
-  // Resolve worker name from the Cloudflare API — handles Deploy button renaming
-  const workerName = await resolveWorkerName(token, accountId, requestUrl);
+  // Extract worker name from the request hostname
+  const workerName = getWorkerNameFromHostname(requestUrl);
 
   // Generate admin secret
   const adminSecretArray = new Uint8Array(32);
@@ -287,7 +262,6 @@ async function handleSetSecrets(
   const secrets = {
     R2_ACCESS_KEY_ID: r2AccessKeyId,
     R2_SECRET_ACCESS_KEY: r2SecretAccessKey,
-    CLOUDFLARE_API_TOKEN: token,
     ADMIN_SECRET: adminSecret
   };
 
@@ -403,8 +377,8 @@ async function handleConfigureCustomDomain(
 
   const zoneId = zonesData.result[0].id;
 
-  // Resolve the actual worker script name (handles Deploy button renaming)
-  const workerName = await resolveWorkerName(token, accountId, requestUrl);
+  // Extract worker name from request hostname
+  const workerName = getWorkerNameFromHostname(requestUrl);
 
   // Get the account subdomain for workers.dev URL
   // Format: {workerName}.{account-subdomain}.workers.dev
@@ -598,7 +572,7 @@ async function handleCreateAccessApp(
   token: string,
   accountId: string,
   customDomain: string,
-  accessPolicy: { type: 'email' | 'domain' | 'everyone'; emails?: string[]; domain?: string } | undefined,
+  allowedUsers: string[],
   steps: SetupStep[]
 ): Promise<void> {
   steps.push({ step: 'create_access_app', status: 'pending' });
@@ -684,17 +658,9 @@ async function handleCreateAccessApp(
 
   logger.info(`Access app ${existingAppId ? 'updated' : 'created'}`, { domain: customDomain, appId: accessAppData.result.id });
 
-  // Create or update Access policy
+  // Create or update Access policy — always email-based using allowedUsers
   const appId = accessAppData.result.id;
-  let include: Array<Record<string, unknown>> = [];
-
-  if (accessPolicy?.type === 'email' && accessPolicy.emails) {
-    include = accessPolicy.emails.map(email => ({ email: { email } }));
-  } else if (accessPolicy?.type === 'domain' && accessPolicy.domain) {
-    include = [{ email_domain: { domain: accessPolicy.domain } }];
-  } else {
-    include = [{ everyone: {} }];
-  }
+  const include = allowedUsers.map(email => ({ email: { email } }));
 
   // For existing apps, we need to check for existing policies and update them
   if (existingAppId) {
@@ -770,42 +736,40 @@ app.get('/status', async (c) => {
 
   return c.json({
     configured,
-    // Only return minimal info if not configured
-    ...(configured ? {} : {
-      requiredPermissions: [
-        'Account > Workers Scripts > Edit',
-        'Account > Workers R2 Storage > Edit',
-        'Account > Workers KV Storage > Edit',
-        'Account > Access: Apps and Policies > Edit (custom domain only)',
-      ]
-    })
+    tokenDetected: Boolean(c.env.CLOUDFLARE_API_TOKEN),
   });
 });
 
 /**
- * POST /api/setup/verify-token
- * Verify API token has required permissions
+ * GET /api/setup/detect-token
+ * Detect whether CLOUDFLARE_API_TOKEN is present in the environment (secret binding),
+ * verify it against the Cloudflare API, and return account info.
  */
-app.post('/verify-token', async (c) => {
-  const { token } = await c.req.json<{ token: string }>();
+app.get('/detect-token', async (c) => {
+  const token = c.env.CLOUDFLARE_API_TOKEN;
 
   if (!token) {
-    throw new ValidationError('Token is required');
+    return c.json({ detected: false, error: 'Deploy with GitHub Actions first' });
   }
 
   try {
     // Verify token
     const verifyRes = await fetch(`${CF_API_BASE}/user/tokens/verify`, {
-      headers: { 'Authorization': `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` },
     });
+    const verifyData = await verifyRes.json() as {
+      success: boolean;
+      result?: { id: string; status: string };
+      errors?: Array<{ message: string }>;
+    };
 
-    if (!verifyRes.ok) {
-      throw new AuthError('Invalid token');
+    if (!verifyData.success) {
+      return c.json({ detected: true, valid: false, error: 'Token is invalid or expired' });
     }
 
     // Get account info
     const accountsRes = await fetch(`${CF_API_BASE}/accounts`, {
-      headers: { 'Authorization': `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` },
     });
     const accountsData = await accountsRes.json() as {
       success: boolean;
@@ -813,49 +777,49 @@ app.post('/verify-token', async (c) => {
     };
 
     if (!accountsData.success || !accountsData.result?.length) {
-      throw new ValidationError('Could not fetch account info');
+      return c.json({ detected: true, valid: false, error: 'No accounts found for this token' });
     }
 
     const account = accountsData.result[0];
-
     return c.json({
+      detected: true,
       valid: true,
-      account: {
-        id: account.id,
-        name: account.name
-      }
+      account: { id: account.id, name: account.name },
     });
   } catch (error) {
-    // Re-throw AppError instances (ValidationError, AuthError)
-    if (error instanceof ValidationError || error instanceof AuthError) {
-      throw error;
-    }
-    logger.error('Token verification error', error instanceof Error ? error : new Error(String(error)));
-    throw new AuthError('Token verification failed');
+    logger.error('Token detection error', error instanceof Error ? error : new Error(String(error)));
+    return c.json({ detected: true, valid: false, error: 'Failed to verify token' });
   }
 });
 
 /**
  * POST /api/setup/configure
  * Main setup endpoint - configures everything using extracted step handlers
+ *
+ * Body: { customDomain: string, allowedUsers: string[], allowedOrigins?: string[] }
+ * Token is read from env (CLOUDFLARE_API_TOKEN), not from request body.
  */
 app.post('/configure', async (c) => {
   const {
-    token,
     customDomain,
-    accessPolicy
+    allowedUsers,
+    allowedOrigins
   } = await c.req.json<{
-    token: string;
     customDomain?: string;
-    accessPolicy?: {
-      type: 'email' | 'domain' | 'everyone';
-      emails?: string[];
-      domain?: string;
-    };
+    allowedUsers?: string[];
+    allowedOrigins?: string[];
   }>();
 
-  if (!token) {
-    throw new ValidationError('Token is required');
+  // Token from env (already set by GitHub Actions deploy)
+  const token = c.env.CLOUDFLARE_API_TOKEN;
+
+  // Validate required fields
+  if (!customDomain) {
+    throw new ValidationError('customDomain is required');
+  }
+
+  if (!allowedUsers || allowedUsers.length === 0) {
+    throw new ValidationError('allowedUsers is required and must not be empty');
   }
 
   const steps: SetupStep[] = [];
@@ -868,7 +832,7 @@ app.post('/configure', async (c) => {
     const { accessKeyId: r2AccessKeyId, secretAccessKey: r2SecretAccessKey } =
       await handleDeriveR2Credentials(token, steps);
 
-    // Step 3: Set worker secrets
+    // Step 3: Set worker secrets (3 secrets: R2 creds + admin secret — NOT CLOUDFLARE_API_TOKEN)
     const adminSecret = await handleSetSecrets(
       token,
       accountId,
@@ -878,13 +842,24 @@ app.post('/configure', async (c) => {
       steps
     );
 
-    // Step 4 & 5: Custom domain + CF Access (only if customDomain provided)
-    if (customDomain) {
-      await handleConfigureCustomDomain(token, accountId, customDomain, c.req.url, steps);
-      await handleCreateAccessApp(token, accountId, customDomain, accessPolicy, steps);
+    // Store users in KV
+    for (const email of allowedUsers) {
+      await c.env.KV.put(
+        `user:${email}`,
+        JSON.stringify({ addedBy: 'setup', addedAt: new Date().toISOString() })
+      );
+    }
 
-      // Store custom domain in KV
-      await c.env.KV.put('setup:custom_domain', customDomain);
+    // Step 4 & 5: Custom domain + CF Access
+    await handleConfigureCustomDomain(token, accountId, customDomain, c.req.url, steps);
+    await handleCreateAccessApp(token, accountId, customDomain, allowedUsers, steps);
+
+    // Store custom domain in KV
+    await c.env.KV.put('setup:custom_domain', customDomain);
+
+    // Store allowed origins in KV if provided
+    if (allowedOrigins && allowedOrigins.length > 0) {
+      await c.env.KV.put('setup:allowed_origins', JSON.stringify(allowedOrigins));
     }
 
     // Final step: Mark setup as complete
@@ -895,6 +870,8 @@ app.post('/configure', async (c) => {
     await c.env.KV.put('setup:completed_at', new Date().toISOString());
     steps[steps.length - 1].status = 'success';
 
+    // TODO: Call resetSetupCache() when it's available from index.ts
+
     // Get the workers.dev URL from request
     const url = new URL(c.req.url);
     const workersDevUrl = `https://${url.host}`;
@@ -903,7 +880,7 @@ app.post('/configure', async (c) => {
       success: true,
       steps,
       workersDevUrl,
-      customDomainUrl: customDomain ? `https://${customDomain}` : null,
+      customDomainUrl: `https://${customDomain}`,
       adminSecret,
       accountId,
     });
