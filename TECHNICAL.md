@@ -34,7 +34,7 @@ Browser Tab 1 (xterm.js)          Browser Tab 2 (xterm.js)
 
 | Decision | Rationale |
 |----------|-----------|
-| One container per SESSION | CPU isolation - each tab gets full 0.25 vCPU instead of sharing |
+| One container per SESSION | CPU isolation - each tab gets full 1 vCPU instead of sharing |
 | Container ID format | `{bucketName}-{sessionId}` (e.g., `claudeflare-user-example-com-abc12345`) |
 | Per-user R2 buckets | Bucket name derived from email, auto-created on first login |
 | rclone bisync | Bidirectional sync every 60s, local disk for all file operations |
@@ -71,12 +71,19 @@ if (wsMatch && upgradeHeader?.toLowerCase() === 'websocket') {
 
 **CORS Configuration:**
 ```typescript
-// Reads ALLOWED_ORIGINS from env (comma-separated) or falls back to DEFAULT_ALLOWED_ORIGINS
-function isAllowedOrigin(origin: string, env: Env): boolean {
-  const allowedPatterns = env.ALLOWED_ORIGINS
+// Checks static patterns from env.ALLOWED_ORIGINS + dynamic origins from KV (cached in memory)
+async function isAllowedOrigin(origin: string, env: Env): Promise<boolean> {
+  const staticPatterns = env.ALLOWED_ORIGINS
     ? env.ALLOWED_ORIGINS.split(',').map(s => s.trim())
     : DEFAULT_ALLOWED_ORIGINS;
-  return allowedPatterns.some(pattern => origin.endsWith(pattern));
+
+  if (staticPatterns.some(pattern => origin.endsWith(pattern))) {
+    return true;
+  }
+
+  // Check KV-stored origins (setup:custom_domain + setup:allowed_origins, cached per isolate)
+  const kvOrigins = await getKvOrigins(env);
+  return kvOrigins.some(pattern => origin.endsWith(pattern));
 }
 ```
 
@@ -109,6 +116,14 @@ export async function authMiddleware(
 
   if (!user.authenticated) {
     return c.json({ error: 'Not authenticated' }, 401);
+  }
+
+  // Check user allowlist in KV (skip in DEV_MODE)
+  if (c.env.DEV_MODE !== 'true') {
+    const userEntry = await c.env.KV.get(`user:${user.email}`);
+    if (!userEntry) {
+      return c.json({ error: 'Forbidden: user not in allowlist' }, 403);
+    }
   }
 
   const bucketName = getBucketName(user.email);
@@ -199,7 +214,7 @@ export function isBucketNameResponse(data: unknown): data is { bucketName: strin
 
 **File:** `src/lib/constants.ts`
 
-Single source of truth for configuration values.
+Single source of truth for configuration values. Exports 16 constants:
 
 ```typescript
 // Port constants (single port architecture)
@@ -218,6 +233,31 @@ export const TERMINAL_REFRESH_DELAY_MS = 150;
 
 // Default CORS origins
 export const DEFAULT_ALLOWED_ORIGINS = ['.workers.dev'];
+
+// Idle timeout before container sleeps (30 minutes)
+export const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+
+// Delay after setting bucket name before proceeding
+export const BUCKET_NAME_SETTLE_DELAY_MS = 100;
+
+// Cloudflare R2 permission IDs
+export const R2_WRITE_PERMISSION_ID = 'e0d1f652c7d84d35a4e356734cad1c2b';
+export const R2_READ_PERMISSION_ID = 'f2bfce71c75a4c1b86e288eb50549efc';
+
+// Request ID display length
+export const REQUEST_ID_LENGTH = 8;
+
+// CORS max age in seconds
+export const CORS_MAX_AGE_SECONDS = '86400';
+
+// DO ID validation pattern
+export const DO_ID_PATTERN = /^[a-f0-9]{64}$/i;
+
+// Maximum session name length
+export const MAX_SESSION_NAME_LENGTH = 100;
+
+// Container ID display truncation length
+export const CONTAINER_ID_DISPLAY_LENGTH = 24;
 ```
 
 ### 2.7 Error Handling (AppError Hierarchy)
@@ -439,16 +479,22 @@ export type SessionFromSchema = z.infer<typeof SessionSchema>;
 
 **File:** `web-ui/src/lib/constants.ts`
 
-Centralized magic numbers for frontend operations:
+Centralized magic numbers for frontend operations. Exports 13 constants:
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
 | `STARTUP_POLL_INTERVAL_MS` | 1500 | Startup status polling interval |
 | `METRICS_POLL_INTERVAL_MS` | 5000 | Running session metrics polling |
 | `MAX_CONNECTION_RETRIES` | 45 | Initial WebSocket connection attempts |
+| `CONNECTION_RETRY_DELAY_MS` | 1500 | Delay between initial connection retries |
 | `MAX_RECONNECT_ATTEMPTS` | 5 | Dropped connection recovery attempts |
+| `RECONNECT_DELAY_MS` | 2000 | Delay between reconnection attempts |
+| `TERMINAL_REFRESH_DELAY_MS` | 150 | Terminal refresh delay after WebSocket connect |
+| `TERMINAL_SECONDARY_REFRESH_DELAY_MS` | 100 | Secondary refresh for cursor position fix |
 | `CSS_TRANSITION_DELAY_MS` | 50 | Layout transition settle time |
+| `WS_CLOSE_ABNORMAL` | 1006 | WebSocket close code for abnormal closure |
 | `MAX_TERMINALS_PER_SESSION` | 6 | Maximum terminal tabs per session |
+| `DURATION_REFRESH_INTERVAL_MS` | 60000 | Duration display refresh interval |
 | `SESSION_ID_DISPLAY_LENGTH` | 8 | Truncated session ID display |
 
 ### 2.17 Terminal Tab Configuration
@@ -512,7 +558,7 @@ this.envVars = {
   R2_ACCOUNT_ID: accountId,
   R2_BUCKET_NAME: bucketName,          // Per-user bucket
   R2_ENDPOINT: endpoint,
-  TERMINAL_PORT: '3000',
+  TERMINAL_PORT: '8080',
 };
 ```
 
@@ -681,13 +727,13 @@ The status indicator is tied to the terminal store's WebSocket state management.
 
 ### 3.2 Nested Terminals (Multiple PTYs per Session)
 
-Each session supports up to 4 terminal tabs, allowing users to run multiple tools simultaneously within the same container.
+Each session supports up to 6 terminal tabs, allowing users to run multiple tools simultaneously within the same container.
 
 **Use Cases:**
 - Tab 1: Claude Code (AI assistant)
-- Tab 2: yazi (file manager)
-- Tab 3: htop/btop (system monitor)
-- Tab 4: lazygit (git UI)
+- Tab 2: htop (system monitor)
+- Tab 3: yazi (file manager)
+- Tab 4: plain bash terminal
 
 **UI Layout:**
 ```
@@ -713,7 +759,7 @@ Each session supports up to 4 terminal tabs, allowing users to run multiple tool
    terminalsPerSession: Record<string, SessionTerminals>
 
    interface SessionTerminals {
-     tabs: TerminalTab[];      // Max 4 tabs
+     tabs: TerminalTab[];      // Max 6 tabs
      activeTabId: string;      // Currently visible tab
    }
    ```
@@ -725,7 +771,7 @@ Each session supports up to 4 terminal tabs, allowing users to run multiple tool
 4. **Backend Route (`src/routes/terminal.ts`):**
    ```typescript
    // Parse compound session ID
-   const compoundMatch = fullSessionId.match(/^(.+)-([1-4])$/);
+   const compoundMatch = fullSessionId.match(/^(.+)-([1-6])$/);
    const baseSessionId = compoundMatch ? compoundMatch[1] : fullSessionId;
    const terminalId = compoundMatch ? compoundMatch[2] : '1';
 
@@ -737,7 +783,7 @@ Each session supports up to 4 terminal tabs, allowing users to run multiple tool
    - Each compound ID (e.g., `abc123-1`) creates a separate PTY
 
 **Tab Behavior:**
-- Click `+` to add new terminal (max 4)
+- Click `+` to add new terminal (max 6)
 - Click `x` to close terminal (can't close last one)
 - Click tab to switch active terminal
 - Each session remembers its terminals and active tab
@@ -770,8 +816,7 @@ Each session supports up to 4 terminal tabs, allowing users to run multiple tool
    b) Step 1: rclone sync R2 -> local (restore data)
    c) Step 2: rclone bisync --resync (establish baseline)
    d) Start bisync daemon (every 60s)
-   e) Start terminal server (port 8080)
-   f) Start health server (port 3000)
+   e) Start terminal server (port 8080, handles WebSocket + REST + health)
    |
 8. startup-status returns "ready" when terminal server /sessions responds
    |
@@ -986,23 +1031,66 @@ Error codes:
 - `CONTAINER_ERROR` - Container operation failed (500)
 - `AUTH_ERROR` - Authentication required (401)
 
-### Container Endpoints
+### Session Management
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/container/start` | Start container (non-blocking) |
-| POST | `/api/container/destroy` | Destroy container (SIGKILL) |
-| GET | `/api/container/state` | Get container state |
-| GET | `/api/container/health` | Check container health |
+| GET | `/api/sessions` | List sessions |
+| POST | `/api/sessions` | Create session (rate limited) |
+| GET | `/api/sessions/:id` | Get a specific session |
+| PATCH | `/api/sessions/:id` | Update session (e.g., rename) |
+| DELETE | `/api/sessions/:id` | Delete session and destroy its container |
+| POST | `/api/sessions/:id/touch` | Update lastAccessedAt timestamp |
+| GET | `/api/sessions/:id/start` | Start session container |
+| POST | `/api/sessions/:id/stop` | Stop session (kills PTY, container sleeps naturally) |
+| GET | `/api/sessions/:id/status` | Get session and container status |
+
+### Container Lifecycle
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/container/start` | Start a container (non-blocking) |
+| POST | `/api/container/explicit-start` | Explicitly start container (blocking) |
+| POST | `/api/container/destroy` | Destroy a container (SIGKILL) |
 | GET | `/api/container/startup-status` | Poll startup progress |
-| GET | `/api/container/sync-log` | Get rclone sync log |
-| GET | `/api/container/debug` | Debug info (bucket, envVars) |
+| GET | `/api/container/health` | Health check |
+| GET | `/api/container/state` | Get container state (DEV_MODE) |
+| GET | `/api/container/debug` | Debug info (DEV_MODE) |
+| GET | `/api/container/sync-log` | Get rclone sync log (DEV_MODE) |
+| GET | `/api/container/mount-test` | Test mount (DEV_MODE) |
 
-### Admin Endpoints
+### Terminal
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/admin/destroy-by-id` | Kill zombie container by raw DO ID |
+| WS | `/api/terminal/:sessionId-:terminalId/ws` | Terminal WebSocket (compound ID) |
+| GET | `/api/terminal/:sessionId/status` | Terminal connection status |
+
+### User Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/user` | Get authenticated user info |
+| GET | `/api/users` | List allowed users |
+| POST | `/api/users` | Add allowed user |
+| DELETE | `/api/users/:email` | Remove allowed user |
+
+### Setup (No Auth Required)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/setup/status` | Check setup status (`{ configured, tokenDetected }`) |
+| GET | `/api/setup/detect-token` | Auto-detect token from env |
+| POST | `/api/setup/configure` | Run configuration (`{ customDomain, allowedUsers, allowedOrigins? }`) |
+| POST | `/api/setup/reset` | Reset setup state (requires ADMIN_SECRET) |
+| POST | `/api/setup/reset-for-tests` | Reset for E2E tests (DEV_MODE only) |
+| POST | `/api/setup/restore-for-tests` | Restore after E2E tests (DEV_MODE only) |
+
+### Admin
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/admin/destroy-by-id` | Kill zombie container by raw DO ID (requires ADMIN_SECRET) |
 
 **Admin Endpoint Parameters:**
 - `secret` - Must match `ADMIN_SECRET` environment variable (query param or Bearer token)
@@ -1018,43 +1106,20 @@ Error codes:
 
 **CRITICAL:** Only `destroy-by-id` uses `idFromString()` which safely references EXISTING DOs. All `idFromName()` approaches CREATE new DOs if they don't exist - this is fundamental to how Cloudflare Durable Objects work.
 
-### Session Endpoints
+### Credentials (DEV_MODE)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/sessions` | List sessions |
-| POST | `/api/sessions` | Create session |
-| DELETE | `/api/sessions/:id` | Delete session |
+| GET | `/api/credentials` | Check credential status |
+| POST | `/api/credentials` | Upload credentials |
+| DELETE | `/api/credentials` | Remove credentials |
 
-### Terminal Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| WS | `/api/terminal/:sessionId/ws` | WebSocket terminal connection |
-| WS | `/api/terminal/:sessionId-:terminalId/ws` | WebSocket for specific terminal tab |
-
-### User Endpoints
+### Health
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/user` | Get authenticated user info |
-
-### Setup Endpoints (No Auth Required)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/setup/status` | Check if setup is complete (`{ configured, tokenDetected }`) |
-| GET | `/api/setup/detect-token` | Auto-detect token from env |
-| POST | `/api/setup/configure` | Run full configuration (`{ customDomain, allowedUsers, allowedOrigins? }`) |
-| POST | `/api/setup/reset` | Reset setup state (requires ADMIN_SECRET) |
-
-### User Management Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/users` | List allowed users |
-| POST | `/api/users` | Add allowed user |
-| DELETE | `/api/users/:email` | Remove allowed user |
+| GET | `/health` | Worker health check |
+| GET | `/api/health` | API health check (with timestamp) |
 
 ### Examples
 
@@ -1096,14 +1161,15 @@ curl https://claudeflare.your-subdomain.workers.dev/api/container/startup-status
 | Variable | Purpose | Source |
 |----------|---------|--------|
 | `DEV_MODE` | "true" bypasses CF Access auth | wrangler.toml |
-| `SERVICE_TOKEN_EMAIL` | Email for service token auth | wrangler.toml |
+| `SERVICE_TOKEN_EMAIL` | Email for service token auth | Optional env var or .dev.vars |
 | `CLOUDFLARE_API_TOKEN` | R2 bucket creation | Wrangler secret |
 | `R2_ACCESS_KEY_ID` | R2 auth for containers | Wrangler secret |
 | `R2_SECRET_ACCESS_KEY` | R2 auth for containers | Wrangler secret |
-| `R2_ACCOUNT_ID` | R2 endpoint construction | wrangler.toml |
-| `R2_ENDPOINT` | S3-compatible endpoint | wrangler.toml |
+| `R2_ACCOUNT_ID` | R2 endpoint construction | Dynamic (env var with KV fallback via r2-config.ts) |
+| `R2_ENDPOINT` | S3-compatible endpoint | Dynamic (env var with KV fallback via r2-config.ts) |
 | `ALLOWED_ORIGINS` | CORS allowed origins (comma-separated patterns) | wrangler.toml |
 | `ADMIN_SECRET` | Admin endpoint authentication | Wrangler secret |
+| `ENCRYPTION_KEY` | AES-256 key for encrypting credentials at rest | Wrangler secret (optional) |
 
 ### Container Environment
 
@@ -1116,7 +1182,7 @@ curl https://claudeflare.your-subdomain.workers.dev/api/container/startup-status
 | `R2_ENDPOINT` | rclone endpoint |
 | `AWS_ACCESS_KEY_ID` | S3 compatibility |
 | `AWS_SECRET_ACCESS_KEY` | S3 compatibility |
-| `TERMINAL_PORT` | Always 3000 |
+| `TERMINAL_PORT` | Always 8080 |
 
 ---
 
@@ -1131,10 +1197,10 @@ claudeflare/
 |   +-- routes/
 |   |   +-- container/        # Container lifecycle API (split for maintainability)
 |   |   |   +-- index.ts      # Route aggregator (exports merged Hono app)
-|   |   |   +-- lifecycle.ts  # Start, destroy, stop endpoints
-|   |   |   +-- status.ts     # Health, state, startup-status, sync-log endpoints
-|   |   |   +-- debug.ts      # Debug endpoints (DEV_MODE gated)
-|   |   |   +-- shared.ts     # Shared types and container circuit breaker
+|   |   |   +-- lifecycle.ts  # Start, destroy, explicit-start endpoints
+|   |   |   +-- status.ts     # Health, startup-status endpoints
+|   |   |   +-- debug.ts      # Debug, state, sync-log, mount-test endpoints (DEV_MODE gated)
+|   |   |   +-- shared.ts     # Shared types, logger, and container circuit breakers
 |   |   +-- session/          # Session API (split for maintainability)
 |   |   |   +-- index.ts      # Route aggregator with shared auth middleware
 |   |   |   +-- crud.ts       # GET/POST/PATCH/DELETE session endpoints
@@ -1147,33 +1213,66 @@ claudeflare/
 |   |   +-- setup.ts          # Setup wizard API
 |   +-- middleware/
 |   |   +-- auth.ts           # Shared auth middleware (checks user allowlist in KV)
+|   |   +-- rate-limit.ts     # Per-user rate limiting middleware
 |   +-- lib/
 |   |   +-- access.ts         # CF Access auth helpers
 |   |   +-- access-policy.ts  # Shared user/Access operations helper
 |   |   +-- r2-admin.ts       # R2 bucket API
+|   |   +-- r2-config.ts      # R2 config resolution (env vars with KV fallback)
 |   |   +-- kv-keys.ts        # KV key utilities
-|   |   +-- constants.ts      # Centralized constants (ports, patterns, R2 IDs)
+|   |   +-- constants.ts      # Centralized constants (ports, patterns, R2 IDs, timeouts)
 |   |   +-- container-helpers.ts  # Container initialization helpers
 |   |   +-- errors.ts         # Standardized error responses
 |   |   +-- error-types.ts    # Centralized error classes (AppError hierarchy)
 |   |   +-- type-guards.ts    # Runtime type validation
 |   |   +-- circuit-breaker.ts  # Circuit breaker pattern for resilience
+|   |   +-- circuit-breakers.ts # Shared circuit breaker instances for container routes
+|   |   +-- cors-cache.ts     # In-memory CORS origins cache (shared between index.ts and setup.ts)
 |   |   +-- logger.ts         # Structured JSON logging
 |   |   +-- backoff.ts        # Exponential backoff with jitter
+|   |   +-- crypto.ts         # AES-GCM encryption for credentials at rest
 |   +-- container/
-|   |   +-- index.ts          # ClaudeflareContainer DO class
+|   |   +-- index.ts          # container DO class (extends Container)
 |   +-- __tests__/
-|       +-- index.test.ts    # Edge-level redirect tests
+|       +-- index.test.ts     # Edge-level redirect tests
 |       +-- lib/              # Unit tests for lib modules
+|       |   +-- backoff.test.ts
+|       |   +-- circuit-breaker.test.ts
+|       |   +-- constants.test.ts
+|       |   +-- container-helpers.test.ts
+|       |   +-- crypto.test.ts
+|       |   +-- error-types.test.ts
+|       |   +-- logger.test.ts
+|       |   +-- r2-config.test.ts
+|       |   +-- type-guards.test.ts
 |       +-- middleware/       # Auth and rate-limit tests
 |       |   +-- auth.test.ts
 |       |   +-- rate-limit.test.ts
 |       +-- routes/           # Unit tests for route handlers
-|           +-- users.test.ts # User management route tests
+|           +-- session.test.ts
+|           +-- setup.test.ts
+|           +-- users.test.ts
 |
 +-- e2e/
-|   +-- setup.ts              # E2E test setup
+|   +-- config.ts             # E2E test configuration
+|   +-- setup.ts              # E2E test setup (BASE_URL, apiRequest helper)
 |   +-- api.test.ts           # E2E API tests
+|   +-- helpers/
+|   |   +-- test-utils.ts     # Cleanup utilities (cleanupAllSessions, restoreSetupComplete)
+|   +-- ui/                   # E2E UI tests (Puppeteer)
+|       +-- setup.ts          # Puppeteer helpers (launchBrowser, navigateTo)
+|       +-- helpers.ts        # UI test utilities (waitForSelector, click)
+|       +-- layout.test.ts
+|       +-- session-management.test.ts
+|       +-- terminal-interaction.test.ts
+|       +-- settings-panel.test.ts
+|       +-- setup-wizard.test.ts
+|       +-- session-card-enhancements.test.ts
+|       +-- tiling.test.ts
+|       +-- full-journey.test.ts
+|       +-- error-handling.test.ts
+|       +-- rate-limiting.test.ts
+|       +-- request-tracing.test.ts
 |
 +-- host/
 |   +-- server.js             # Terminal server (node-pty + WebSocket)
@@ -1182,14 +1281,35 @@ claudeflare/
 +-- web-ui/
 |   +-- src/
 |   |   +-- App.tsx           # Root component
+|   |   +-- index.tsx         # Entry point
+|   |   +-- index.css         # Global styles (imports design tokens)
+|   |   +-- types.ts          # Frontend types
 |   |   +-- components/
 |   |   |   +-- Terminal.tsx     # xterm.js wrapper
-|   |   |   +-- TerminalTabs.tsx # Tab bar UI
-|   |   |   +-- Layout.tsx       # Main layout
+|   |   |   +-- TerminalTabs.tsx # Tab bar UI with icons and animations
+|   |   |   +-- Layout.tsx       # Main layout (Header + AppSidebar + TerminalArea)
+|   |   |   +-- Header.tsx       # App header with logo and settings
+|   |   |   +-- StatusBar.tsx    # Connection status, sync time, shortcuts
 |   |   |   +-- AppSidebar.tsx   # Sidebar wrapper (extracted from Layout)
 |   |   |   +-- TerminalArea.tsx # Terminal section wrapper (extracted from Layout)
 |   |   |   +-- SessionList.tsx  # Session list with search
 |   |   |   +-- SessionCard.tsx  # Individual session card (extracted)
+|   |   |   +-- InitProgress.tsx # Session init progress modal
+|   |   |   +-- SettingsPanel.tsx # Slide-out settings panel (includes User Management)
+|   |   |   +-- TilingButton.tsx  # Tiling mode toggle button
+|   |   |   +-- TilingOverlay.tsx # Layout selection dropdown
+|   |   |   +-- TiledTerminalContainer.tsx # Multi-terminal grid renderer
+|   |   |   +-- TiledTerminalContainer.css # Tiled terminal grid styles
+|   |   |   +-- EmptyState.tsx    # Reusable empty state component
+|   |   |   +-- EmptyStateVariants.tsx  # Pre-built empty states
+|   |   |   +-- Icon.tsx          # SVG icon wrapper for MDI
+|   |   |   +-- ui/              # Base UI components
+|   |   |   |   +-- index.ts     # Barrel export
+|   |   |   |   +-- Button.tsx, IconButton.tsx, Input.tsx
+|   |   |   |   +-- Badge.tsx, Card.tsx, Skeleton.tsx, Tooltip.tsx
+|   |   |   +-- setup/           # Setup wizard steps (3-step flow)
+|   |   |       +-- SetupWizard.tsx, WelcomeStep.tsx
+|   |   |       +-- ConfigureStep.tsx, ProgressStep.tsx
 |   |   +-- stores/
 |   |   |   +-- terminal.ts   # WebSocket state
 |   |   |   +-- session.ts    # Session state
@@ -1201,9 +1321,35 @@ claudeflare/
 |   |   |   +-- schemas.ts        # Zod validation schemas
 |   |   |   +-- terminal-config.ts # Tab configuration (names, icons)
 |   |   +-- styles/
-|   |       +-- session-list.css   # Session list styles
-|   |       +-- init-progress.css  # Init progress modal styles
-|   |       +-- settings-panel.css # Settings panel styles
+|   |   |   +-- design-tokens.css  # CSS variables (colors, spacing, etc.)
+|   |   |   +-- animations.css     # Keyframes and animation utilities
+|   |   |   +-- components.css     # Shared component styles
+|   |   |   +-- session-list.css   # Session list styles
+|   |   |   +-- init-progress.css  # Init progress modal styles
+|   |   |   +-- settings-panel.css # Settings panel styles
+|   |   +-- __tests__/            # Frontend unit tests
+|   |       +-- setup.ts          # Test setup
+|   |       +-- smoke.test.ts     # Smoke tests
+|   |       +-- utils/
+|   |       |   +-- render.tsx    # Test render utility
+|   |       |   +-- mocks.ts     # Shared mocks
+|   |       +-- components/       # Component tests
+|   |       |   +-- Badge.test.tsx, Button.test.tsx, IconButton.test.tsx, Input.test.tsx
+|   |       |   +-- Header.test.tsx, StatusBar.test.tsx, SettingsPanel.test.tsx
+|   |       |   +-- SessionList.test.tsx, EmptyState.test.tsx, InitProgress.test.tsx
+|   |       |   +-- Terminal.test.tsx, TerminalTabs.test.tsx
+|   |       |   +-- TilingButton.test.tsx, TilingOverlay.test.tsx
+|   |       |   +-- TiledTerminalContainer.test.tsx
+|   |       +-- stores/           # Store tests
+|   |       |   +-- terminal.test.ts
+|   |       |   +-- session.test.ts
+|   |       |   +-- session-tiling.test.ts
+|   |       |   +-- session-ready-detection.test.ts
+|   |       |   +-- setup.test.ts
+|   |       +-- api/              # API tests
+|   |           +-- client.test.ts
+|   |           +-- contract.test.ts
+|   +-- vitest.config.ts      # Vitest config for component tests
 |   +-- dist/                 # Built frontend (static assets)
 |
 +-- Dockerfile                # Container image
@@ -1211,8 +1357,6 @@ claudeflare/
 +-- wrangler.toml             # Cloudflare configuration
 +-- vitest.config.ts          # Unit test config
 +-- vitest.e2e.config.ts      # E2E test config
-+-- docs/
-    +-- STORAGE-EVOLUTION.md  # Storage architecture history
 ```
 
 ### Critical Paths Inside Container
@@ -1229,52 +1373,61 @@ claudeflare/
 
 ---
 
-## 10. Container Startup - Pure Polling Approach
+## 10. Container Startup - Polling with Safety Timeouts
 
 **File:** `entrypoint.sh`
 
-The container startup script uses **pure polling with no arbitrary timeouts**. This is critical for reliable startup.
+The container startup script uses **polling with safety timeouts**. This prefers early exit on success but prevents infinite blocking.
 
-### Why No Static Timeouts?
+### Why Polling with Safety Timeouts?
 
-**Problems with static timeouts:**
+**Problems with fixed timeouts only:**
 - If npm install takes 5 seconds but timeout is 60s → 55 seconds wasted
 - If npm install takes 90 seconds but timeout is 60s → premature failure
 - Network conditions vary → fixed timeouts are wrong in both directions
 
-**Pure polling approach:**
-- Poll until success OR the background process exits
+**Polling with safety timeouts approach:**
+- Poll until success OR the background process exits OR safety timeout expires
 - Exit immediately on success (no waiting)
-- No upper limit on wait time (if process is still running, keep waiting)
+- Safety timeouts prevent infinite blocking if a process hangs:
+  - `SYNC_TIMEOUT=120` (2 min) for initial R2 sync
+  - `BISYNC_TIMEOUT=180` (3 min) for bisync baseline
+  - `MAX_NPM_WAIT=120` (2 min) for npm install
+  - `MAX_CONSENT_WAIT=30` (30 sec) for consent files
 
 ### preseed_claude_yolo() Implementation
 
 ```bash
 # Phase 1: Wait for npm install (version update)
-while kill -0 $PRESEED_PID 2>/dev/null; do  # Process still alive?
-    UPDATED=$(grep -oP ... "$PACKAGE_JSON")
+# Poll until: (a) version matches, OR (b) process exits, OR (c) timeout
+while kill -0 $PRESEED_PID 2>/dev/null && [ $WAITED -lt $MAX_NPM_WAIT ]; do
+    UPDATED=$(sed -n 's/.*"@anthropic-ai\/claude-code".*"\([^"]*\)".*/\1/p' "$PACKAGE_JSON")
     if [ "$UPDATED" = "$LATEST_NPM" ]; then
         break  # SUCCESS! Exit immediately
     fi
     sleep 1
+    WAITED=$((WAITED + 1))
 done
 
 # Phase 2: Wait for consent files
-while kill -0 $PRESEED_PID 2>/dev/null; do  # Process still alive?
-    if [ -f ".claude-yolo-consent" ] && [ -f "cli-yolo.mjs" ]; then
+# Poll until: (a) files exist, OR (b) process exits, OR (c) timeout
+while kill -0 $PRESEED_PID 2>/dev/null && [ $WAITED -lt $MAX_CONSENT_WAIT ]; do
+    if [ -f "$CLAUDE_YOLO_DIR/.claude-yolo-consent" ] && [ -f "$CLAUDE_YOLO_DIR/cli-yolo.mjs" ]; then
         break  # SUCCESS! Exit immediately
     fi
     sleep 1
+    WAITED=$((WAITED + 1))
 done
 ```
 
-**Key pattern:** `kill -0 $PID` returns success if process is running, failure if it exited.
+**Key pattern:** `kill -0 $PID` returns success if process is running, failure if it exited. Safety timeouts (`MAX_NPM_WAIT=120`, `MAX_CONSENT_WAIT=30`) prevent infinite blocking.
 
-| Scenario | Old (60s timeout) | New (pure polling) |
-|----------|-------------------|-------------------|
-| npm install takes 5s | Waits 60s anyway | Exits after 5s ✓ |
-| npm install takes 90s | Fails at 60s ✗ | Waits 90s, succeeds ✓ |
-| claude-yolo crashes | Waits 60s anyway | Detects immediately ✓ |
+| Scenario | Old (60s timeout) | New (polling + safety timeout) |
+|----------|-------------------|-------------------------------|
+| npm install takes 5s | Waits 60s anyway | Exits after 5s |
+| npm install takes 90s | Fails at 60s | Waits 90s, succeeds (under 120s limit) |
+| npm hangs forever | Waits 60s | Times out at 120s safety limit |
+| claude-yolo crashes | Waits 60s anyway | Detects immediately |
 
 ### Parallel Startup
 
@@ -1288,13 +1441,13 @@ Container Start
 ├── establish_bisync_baseline() &   ← Background (non-blocking)
 ├── configure_claude_autostart()
 ├── wait $PRESEED_PID           ← Block until consent complete
-└── Start servers (ports 8080, 3000)
+└── Start terminal server (port 8080)
 ```
 
 This means:
 1. R2 sync and claude-yolo run simultaneously (saves time)
 2. Servers start only after BOTH complete (correct ordering)
-3. No fixed timeouts anywhere (pure polling throughout)
+3. Polling with safety timeouts throughout (early exit on success, bounded wait on failure)
 
 ---
 
@@ -1313,12 +1466,13 @@ Base: `node:22-alpine`
 | Editors | vim, neovim, nano |
 | Network | curl, wget, openssh-client |
 | Build | make, gcc, g++, python3, nodejs, npm |
-| Utilities | jq, ripgrep, fd, tree, btop, htop, tmux, yazi |
+| Utilities | jq, ripgrep, fd, tree, btop, htop, tmux, yazi, fzf, zoxide, bat |
+| Yazi preview dependencies | file, ffmpeg, p7zip, poppler-utils, imagemagick |
 | Terminal | ncurses, ncurses-terminfo |
 
 ### Global NPM Packages
 
-- `@anthropic-ai/claude-code` - Claude Code CLI
+- `claude-yolo` - Claude Code CLI wrapper with YOLO mode support (wraps `@anthropic-ai/claude-code`)
 
 ### Build Process
 
@@ -1328,8 +1482,8 @@ RUN apk add --no-cache rclone git vim ... \
     && apk add --no-cache yazi --repository=http://dl-cdn.alpinelinux.org/alpine/edge/testing \
     && apk add --no-cache lazygit --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community
 
-# Install Claude Code
-RUN npm install -g @anthropic-ai/claude-code
+# Install claude-yolo (wraps Claude Code with YOLO mode)
+RUN npm install -g claude-yolo
 
 # Copy and install terminal server
 COPY host/package.json host/server.js /app/host/
@@ -1402,17 +1556,21 @@ The `preseed_claude_yolo()` function in `entrypoint.sh` handles automatic consen
 
 ```bash
 # Run claude-yolo with "yes" piped to auto-answer consent prompt
-echo "yes" | claude-yolo &
+(echo "yes"; sleep 5) | claude-yolo 2>&1 | head -100 &
 PRESEED_PID=$!
 
-# Poll until consent files appear OR process exits
-while kill -0 $PRESEED_PID 2>/dev/null; do
-    if [ -f ".claude-yolo-consent" ] && [ -f "cli-yolo.mjs" ]; then
-        kill $PRESEED_PID 2>/dev/null
+# Poll until consent files appear OR process exits OR safety timeout
+local WAITED=0
+while kill -0 $PRESEED_PID 2>/dev/null && [ $WAITED -lt $MAX_CONSENT_WAIT ]; do
+    if [ -f "$CLAUDE_YOLO_DIR/.claude-yolo-consent" ] && [ -f "$CLAUDE_YOLO_DIR/cli-yolo.mjs" ]; then
         break
     fi
     sleep 1
+    WAITED=$((WAITED + 1))
 done
+
+# Cleanup - kill any lingering processes
+pkill -f "claude-yolo" 2>/dev/null || true
 ```
 
 This runs during container init (before terminal opens), so users never see consent prompts.
@@ -1594,7 +1752,7 @@ import { switchPort } from '@cloudflare/containers';
 
 const request = switchPort(
   new Request('http://container/health'),
-  3000  // Target port
+  8080  // Target port
 );
 ```
 
@@ -1697,9 +1855,13 @@ curl -H "CF-Access-Client-Id: <id>" \
 **Response:**
 ```json
 {
-  "state": "running",
-  "startTime": 1234567890,
-  "stopTime": null
+  "success": true,
+  "containerId": "claudeflare-user-example-com-abc12345",
+  "state": {
+    "status": "running",
+    "startTime": 1234567890,
+    "stopTime": null
+  }
 }
 ```
 
@@ -1713,10 +1875,15 @@ curl -H "CF-Access-Client-Id: <id>" \
 **Response:**
 ```json
 {
-  "healthy": true,
-  "terminalServer": "ok",
-  "healthServer": "ok",
-  "lastCheck": "2026-02-02T10:30:00Z"
+  "success": true,
+  "containerId": "claudeflare-user-example-com-abc12345",
+  "container": {
+    "status": "ok",
+    "syncStatus": "success",
+    "cpu": "12%",
+    "mem": "45%",
+    "hdd": "2.1G/4.0G"
+  }
 }
 ```
 
@@ -1831,21 +1998,21 @@ curl -H "CF-Access-Client-Id: <id>" \
 
 | Resource | Tier | Specs | Monthly Cost |
 |----------|------|-------|--------------|
-| Container | Basic | 0.25 vCPU, 1GB RAM, 4GB disk | ~$14 |
+| Container | Custom | 1 vCPU, 3 GiB RAM, 4 GB disk | ~$56 |
 
 ### Scaling Model
 
 - **Cost scales per ACTIVE SESSION** - each browser tab = dedicated container
-- **Idle containers hibernate** after 30 minutes (configurable via `sleepAfter`)
+- **Idle containers hibernate** via DO alarm-based hibernation with `IDLE_TIMEOUT_MS` (30 min). The DO polls `/activity` every 5 minutes and destroys the container when no WebSocket connections AND no PTY output for 30 minutes.
 - **Hibernated containers** don't incur CPU costs, only storage
 
 ### Example Monthly Costs
 
 | Usage | Containers | Estimated Cost |
 |-------|------------|----------------|
-| Single session | 1 | ~$14 |
-| 3 concurrent sessions | 3 | ~$42 |
-| 10 concurrent sessions | 10 | ~$140 |
+| Single session | 1 | ~$56 |
+| 3 concurrent sessions | 3 | ~$168 |
+| 10 concurrent sessions | 10 | ~$560 |
 
 ### R2 Storage
 
@@ -1897,11 +2064,11 @@ curl -H "CF-Access-Client-Id: <id>" \
 
 20. **Configurable CORS** - Allow CORS origins to be configured via environment variable (`ALLOWED_ORIGINS`) rather than hardcoding domains.
 
-21. **Pure polling over static timeouts** - Never use fixed timeouts (e.g., `while [ $WAITED -lt 60 ]`) for process synchronization. Instead, poll with `kill -0 $PID` to check if process is still running, and exit immediately on success. This handles both fast and slow scenarios correctly.
+21. **Polling with safety timeouts over fixed timeouts** - Never use only fixed timeouts (e.g., `while [ $WAITED -lt 60 ]`) for process synchronization. Instead, poll with `kill -0 $PID` to check if process is still running, exit immediately on success, and use safety timeouts (e.g., `MAX_NPM_WAIT=120`, `MAX_CONSENT_WAIT=30`) to prevent infinite blocking if a process hangs.
 
 22. **Zombie prevention with _destroyed flag** - In Cloudflare Durable Objects, calling ANY method (including `getState()`) wakes up a hibernated DO. When `destroy()` is called, a pre-scheduled alarm may still fire and resurrect the zombie. The fix: (1) set a `_destroyed` flag in DO storage BEFORE calling `super.destroy()`, (2) in `alarm()`, check the flag FIRST using only `ctx.storage.get()` (which doesn't wake the DO), and (3) if destroyed, clear all storage and exit without calling Container methods.
 
-23. **Kill early health server before full health server** - The entrypoint.sh starts two health servers sequentially: an early one (minimal, for startup diagnostics) and a full one (with cpu/mem/hdd metrics). Both listen on port 3000. If the early server isn't killed before the full server starts, the early server holds the port and metrics are never returned.
+23. **Single port architecture eliminates port conflicts** - All container services (WebSocket, health, metrics) are consolidated on port 8080. Earlier multi-port designs had issues with the early health server holding port 3000 and preventing the full server from starting. Single port eliminates this class of bugs entirely.
 
 24. **idFromName() CREATES DOs, idFromString() references existing** - Cloudflare Durable Objects are "Virtual Actors" that always exist conceptually. Calling `idFromName(name)` + `get()` + ANY method (fetch, destroy, getState) **CREATES** a new DO if it doesn't exist. The ONLY safe way to reference an existing DO without creating it is via `idFromString(hexId)` with a known 64-character hex ID. Admin endpoints that tried to "nuke" containers by name were actually CREATING zombies because they used `idFromName()`. The only way to truly DELETE DOs is to delete the entire class via migration (`deleted_classes` in wrangler.toml).
 
@@ -1974,6 +2141,3 @@ Backend `startup-status` endpoint now returns cpu/mem/hdd metrics in ALL stages 
 
 Frontend types updated with optional `cpu`, `mem`, `hdd` fields in `StartupStatusResponse.details`.
 
----
-
-*Generated: 2026-02-04 (updated: DO zombie prevention, removed broken admin endpoints)*

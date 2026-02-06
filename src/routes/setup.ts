@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Env } from '../types';
 import { createLogger } from '../lib/logger';
 import { ValidationError, AuthError, SetupError } from '../lib/error-types';
+import { resetCorsOriginsCache } from '../lib/cors-cache';
 // R2 permission IDs no longer needed — we derive S3 credentials from the user's token
 
 const logger = createLogger('setup');
@@ -857,10 +858,14 @@ app.post('/configure', async (c) => {
     // Store custom domain in KV
     await c.env.KV.put('setup:custom_domain', customDomain);
 
-    // Store allowed origins in KV if provided
-    if (allowedOrigins && allowedOrigins.length > 0) {
-      await c.env.KV.put('setup:allowed_origins', JSON.stringify(allowedOrigins));
-    }
+    // Build combined allowed origins list:
+    // 1. User-provided origins (if any)
+    // 2. Auto-add the custom domain
+    // 3. Always include .workers.dev as a default
+    const combinedOrigins = new Set<string>(allowedOrigins || []);
+    combinedOrigins.add(customDomain);
+    combinedOrigins.add('.workers.dev');
+    await c.env.KV.put('setup:allowed_origins', JSON.stringify([...combinedOrigins]));
 
     // Final step: Mark setup as complete
     steps.push({ step: 'finalize', status: 'pending' });
@@ -870,7 +875,8 @@ app.post('/configure', async (c) => {
     await c.env.KV.put('setup:completed_at', new Date().toISOString());
     steps[steps.length - 1].status = 'success';
 
-    // TODO: Call resetSetupCache() when it's available from index.ts
+    // Reset in-memory CORS cache so subsequent requests pick up new KV origins
+    resetCorsOriginsCache();
 
     // Get the workers.dev URL from request
     const url = new URL(c.req.url);

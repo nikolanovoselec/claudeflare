@@ -188,8 +188,8 @@ app.get('/:sessionId/ws', async (c) => {
   const fullSessionId = c.req.param('sessionId');
 
   // Parse compound session ID: "baseSessionId-terminalId" or just "baseSessionId"
-  // Terminal IDs are 1-4, so we look for pattern ending in -1, -2, -3, or -4
-  const compoundMatch = fullSessionId.match(/^(.+)-([1-4])$/);
+  // Terminal IDs are 1-6, so we look for pattern ending in -1 through -6
+  const compoundMatch = fullSessionId.match(/^(.+)-([1-6])$/);
   const baseSessionId = compoundMatch ? compoundMatch[1] : fullSessionId;
   const terminalId = compoundMatch ? compoundMatch[2] : '1';
 

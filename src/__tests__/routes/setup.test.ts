@@ -1202,7 +1202,7 @@ describe('Setup Routes', () => {
       expect(accessCreateCall).toBeDefined();
     });
 
-    it('stores allowedOrigins in KV when provided', async () => {
+    it('stores combined allowedOrigins in KV including custom domain and .workers.dev', async () => {
       const app = createTestApp();
 
       mockSuccessfulBaseFlow();
@@ -1219,10 +1219,41 @@ describe('Setup Routes', () => {
         }),
       });
 
-      expect(mockKV.put).toHaveBeenCalledWith(
-        'setup:allowed_origins',
-        JSON.stringify(['https://app.example.com', 'https://dev.example.com'])
+      // Should contain user-provided origins + custom domain + .workers.dev
+      const putCall = mockKV.put.mock.calls.find(
+        (call: [string, string]) => call[0] === 'setup:allowed_origins'
       );
+      expect(putCall).toBeDefined();
+      const storedOrigins = JSON.parse(putCall![1]) as string[];
+      expect(storedOrigins).toContain('https://app.example.com');
+      expect(storedOrigins).toContain('https://dev.example.com');
+      expect(storedOrigins).toContain('claude.example.com');
+      expect(storedOrigins).toContain('.workers.dev');
+    });
+
+    it('stores allowedOrigins with custom domain and .workers.dev even when no user origins provided', async () => {
+      const app = createTestApp();
+
+      mockSuccessfulBaseFlow();
+      mockCustomDomainFlow();
+      mockAccessAppFlow();
+
+      await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customDomain: 'claude.example.com',
+          allowedUsers: ['user@example.com'],
+        }),
+      });
+
+      const putCall = mockKV.put.mock.calls.find(
+        (call: [string, string]) => call[0] === 'setup:allowed_origins'
+      );
+      expect(putCall).toBeDefined();
+      const storedOrigins = JSON.parse(putCall![1]) as string[];
+      expect(storedOrigins).toContain('claude.example.com');
+      expect(storedOrigins).toContain('.workers.dev');
     });
 
     it('stores custom domain in KV', async () => {

@@ -7,9 +7,6 @@ export interface Env {
   // Static assets binding (auto-injected by Cloudflare when [assets] is configured)
   ASSETS: Fetcher;
 
-  // R2 bucket for workspace storage
-  STORAGE: R2Bucket;
-
   // KV namespace for session metadata
   KV: KVNamespace;
 
@@ -17,7 +14,8 @@ export interface Env {
   CONTAINER: DurableObjectNamespace<Container<Env>>;
 
   // Environment variables
-  R2_BUCKET_NAME: string;
+  // Only available inside containers (set via envVars)
+  R2_BUCKET_NAME?: string;
   R2_ACCOUNT_ID?: string;
   R2_ENDPOINT?: string;
 

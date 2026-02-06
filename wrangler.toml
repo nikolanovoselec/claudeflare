@@ -12,7 +12,8 @@ enabled = true
 [vars]
 DEV_MODE = "false"
 # Allowed CORS origins (comma-separated domain patterns)
-ALLOWED_ORIGINS = ".workers.dev,.your-domain.com"
+# Additional origins are managed dynamically via KV (setup:custom_domain, setup:allowed_origins)
+ALLOWED_ORIGINS = ".workers.dev"
 # R2_BUCKET_NAME removed - per-user buckets now
 
 # REMOVE or comment out - per-user buckets are created dynamically
@@ -21,9 +22,12 @@ ALLOWED_ORIGINS = ".workers.dev,.your-domain.com"
 # bucket_name = "claudeflare-storage"
 
 # KV namespace for session metadata
+# Uses title for auto-creation on deploy (wrangler creates/reuses the namespace by title).
+# The id is a placeholder required by vitest-pool-workers; wrangler deploy ignores it when title is set.
 [[kv_namespaces]]
 binding = "KV"
-id = "359e06b11d094813ace300d96b6a2f5f"
+title = "claudeflare-kv"
+id = "placeholder"
 
 # Container configuration - using custom instance type
 # 1 vCPU, 3 GiB memory, 4 GB disk
