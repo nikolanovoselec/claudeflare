@@ -4,26 +4,7 @@ import { createRateLimiter, RateLimitConfig } from '../../middleware/rate-limit'
 import type { Env } from '../../types';
 import type { AuthVariables } from '../../middleware/auth';
 import { RateLimitError } from '../../lib/error-types';
-
-// Mock KV storage
-function createMockKV() {
-  const store = new Map<string, { value: string; expirationTtl?: number }>();
-  return {
-    get: vi.fn(async (key: string, type?: string) => {
-      const data = store.get(key);
-      if (!data) return null;
-      return type === 'json' ? JSON.parse(data.value) : data.value;
-    }),
-    put: vi.fn(async (key: string, value: string, options?: { expirationTtl?: number }) => {
-      store.set(key, { value, expirationTtl: options?.expirationTtl });
-    }),
-    delete: vi.fn(async (key: string) => {
-      store.delete(key);
-    }),
-    _store: store,
-    _clear: () => store.clear(),
-  };
-}
+import { createMockKV } from '../helpers/mock-kv';
 
 describe('createRateLimiter', () => {
   let mockKV: ReturnType<typeof createMockKV>;

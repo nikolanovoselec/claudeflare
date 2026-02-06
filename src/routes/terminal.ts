@@ -4,7 +4,7 @@ import type { Env, Session } from '../types';
 import { getSessionKey } from '../lib/kv-keys';
 import { authMiddleware, AuthVariables } from '../middleware/auth';
 import { getContainerId, checkContainerHealth } from '../lib/container-helpers';
-import { getUserFromRequest, getBucketName } from '../lib/access';
+import { getUserFromRequest, getBucketName, resolveUserFromKV } from '../lib/access';
 import { createLogger } from '../lib/logger';
 import { containerSessionsCB } from '../lib/circuit-breakers';
 import { NotFoundError, toError } from '../lib/error-types';
@@ -100,7 +100,7 @@ export async function handleWebSocketUpgrade(
 
   try {
     // Authenticate user
-    const user = getUserFromRequest(request, env);
+    const user = await getUserFromRequest(request, env);
     if (!user.authenticated) {
       return new Response(JSON.stringify({ error: 'Not authenticated' }), {
         status: 401,
@@ -108,15 +108,19 @@ export async function handleWebSocketUpgrade(
       });
     }
 
-    // Check user allowlist in KV (same check as authMiddleware)
+    // Check user allowlist in KV and resolve role (same check as authMiddleware)
     if (env.DEV_MODE !== 'true') {
-      const userEntry = await env.KV.get(`user:${user.email}`);
-      if (!userEntry) {
+      const kvEntry = await resolveUserFromKV(env.KV, user.email);
+      if (!kvEntry) {
         return new Response(JSON.stringify({ error: 'User not in allowlist' }), {
           status: 403,
           headers: { 'Content-Type': 'application/json' },
         });
       }
+      user.role = kvEntry.role;
+    } else {
+      // In DEV_MODE, grant admin role
+      user.role = 'admin';
     }
 
     const bucketName = getBucketName(user.email);
@@ -125,7 +129,7 @@ export async function handleWebSocketUpgrade(
     logger.info('User authenticated for WebSocket', { email: user.email, containerId, terminalId });
 
     // Validate session exists using BASE sessionId
-    const sessionKey = `session:${bucketName}:${baseSessionId}`;
+    const sessionKey = getSessionKey(bucketName, baseSessionId);
     const session = await env.KV.get<Session>(sessionKey, 'json');
 
     if (!session) {

@@ -1,13 +1,26 @@
-import type { AccessUser, Env } from '../types';
+import type { AccessUser, Env, UserRole } from '../types';
+import { verifyAccessJWT } from './jwt';
+
+// Module-level cache for auth config (avoids KV reads on every request)
+let cachedAuthDomain: string | null | undefined = undefined;
+let cachedAccessAud: string | null | undefined = undefined;
+
+/**
+ * Reset cached auth config. Call when setup completes or config changes.
+ */
+export function resetAuthConfigCache(): void {
+  cachedAuthDomain = undefined;
+  cachedAccessAud = undefined;
+}
 
 /**
  * Extract user info from Cloudflare Access.
  *
- * Supports two authentication methods:
+ * Supports three authentication methods:
  *
  * 1. Browser/JWT authentication (via CF Access login):
- *    - cf-access-authenticated-user-email: user's email (set by CF Access after JWT validation)
- *    - cf-access-jwt-assertion: full JWT
+ *    - cf-access-jwt-assertion: full JWT (verified via JWKS when auth_domain/access_aud are configured)
+ *    - cf-access-authenticated-user-email: user's email (fallback when JWT config not yet stored)
  *
  * 2. Service token authentication (for API/CLI clients):
  *    - CF-Access-Client-Id: service token ID
@@ -17,8 +30,39 @@ import type { AccessUser, Env } from '../types';
  *
  * In DEV_MODE, returns a test user when no Access headers are present.
  */
-export function getUserFromRequest(request: Request, env?: Env): AccessUser {
-  // Method 1: Browser/JWT authentication - check for email header
+export async function getUserFromRequest(request: Request, env?: Env): Promise<AccessUser> {
+  // Check for JWT assertion header first (primary auth method)
+  const jwtToken = request.headers.get('cf-access-jwt-assertion');
+
+  if (jwtToken && env?.KV) {
+    // Load auth config from KV (with module-level cache)
+    if (cachedAuthDomain === undefined) {
+      cachedAuthDomain = await env.KV.get('setup:auth_domain');
+    }
+    if (cachedAccessAud === undefined) {
+      cachedAccessAud = await env.KV.get('setup:access_aud');
+    }
+
+    if (cachedAuthDomain && cachedAccessAud) {
+      // JWT verification is available - use it
+      const verifiedEmail = await verifyAccessJWT(jwtToken, cachedAuthDomain, cachedAccessAud);
+
+      if (verifiedEmail) {
+        return { email: verifiedEmail, authenticated: true };
+      }
+
+      // JWT verification failed
+      // In DEV_MODE, fall through to header-based trust
+      if (env?.DEV_MODE !== 'true') {
+        return { email: '', authenticated: false };
+      }
+    }
+    // auth_domain/access_aud not stored yet (pre-setup state):
+    // fall through to header-based trust below
+  }
+
+  // Fallback: Browser/JWT authentication - trust email header
+  // (used when auth_domain/access_aud not configured yet, or no JWT token)
   const email = request.headers.get('cf-access-authenticated-user-email');
 
   if (email) {
@@ -66,4 +110,23 @@ export function getBucketName(email: string): string {
   const maxSanitizedLength = maxLength - prefix.length;
 
   return `${prefix}${sanitized.substring(0, maxSanitizedLength)}`;
+}
+
+/**
+ * Resolve a user entry from KV, returning role information.
+ * Defaults missing role to 'user' for backward compatibility with
+ * entries created before role support was added.
+ */
+export async function resolveUserFromKV(
+  kv: KVNamespace,
+  email: string
+): Promise<{ addedBy: string; addedAt: string; role: UserRole } | null> {
+  const raw = await kv.get(`user:${email}`);
+  if (!raw) return null;
+  const entry = JSON.parse(raw);
+  return {
+    addedBy: entry.addedBy,
+    addedAt: entry.addedAt,
+    role: entry.role || 'user',  // Default missing role to 'user' for migration
+  };
 }

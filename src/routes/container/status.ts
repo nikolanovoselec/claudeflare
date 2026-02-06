@@ -210,11 +210,9 @@ app.get('/startup-status', async (c) => {
     }
 
     // Sync complete (success or skipped) - now check terminal server
-    // Step 4: Check terminal server (port 8080) - THIS IS THE CRITICAL CHECK
-    const terminalHealthRequest = new Request('http://container/health', { method: 'GET' });
-    const terminalHealthRes = await fetchWithTimeout(() =>
-      containerHealthCB.execute(() => container.fetch(terminalHealthRequest))
-    );
+    // Step 4: Reuse health response from step 2 (same port 8080 /health endpoint)
+    // No need to fetch again — healthRes already confirms terminal server status
+    const terminalHealthRes = healthRes;
 
     if (!terminalHealthRes) {
       // Terminal server timed out - mounting stage (sync done but terminal not ready)
@@ -285,13 +283,13 @@ app.get('/startup-status', async (c) => {
     return c.json({
       stage: 'error',
       progress: 0,
-      message: toErrorMessage(error),
+      message: 'Container startup check failed',
       details: {
         bucketName: '',
         container: '',
         path: '/home/user/workspace',
       },
-      error: toErrorMessage(error),
+      error: 'Container startup check failed',
     });
   }
 });

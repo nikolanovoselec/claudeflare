@@ -6,33 +6,7 @@ import type { Env, Session } from '../../types';
 import type { AuthVariables } from '../../middleware/auth';
 import { ValidationError, NotFoundError, RateLimitError } from '../../lib/error-types';
 import { MAX_SESSION_NAME_LENGTH } from '../../lib/constants';
-
-// Mock KV storage
-function createMockKV() {
-  const store = new Map<string, string>();
-  return {
-    get: vi.fn(async (key: string, type?: string) => {
-      const value = store.get(key);
-      if (!value) return null;
-      return type === 'json' ? JSON.parse(value) : value;
-    }),
-    put: vi.fn(async (key: string, value: string) => {
-      store.set(key, value);
-    }),
-    delete: vi.fn(async (key: string) => {
-      store.delete(key);
-    }),
-    list: vi.fn(async ({ prefix }: { prefix: string }) => {
-      const keys = Array.from(store.keys())
-        .filter((k) => k.startsWith(prefix))
-        .map((name) => ({ name }));
-      return { keys };
-    }),
-    _store: store,
-    _set: (key: string, value: unknown) => store.set(key, JSON.stringify(value)),
-    _clear: () => store.clear(),
-  };
-}
+import { createMockKV } from '../helpers/mock-kv';
 
 // Mock container
 function createMockContainer() {

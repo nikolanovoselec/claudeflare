@@ -20,14 +20,14 @@ echo "[entrypoint] pwd: $(pwd)"
 echo "[entrypoint] HOME: $HOME"
 echo "[entrypoint] node version: $(node --version)"
 
-# Debug: Check R2 environment variables
-echo "[entrypoint] === R2 ENV DEBUG ===" | tee /tmp/sync.log
-echo "R2_BUCKET_NAME: ${R2_BUCKET_NAME:-NOT SET}" | tee -a /tmp/sync.log
-echo "R2_ENDPOINT: ${R2_ENDPOINT:-NOT SET}" | tee -a /tmp/sync.log
-echo "R2_ACCESS_KEY_ID set: ${R2_ACCESS_KEY_ID:+yes}${R2_ACCESS_KEY_ID:-NO}" | tee -a /tmp/sync.log
-echo "R2_SECRET_ACCESS_KEY set: ${R2_SECRET_ACCESS_KEY:+yes}${R2_SECRET_ACCESS_KEY:-NO}" | tee -a /tmp/sync.log
-echo "R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-NOT SET}" | tee -a /tmp/sync.log
-echo "[entrypoint] === END R2 ENV DEBUG ===" | tee -a /tmp/sync.log
+# Check R2 environment variables (configured/missing status only)
+echo "[entrypoint] === R2 ENV STATUS ===" | tee /tmp/sync.log
+echo "R2_BUCKET_NAME: ${R2_BUCKET_NAME:+configured}" | tee -a /tmp/sync.log
+echo "R2_ENDPOINT: ${R2_ENDPOINT:+configured}" | tee -a /tmp/sync.log
+echo "R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:+configured}" | tee -a /tmp/sync.log
+echo "R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:+configured}" | tee -a /tmp/sync.log
+echo "R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:+configured}" | tee -a /tmp/sync.log
+echo "[entrypoint] === END R2 ENV STATUS ===" | tee -a /tmp/sync.log
 
 # Set TERM for proper terminal handling
 TERM=xterm-256color
@@ -83,10 +83,7 @@ create_rclone_config() {
         return 1
     fi
 
-    echo "[entrypoint] R2 config:"
-    echo "[entrypoint]   BUCKET: $R2_BUCKET_NAME"
-    echo "[entrypoint]   ENDPOINT: $R2_ENDPOINT"
-    echo "[entrypoint]   ACCESS_KEY: ${R2_ACCESS_KEY_ID:0:4}..."
+    echo "[entrypoint] R2 credentials: configured"
 
     # Create rclone config directory
     mkdir -p "$USER_HOME/.config/rclone"

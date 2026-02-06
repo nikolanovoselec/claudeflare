@@ -2,29 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Hono } from 'hono';
 import { authMiddleware, AuthVariables } from '../../middleware/auth';
 import type { Env } from '../../types';
-
-// Mock KV storage
-function createMockKV() {
-  const store = new Map<string, string>();
-  return {
-    get: vi.fn(async (key: string, format?: string) => {
-      const val = store.get(key) || null;
-      if (val && format === 'json') {
-        try { return JSON.parse(val); } catch { return val; }
-      }
-      return val;
-    }),
-    put: vi.fn(async (key: string, value: string) => {
-      store.set(key, value);
-    }),
-    delete: vi.fn(async (key: string) => {
-      store.delete(key);
-    }),
-    list: vi.fn(async () => ({ keys: [] })),
-    _store: store,
-    _clear: () => store.clear(),
-  };
-}
+import { createMockKV } from '../helpers/mock-kv';
 
 describe('Auth Middleware', () => {
   let mockKV: ReturnType<typeof createMockKV>;
@@ -123,5 +101,55 @@ describe('Auth Middleware', () => {
     expect(body.error).toContain('Not authenticated');
     // KV should NOT have been called since auth failed before allowlist check
     expect(mockKV.get).not.toHaveBeenCalled();
+  });
+
+  // =========================================================================
+  // Role resolution tests
+  // =========================================================================
+  describe('Role resolution', () => {
+    it('sets role to admin when KV entry has role: admin', async () => {
+      const testEmail = 'admin@example.com';
+      mockKV._store.set(
+        `user:${testEmail}`,
+        JSON.stringify({ addedBy: 'setup', addedAt: '2024-01-01', role: 'admin' })
+      );
+
+      const app = createTestApp();
+      const res = await app.request('/test', {
+        headers: { 'cf-access-authenticated-user-email': testEmail },
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as { user: { email: string; role: string } };
+      expect(body.user.role).toBe('admin');
+    });
+
+    it('defaults to role user when KV entry has no role field (legacy migration)', async () => {
+      const testEmail = 'legacy@example.com';
+      // Simulate a legacy KV entry without the role field
+      mockKV._store.set(
+        `user:${testEmail}`,
+        JSON.stringify({ addedBy: 'setup', addedAt: '2024-01-01' })
+      );
+
+      const app = createTestApp();
+      const res = await app.request('/test', {
+        headers: { 'cf-access-authenticated-user-email': testEmail },
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as { user: { email: string; role: string } };
+      expect(body.user.role).toBe('user');
+    });
+
+    it('grants admin role in DEV_MODE', async () => {
+      const app = createTestApp({ DEV_MODE: 'true' } as Partial<Env>);
+
+      const res = await app.request('/test');
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as { user: { email: string; role: string } };
+      expect(body.user.role).toBe('admin');
+    });
   });
 });

@@ -13,6 +13,7 @@ export interface SetupState {
   customDomain: string;
   customDomainError: string | null;
   // Allowed users and origins
+  adminUsers: string[];
   allowedUsers: string[];
   allowedOrigins: string[];
   // Configuration progress
@@ -34,6 +35,7 @@ const initialState: SetupState = {
   accountInfo: null,
   customDomain: '',
   customDomainError: null,
+  adminUsers: [],
   allowedUsers: [],
   allowedOrigins: [],
   configuring: false,
@@ -67,10 +69,41 @@ async function detectToken(): Promise<void> {
   }
 }
 
+function addAdminUser(email: string): void {
+  if (email && !state.adminUsers.includes(email)) {
+    setState(
+      produce((s) => {
+        // If already in regular users list, remove from there
+        const regularIndex = s.allowedUsers.indexOf(email);
+        if (regularIndex !== -1) {
+          s.allowedUsers.splice(regularIndex, 1);
+        }
+        s.adminUsers.push(email);
+      })
+    );
+  }
+}
+
+function removeAdminUser(email: string): void {
+  setState(
+    produce((s) => {
+      const index = s.adminUsers.indexOf(email);
+      if (index !== -1) {
+        s.adminUsers.splice(index, 1);
+      }
+    })
+  );
+}
+
 function addAllowedUser(email: string): void {
   if (email && !state.allowedUsers.includes(email)) {
     setState(
       produce((s) => {
+        // If already in admin list, remove from there
+        const adminIndex = s.adminUsers.indexOf(email);
+        if (adminIndex !== -1) {
+          s.adminUsers.splice(adminIndex, 1);
+        }
         s.allowedUsers.push(email);
       })
     );
@@ -114,9 +147,12 @@ async function configure(): Promise<boolean> {
   setState({ configuring: true, configureSteps: [], configureError: null });
 
   try {
+    // Combine admin + regular users for the allowedUsers list (CF Access needs all emails)
+    const allUsers = [...state.adminUsers, ...state.allowedUsers];
     const body: Record<string, unknown> = {
       customDomain: state.customDomain,
-      allowedUsers: state.allowedUsers,
+      allowedUsers: allUsers,
+      adminUsers: state.adminUsers,
     };
     if (state.allowedOrigins.length > 0) {
       body.allowedOrigins = state.allowedOrigins;
@@ -153,7 +189,7 @@ async function configure(): Promise<boolean> {
 }
 
 function reset(): void {
-  setState({ ...initialState, allowedUsers: [], allowedOrigins: [], configureSteps: [] });
+  setState({ ...initialState, adminUsers: [], allowedUsers: [], allowedOrigins: [], configureSteps: [] });
 }
 
 export const setupStore = {
@@ -178,6 +214,9 @@ export const setupStore = {
   },
   get customDomainError() {
     return state.customDomainError;
+  },
+  get adminUsers() {
+    return state.adminUsers;
   },
   get allowedUsers() {
     return state.allowedUsers;
@@ -209,6 +248,8 @@ export const setupStore = {
 
   // Actions
   detectToken,
+  addAdminUser,
+  removeAdminUser,
   addAllowedUser,
   removeAllowedUser,
   setAllowedOrigins,

@@ -26,23 +26,7 @@ vi.mock('../routes/admin', () => ({ default: new Hono() }));
 // Import after mocks are set up
 import worker, { resetSetupCache } from '../index';
 import { validateWebSocketRoute, handleWebSocketUpgrade } from '../routes/terminal';
-
-// Mock KV storage
-function createMockKV() {
-  const store = new Map<string, string>();
-  return {
-    get: vi.fn(async (key: string) => store.get(key) || null),
-    put: vi.fn(async (key: string, value: string) => {
-      store.set(key, value);
-    }),
-    delete: vi.fn(async (key: string) => {
-      store.delete(key);
-    }),
-    list: vi.fn(async () => ({ keys: [] })),
-    _store: store,
-    _clear: () => store.clear(),
-  };
-}
+import { createMockKV } from './helpers/mock-kv';
 
 function createMockEnv(): { env: Env; mockKV: ReturnType<typeof createMockKV>; mockAssets: { fetch: ReturnType<typeof vi.fn> } } {
   const mockKV = createMockKV();

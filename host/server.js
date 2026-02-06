@@ -97,13 +97,11 @@ const activityTracker = {
   // Call this whenever PTY produces output
   recordPtyOutput() {
     this.lastPtyOutputTimestamp = Date.now();
-    console.log(`[ActivityTracker] PTY output recorded`);
   },
 
   // Call this whenever WebSocket activity occurs
   recordWsActivity() {
     this.lastWsActivityTimestamp = Date.now();
-    console.log(`[ActivityTracker] WebSocket activity recorded`);
   },
 
   // Get activity info for the /activity endpoint
@@ -498,7 +496,6 @@ const server = http.createServer((req, res) => {
   // Bug 3 fix: Activity endpoint for smart hibernation
   if (pathname === '/activity' && method === 'GET') {
     const activityInfo = activityTracker.getActivityInfo(sessionManager);
-    console.log(`[Terminal Server] Activity check: ${JSON.stringify(activityInfo)}`);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(activityInfo));
     return;

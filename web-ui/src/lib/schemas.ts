@@ -18,5 +18,6 @@ export const StartupStatusSchema = z.object({
 export const UserSchema = z.object({
   email: z.string(),
   authenticated: z.boolean(),
+  role: z.enum(['admin', 'user']).optional(),
 });
 

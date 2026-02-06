@@ -9,8 +9,9 @@ import usersRoutes from './routes/users';
 import setupRoutes from './routes/setup';
 import adminRoutes from './routes/admin';
 import { DEFAULT_ALLOWED_ORIGINS, REQUEST_ID_LENGTH, CORS_MAX_AGE_SECONDS } from './lib/constants';
-import { AppError } from './lib/error-types';
+import { AppError, ForbiddenError } from './lib/error-types';
 import { getCachedKvOrigins, setCachedKvOrigins, resetCorsOriginsCache } from './lib/cors-cache';
+import { resetAuthConfigCache } from './lib/access';
 
 /**
  * Load allowed origin patterns from KV (setup:custom_domain + setup:allowed_origins).
@@ -57,6 +58,15 @@ async function getKvOrigins(env: Env): Promise<string[]> {
  *   1. env.ALLOWED_ORIGINS (wrangler.toml static config)
  *   2. KV: setup:custom_domain and setup:allowed_origins (dynamic, set by setup wizard)
  * Falls back to DEFAULT_ALLOWED_ORIGINS if env.ALLOWED_ORIGINS is not set.
+ *
+ * SECURITY NOTE — Suffix-matching trade-off:
+ * Origin validation uses suffix matching (origin.endsWith(pattern)) rather than
+ * exact-match or regex. This means a pattern like ".example.com" will match any
+ * subdomain including sibling subdomains (e.g., "evil.example.com" would pass).
+ * This is an intentional trade-off: it keeps configuration simple (no regex to
+ * maintain) while Cloudflare Access serves as the primary authentication gate.
+ * Any request that passes CORS still needs a valid CF Access JWT, so the
+ * practical risk of sibling-subdomain spoofing is mitigated at the auth layer.
  */
 async function isAllowedOrigin(origin: string, env: Env): Promise<boolean> {
   const staticPatterns = env.ALLOWED_ORIGINS
@@ -101,8 +111,8 @@ app.use('*', async (c, next) => {
   // Determine allowed origin for this request
   let allowedOrigin: string | null = null;
   if (!origin) {
-    // Allow requests with no origin (same-origin, curl, etc.)
-    allowedOrigin = '*';
+    // No origin header (same-origin, curl, etc.) — skip CORS headers entirely
+    allowedOrigin = null;
   } else if (await isAllowedOrigin(origin, c.env)) {
     // Check against configurable allowed patterns
     allowedOrigin = origin;
@@ -120,16 +130,15 @@ app.use('*', async (c, next) => {
 
   // Handle preflight OPTIONS requests
   if (c.req.method === 'OPTIONS') {
-    return new Response(null, {
-      status: 204,
-      headers: {
-        'Access-Control-Allow-Origin': allowedOrigin || '',
-        'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-        'Access-Control-Allow-Credentials': 'true',
-        'Access-Control-Max-Age': CORS_MAX_AGE_SECONDS.toString(),
-      },
-    });
+    const headers: Record<string, string> = {};
+    if (allowedOrigin) {
+      headers['Access-Control-Allow-Origin'] = allowedOrigin;
+      headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS';
+      headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization';
+      headers['Access-Control-Allow-Credentials'] = 'true';
+      headers['Access-Control-Max-Age'] = CORS_MAX_AGE_SECONDS.toString();
+    }
+    return new Response(null, { status: 204, headers });
   }
 
   // Continue to next handler
@@ -176,6 +185,7 @@ let setupComplete: boolean | null = null;
 export function resetSetupCache() {
   setupComplete = null;
   resetCorsOriginsCache();
+  resetAuthConfigCache();
 }
 
 // ============================================================================
@@ -187,13 +197,18 @@ export function resetSetupCache() {
 app.onError((err, c) => {
   const requestId = c.get('requestId') || 'unknown';
 
+  if (err instanceof ForbiddenError) {
+    console.error(`[${requestId}] ForbiddenError:`, { message: err.message });
+    return c.json(err.toJSON(), 403);
+  }
+
   if (err instanceof AppError) {
     console.error(`[${requestId}] AppError:`, {
       code: err.code,
       message: err.message,
       statusCode: err.statusCode
     });
-    return c.json(err.toJSON(), err.statusCode as 400 | 401 | 404 | 500);
+    return c.json(err.toJSON(), err.statusCode as 400 | 401 | 403 | 404 | 500);
   }
 
   console.error(`[${requestId}] Unexpected error:`, err);

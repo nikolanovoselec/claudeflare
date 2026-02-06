@@ -20,6 +20,7 @@ async function checkSetupStatus(): Promise<boolean> {
 // Main app content after setup check
 const AppContent: Component = () => {
   const [userName, setUserName] = createSignal<string | undefined>();
+  const [userRole, setUserRole] = createSignal<'admin' | 'user' | undefined>();
   const [loading, setLoading] = createSignal(true);
   const [authError, setAuthError] = createSignal<string | null>(null);
 
@@ -27,10 +28,12 @@ const AppContent: Component = () => {
     try {
       const user = await getUser();
       setUserName(user.email);
+      setUserRole(user.role);
     } catch (e) {
       console.warn('Failed to get user info:', e);
       if (import.meta.env.DEV) {
         setUserName('dev@localhost');
+        setUserRole('admin');
       } else {
         setAuthError('Authentication required. Please refresh the page.');
       }
@@ -59,7 +62,7 @@ const AppContent: Component = () => {
           </div>
         }
       >
-        <Layout userName={userName()} />
+        <Layout userName={userName()} userRole={userRole()} />
       </Show>
     </Show>
   );

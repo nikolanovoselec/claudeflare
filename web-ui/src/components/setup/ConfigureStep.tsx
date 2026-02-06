@@ -4,13 +4,22 @@ import Button from '../ui/Button';
 import Input from '../ui/Input';
 
 const ConfigureStep: Component = () => {
-  const [emailInput, setEmailInput] = createSignal('');
+  const [adminEmailInput, setAdminEmailInput] = createSignal('');
+  const [regularEmailInput, setRegularEmailInput] = createSignal('');
 
-  const handleAddEmail = () => {
-    const email = emailInput().trim().toLowerCase();
+  const handleAddAdminEmail = () => {
+    const email = adminEmailInput().trim().toLowerCase();
+    if (email && email.includes('@') && !setupStore.adminUsers.includes(email)) {
+      setupStore.addAdminUser(email);
+      setAdminEmailInput('');
+    }
+  };
+
+  const handleAddRegularEmail = () => {
+    const email = regularEmailInput().trim().toLowerCase();
     if (email && email.includes('@') && !setupStore.allowedUsers.includes(email)) {
       setupStore.addAllowedUser(email);
-      setEmailInput('');
+      setRegularEmailInput('');
     }
   };
 
@@ -31,19 +40,52 @@ const ConfigureStep: Component = () => {
         />
       </div>
 
-      {/* Allowed Users (Required) */}
+      {/* Admin Users (Required) */}
       <div class="setup-field">
-        <label class="setup-field-label">Allowed Users</label>
+        <label class="setup-field-label">Admin Users</label>
         <p class="setup-field-description">
-          Email addresses that can access this instance
+          Full access including user management
         </p>
         <div class="email-input-row">
           <Input
-            value={emailInput()}
-            onInput={(value) => setEmailInput(value)}
+            value={adminEmailInput()}
+            onInput={(value) => setAdminEmailInput(value)}
+            placeholder="admin@example.com"
+          />
+          <Button onClick={handleAddAdminEmail} variant="secondary" size="sm">
+            Add
+          </Button>
+        </div>
+        <div class="email-tags">
+          <For each={setupStore.adminUsers}>
+            {(email) => (
+              <span class="email-tag email-tag--admin">
+                {email}
+                <button
+                  class="email-tag-remove"
+                  onClick={() => setupStore.removeAdminUser(email)}
+                >
+                  x
+                </button>
+              </span>
+            )}
+          </For>
+        </div>
+      </div>
+
+      {/* Regular Users (Optional) */}
+      <div class="setup-field">
+        <label class="setup-field-label">Regular Users</label>
+        <p class="setup-field-description">
+          Can use Claudeflare but cannot manage users
+        </p>
+        <div class="email-input-row">
+          <Input
+            value={regularEmailInput()}
+            onInput={(value) => setRegularEmailInput(value)}
             placeholder="user@example.com"
           />
-          <Button onClick={handleAddEmail} variant="secondary" size="sm">
+          <Button onClick={handleAddRegularEmail} variant="secondary" size="sm">
             Add
           </Button>
         </div>
@@ -91,7 +133,7 @@ const ConfigureStep: Component = () => {
         </Button>
         <Button
           onClick={() => setupStore.nextStep()}
-          disabled={!setupStore.customDomain || setupStore.allowedUsers.length === 0}
+          disabled={!setupStore.customDomain || setupStore.adminUsers.length === 0}
         >
           Continue
         </Button>
@@ -157,6 +199,11 @@ const ConfigureStep: Component = () => {
           border-radius: 20px;
           font-size: 13px;
           color: var(--color-text-primary);
+        }
+
+        .email-tag--admin {
+          border-color: var(--color-accent);
+          background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-tertiary));
         }
 
         .email-tag-remove {

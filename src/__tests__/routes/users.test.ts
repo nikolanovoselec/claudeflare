@@ -9,8 +9,12 @@ let currentTestUserEmail = 'admin@example.com';
 // Mock the auth middleware to simply set user context without CF Access validation
 vi.mock('../../middleware/auth', () => ({
   authMiddleware: vi.fn(async (c: any, next: any) => {
-    c.set('user', { email: currentTestUserEmail, authenticated: true });
+    c.set('user', { email: currentTestUserEmail, authenticated: true, role: 'admin' });
     c.set('bucketName', `claudeflare-test`);
+    return next();
+  }),
+  requireAdmin: vi.fn(async (c: any, next: any) => {
+    // In tests, simply pass through (user is always admin in test setup)
     return next();
   }),
 }));
@@ -38,38 +42,14 @@ vi.mock('../../lib/access', () => ({
 
 import usersRoutes from '../../routes/users';
 import { getAllUsers, syncAccessPolicy } from '../../lib/access-policy';
-import { authMiddleware } from '../../middleware/auth';
+import { authMiddleware, requireAdmin } from '../../middleware/auth';
+
+import { createMockKV } from '../helpers/mock-kv';
 
 const mockGetAllUsers = getAllUsers as ReturnType<typeof vi.fn>;
 const mockSyncAccessPolicy = syncAccessPolicy as ReturnType<typeof vi.fn>;
 const mockAuthMiddleware = authMiddleware as ReturnType<typeof vi.fn>;
-
-// Mock KV storage
-function createMockKV() {
-  const store = new Map<string, string>();
-  return {
-    get: vi.fn(async (key: string, type?: string) => {
-      const value = store.get(key);
-      if (!value) return null;
-      return type === 'json' ? JSON.parse(value) : value;
-    }),
-    put: vi.fn(async (key: string, value: string) => {
-      store.set(key, value);
-    }),
-    delete: vi.fn(async (key: string) => {
-      store.delete(key);
-    }),
-    list: vi.fn(async ({ prefix }: { prefix: string }) => {
-      const keys = Array.from(store.keys())
-        .filter((k) => k.startsWith(prefix))
-        .map((name) => ({ name }));
-      return { keys };
-    }),
-    _store: store,
-    _set: (key: string, value: unknown) => store.set(key, JSON.stringify(value)),
-    _clear: () => store.clear(),
-  };
-}
+const mockRequireAdmin = requireAdmin as ReturnType<typeof vi.fn>;
 
 // Mock global fetch for CF API calls
 const mockFetch = vi.fn();
@@ -98,7 +78,7 @@ describe('Users Routes', () => {
     // Update the auth middleware mock to use this user
     currentTestUserEmail = userEmail;
     mockAuthMiddleware.mockImplementation(async (c: any, next: any) => {
-      c.set('user', { email: userEmail, authenticated: true });
+      c.set('user', { email: userEmail, authenticated: true, role: 'admin' });
       c.set('bucketName', `claudeflare-test`);
       return next();
     });
@@ -161,9 +141,10 @@ describe('Users Routes', () => {
       });
 
       expect(res.status).toBe(200);
-      const body = await res.json() as { success: boolean; email: string };
+      const body = await res.json() as { success: boolean; email: string; role: string };
       expect(body.success).toBe(true);
       expect(body.email).toBe('newuser@example.com');
+      expect(body.role).toBe('user');
 
       // Verify KV put was called with correct key and data
       expect(mockKV.put).toHaveBeenCalledWith(
@@ -176,6 +157,7 @@ describe('Users Routes', () => {
       const stored = JSON.parse(putCall![1]);
       expect(stored.addedBy).toBe('admin@example.com');
       expect(stored.addedAt).toBe('2024-01-15T10:00:00.000Z');
+      expect(stored.role).toBe('user');
     });
 
     it('returns 400 for missing email', async () => {
@@ -331,6 +313,100 @@ describe('Users Routes', () => {
         'app.example.com',
         expect.anything(),
       );
+    });
+  });
+
+  // =========================================================================
+  // Admin-only gating tests
+  // =========================================================================
+  describe('Admin-only access control', () => {
+    function createTestAppWithRole(userEmail: string, role: 'admin' | 'user') {
+      currentTestUserEmail = userEmail;
+      mockAuthMiddleware.mockImplementation(async (c: any, next: any) => {
+        c.set('user', { email: userEmail, authenticated: true, role });
+        c.set('bucketName', `claudeflare-test`);
+        return next();
+      });
+
+      mockRequireAdmin.mockImplementation(async (c: any, next: any) => {
+        const user = c.get('user');
+        if (user?.role !== 'admin') {
+          return c.json({ error: 'Access denied', code: 'FORBIDDEN' }, 403);
+        }
+        return next();
+      });
+
+      const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
+      app.use('*', async (c, next) => {
+        c.env = {
+          KV: mockKV as unknown as KVNamespace,
+          CLOUDFLARE_API_TOKEN: 'test-api-token',
+        } as unknown as Env;
+        return next();
+      });
+      app.route('/users', usersRoutes);
+      return app;
+    }
+
+    it('non-admin POST /users returns 403', async () => {
+      const app = createTestAppWithRole('viewer@example.com', 'user');
+
+      const res = await app.request('/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'new@example.com' }),
+      });
+
+      expect(res.status).toBe(403);
+    });
+
+    it('non-admin DELETE /users/:email returns 403', async () => {
+      const app = createTestAppWithRole('viewer@example.com', 'user');
+      mockKV._set('user:target@example.com', { addedBy: 'admin@example.com', addedAt: '2024-01-01' });
+
+      const res = await app.request('/users/target%40example.com', {
+        method: 'DELETE',
+      });
+
+      expect(res.status).toBe(403);
+    });
+
+    it('admin POST /users with role: admin stores admin role in KV', async () => {
+      const app = createTestAppWithRole('admin@example.com', 'admin');
+
+      const res = await app.request('/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'newadmin@example.com', role: 'admin' }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as { success: boolean; email: string; role: string };
+      expect(body.role).toBe('admin');
+
+      const putCall = mockKV.put.mock.calls.find(
+        (call: string[]) => call[0] === 'user:newadmin@example.com',
+      );
+      expect(putCall).toBeDefined();
+      const stored = JSON.parse(putCall![1]);
+      expect(stored.role).toBe('admin');
+    });
+
+    it('GET /users returns role field for each user', async () => {
+      const mockUsers = [
+        { email: 'admin@example.com', addedBy: 'setup', addedAt: '2024-01-01', role: 'admin' as const },
+        { email: 'viewer@example.com', addedBy: 'admin@example.com', addedAt: '2024-01-02', role: 'user' as const },
+      ];
+      mockGetAllUsers.mockResolvedValue(mockUsers);
+
+      const app = createTestAppWithRole('admin@example.com', 'admin');
+      const res = await app.request('/users');
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as { users: Array<{ email: string; role: string }> };
+      expect(body.users).toHaveLength(2);
+      expect(body.users[0].role).toBe('admin');
+      expect(body.users[1].role).toBe('user');
     });
   });
 });

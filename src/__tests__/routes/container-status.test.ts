@@ -5,35 +5,7 @@ import statusRoutes from '../../routes/container/status';
 import type { Env } from '../../types';
 import type { AuthVariables } from '../../middleware/auth';
 import { ContainerError } from '../../lib/error-types';
-
-// ---------------------------------------------------------------------------
-// Mock KV storage (same pattern as session.test.ts)
-// ---------------------------------------------------------------------------
-function createMockKV() {
-  const store = new Map<string, string>();
-  return {
-    get: vi.fn(async (key: string, type?: string) => {
-      const value = store.get(key);
-      if (!value) return null;
-      return type === 'json' ? JSON.parse(value) : value;
-    }),
-    put: vi.fn(async (key: string, value: string) => {
-      store.set(key, value);
-    }),
-    delete: vi.fn(async (key: string) => {
-      store.delete(key);
-    }),
-    list: vi.fn(async ({ prefix }: { prefix: string }) => {
-      const keys = Array.from(store.keys())
-        .filter((k) => k.startsWith(prefix))
-        .map((name) => ({ name }));
-      return { keys };
-    }),
-    _store: store,
-    _set: (key: string, value: unknown) => store.set(key, JSON.stringify(value)),
-    _clear: () => store.clear(),
-  };
-}
+import { createMockKV } from '../helpers/mock-kv';
 
 // ---------------------------------------------------------------------------
 // Mock container stub
@@ -321,7 +293,11 @@ describe('Container Status Routes', () => {
       expect(body.message).toBe('Container ready (sync skipped - no R2 config)');
     });
 
-    it('returns mounting stage when terminal server is not responding after sync', async () => {
+    it('skips mounting stage when health server is ok after sync (single port architecture)', async () => {
+      // After A6 fix: the redundant second health fetch was removed.
+      // Since the terminal server IS the health server (port 8080), if the
+      // health check passes (sync complete), the terminal server is also ok.
+      // This means the mounting stage is bypassed and we go straight to sessions check.
       const app = createTestApp();
       testState.container!.getState.mockResolvedValue({ status: 'running' });
 
@@ -329,24 +305,24 @@ describe('Container Status Routes', () => {
       testState.container!.fetch.mockImplementation(async (req: Request) => {
         callCount++;
         if (callCount === 1) {
-          // First health check (sync status) - sync complete
+          // Health check (sync status) - sync complete
           return new Response(JSON.stringify({
             status: 'ok',
             syncStatus: 'success',
             terminalPid: 1234,
           }), { status: 200 });
         }
-        // Second health check (terminal health) - not ready
+        // Sessions endpoint fails
         return new Response('', { status: 503 });
       });
 
       const res = await app.request(`/container/startup-status${sessionQuery}`);
 
       expect(res.status).toBe(200);
-      const body = await res.json() as { stage: string; progress: number; details: { terminalServerOk: boolean } };
-      expect(body.stage).toBe('mounting');
-      expect(body.progress).toBe(70);
-      expect(body.details.terminalServerOk).toBe(false);
+      const body = await res.json() as { stage: string; progress: number };
+      // Goes straight to verifying (sessions check), not mounting
+      expect(body.stage).toBe('verifying');
+      expect(body.progress).toBe(85);
     });
 
     it('returns verifying stage when sessions endpoint is not ready', async () => {
@@ -356,8 +332,8 @@ describe('Container Status Routes', () => {
       let callCount = 0;
       testState.container!.fetch.mockImplementation(async (req: Request) => {
         callCount++;
-        if (callCount <= 2) {
-          // Health checks succeed
+        if (callCount <= 1) {
+          // Health check succeeds (single fetch - redundant second fetch removed)
           return new Response(JSON.stringify({
             status: 'ok',
             syncStatus: 'success',

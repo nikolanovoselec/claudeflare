@@ -7,6 +7,8 @@ import type { Env } from '../types';
 import { isAdminRequest } from '../lib/type-guards';
 import { DO_ID_PATTERN } from '../lib/constants';
 import { AppError, AuthError, ValidationError, toError, toErrorMessage } from '../lib/error-types';
+import { verifyAdminSecret } from '../lib/admin-auth';
+import { createRateLimiter } from '../middleware/rate-limit';
 import { createLogger } from '../lib/logger';
 
 const logger = createLogger('admin');
@@ -14,26 +16,14 @@ const logger = createLogger('admin');
 const app = new Hono<{ Bindings: Env }>();
 
 /**
- * Verify admin authentication
- * Accepts secret from Authorization header only
+ * Rate limiter for admin endpoints
+ * Limits to 10 requests per minute (keyed by IP since admin routes don't use auth middleware)
  */
-function verifyAdminAuth(c: { env: Env; req: { header: (name: string) => string | undefined; query: (name: string) => string | undefined } }): void {
-  const adminSecret = c.env.ADMIN_SECRET;
-  const authHeader = c.req.header('Authorization');
-  const providedSecret = authHeader?.startsWith('Bearer ')
-    ? authHeader.slice(7)
-    : null;
-
-  if (!adminSecret || !providedSecret) {
-    throw new AuthError('Unauthorized');
-  }
-  const encoder = new TextEncoder();
-  const a = encoder.encode(adminSecret);
-  const b = encoder.encode(providedSecret);
-  if (a.byteLength !== b.byteLength || !crypto.subtle.timingSafeEqual(a, b)) {
-    throw new AuthError('Unauthorized');
-  }
-}
+const adminRateLimiter = createRateLimiter({
+  windowMs: 60000,
+  maxRequests: 10,
+  keyPrefix: 'admin',
+});
 
 /**
  * POST /api/admin/destroy-by-id
@@ -42,11 +32,11 @@ function verifyAdminAuth(c: { env: Env; req: { header: (name: string) => string 
  * CRITICAL: Uses idFromString to reference EXISTING DOs.
  * DO NOT use idFromName - it creates NEW DOs!
  */
-app.post('/destroy-by-id', async (c) => {
+app.post('/destroy-by-id', adminRateLimiter, async (c) => {
   const reqLogger = logger.child({ requestId: c.req.header('X-Request-ID') });
 
   try {
-    verifyAdminAuth(c);
+    verifyAdminSecret(c.env, c.req.header('Authorization'));
 
     const data = await c.req.json();
     if (!isAdminRequest(data)) {

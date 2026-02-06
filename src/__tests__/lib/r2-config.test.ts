@@ -1,18 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { getR2Config } from '../../lib/r2-config';
-
-// Mock KV helper (same pattern as setup.test.ts)
-function createMockKV() {
-  const store = new Map<string, string>();
-  return {
-    get: vi.fn(async (key: string) => store.get(key) || null),
-    put: vi.fn(async (key: string, value: string) => { store.set(key, value); }),
-    delete: vi.fn(async (key: string) => { store.delete(key); }),
-    list: vi.fn(async () => ({ keys: [] })),
-    _store: store,
-    _clear: () => store.clear(),
-  };
-}
+import { createMockKV } from '../helpers/mock-kv';
 
 describe('getR2Config', () => {
   let mockKV: ReturnType<typeof createMockKV>;

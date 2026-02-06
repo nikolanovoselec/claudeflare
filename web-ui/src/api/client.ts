@@ -61,6 +61,7 @@ export const UserResponseSchema = z.object({
   authenticated: z.boolean(),
   bucketName: z.string(),
   bucketCreated: z.boolean().optional(),
+  role: z.enum(['admin', 'user']).optional(),
 });
 
 export const SessionsResponseSchema = z.object({
@@ -305,12 +306,14 @@ export interface UserEntry {
   email: string;
   addedBy: string;
   addedAt: string;
+  role: 'admin' | 'user';
 }
 
 const UserEntrySchema = z.object({
   email: z.string(),
   addedBy: z.string(),
   addedAt: z.string(),
+  role: z.enum(['admin', 'user']).default('user'),
 });
 
 const GetUsersResponseSchema = z.object({
@@ -327,10 +330,10 @@ export async function getUsers(): Promise<UserEntry[]> {
   return data.users;
 }
 
-export async function addUser(email: string): Promise<void> {
+export async function addUser(email: string, role: 'admin' | 'user' = 'user'): Promise<void> {
   await fetchApi('/users', {
     method: 'POST',
-    body: JSON.stringify({ email }),
+    body: JSON.stringify({ email, role }),
   }, UserMutationResponseSchema);
 }
 

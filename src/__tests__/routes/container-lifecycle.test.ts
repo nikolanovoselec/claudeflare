@@ -4,35 +4,7 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { Env } from '../../types';
 import type { AuthVariables } from '../../middleware/auth';
 import { ContainerError } from '../../lib/error-types';
-
-// ---------------------------------------------------------------------------
-// Mock KV storage (same pattern as session.test.ts)
-// ---------------------------------------------------------------------------
-function createMockKV() {
-  const store = new Map<string, string>();
-  return {
-    get: vi.fn(async (key: string, type?: string) => {
-      const value = store.get(key);
-      if (!value) return null;
-      return type === 'json' ? JSON.parse(value) : value;
-    }),
-    put: vi.fn(async (key: string, value: string) => {
-      store.set(key, value);
-    }),
-    delete: vi.fn(async (key: string) => {
-      store.delete(key);
-    }),
-    list: vi.fn(async ({ prefix }: { prefix: string }) => {
-      const keys = Array.from(store.keys())
-        .filter((k) => k.startsWith(prefix))
-        .map((name) => ({ name }));
-      return { keys };
-    }),
-    _store: store,
-    _set: (key: string, value: unknown) => store.set(key, JSON.stringify(value)),
-    _clear: () => store.clear(),
-  };
-}
+import { createMockKV } from '../helpers/mock-kv';
 
 // ---------------------------------------------------------------------------
 // Mock container stub
@@ -304,43 +276,4 @@ describe('Container Lifecycle Routes', () => {
     });
   });
 
-  // =========================================================================
-  // POST /container/explicit-start
-  // =========================================================================
-  describe('POST /container/explicit-start', () => {
-    it('returns state before and after start', async () => {
-      const fetch = createTestApp();
-      container().getState
-        .mockResolvedValueOnce({ status: 'stopped' })  // stateBefore
-        .mockResolvedValueOnce({ status: 'running' }); // stateAfter
-
-      const res = await fetch('/container/explicit-start?sessionId=abcdef1234567890abcdef12', {
-        method: 'POST',
-      });
-
-      expect(res.status).toBe(200);
-      const body = await res.json() as {
-        success: boolean;
-        stateBefore: { status: string };
-        stateAfter: { status: string };
-      };
-      expect(body.success).toBe(true);
-      expect(body.stateBefore.status).toBe('stopped');
-      expect(body.stateAfter.status).toBe('running');
-      expect(container().startAndWaitForPorts).toHaveBeenCalled();
-    });
-
-    it('returns 500 when start fails completely', async () => {
-      const fetch = createTestApp();
-      container().getState.mockRejectedValue(new Error('DO not found'));
-
-      const res = await fetch('/container/explicit-start?sessionId=abcdef1234567890abcdef12', {
-        method: 'POST',
-      });
-
-      expect(res.status).toBe(500);
-      const body = await res.json() as { code: string };
-      expect(body.code).toBe('CONTAINER_ERROR');
-    });
-  });
 });

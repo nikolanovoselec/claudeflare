@@ -2,6 +2,10 @@
  * R2 bucket management via Cloudflare API
  */
 
+import { createLogger } from './logger';
+
+const logger = createLogger('r2-admin');
+
 interface CreateBucketResponse {
   success: boolean;
   errors: Array<{ code: number; message: string }>;
@@ -47,12 +51,12 @@ export async function createBucketIfNotExists(
   // Check if bucket already exists
   const exists = await bucketExists(accountId, apiToken, bucketName);
   if (exists) {
-    console.log(`[R2Admin] Bucket ${bucketName} already exists`);
+    logger.info(`Bucket ${bucketName} already exists`);
     return { success: true, created: false };
   }
 
   // Create the bucket
-  console.log(`[R2Admin] Creating bucket ${bucketName}...`);
+  logger.info(`Creating bucket ${bucketName}...`);
 
   const response = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/buckets`,
@@ -70,10 +74,10 @@ export async function createBucketIfNotExists(
 
   if (!response.ok || !data.success) {
     const errorMsg = data.errors?.[0]?.message || `HTTP ${response.status}`;
-    console.error(`[R2Admin] Failed to create bucket: ${errorMsg}`);
+    logger.error(`Failed to create bucket: ${errorMsg}`);
     return { success: false, error: errorMsg };
   }
 
-  console.log(`[R2Admin] Bucket ${bucketName} created successfully`);
+  logger.info(`Bucket ${bucketName} created successfully`);
   return { success: true, created: true };
 }

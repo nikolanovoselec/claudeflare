@@ -45,11 +45,17 @@ export interface Env {
 }
 
 /**
+ * Possible user roles within the application
+ */
+export type UserRole = 'admin' | 'user';
+
+/**
  * User extracted from Cloudflare Access JWT
  */
 export interface AccessUser {
   email: string;
   authenticated: boolean;
+  role?: UserRole;
 }
 
 /**

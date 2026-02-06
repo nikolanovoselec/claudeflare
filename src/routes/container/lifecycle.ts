@@ -1,6 +1,6 @@
 /**
  * Container lifecycle routes
- * Handles POST /start, /explicit-start, /destroy, /destroy-by-id
+ * Handles POST /start, /destroy
  */
 import { Hono } from 'hono';
 import { getContainer } from '@cloudflare/containers';
@@ -9,19 +9,30 @@ import { createBucketIfNotExists } from '../../lib/r2-admin';
 import { getR2Config } from '../../lib/r2-config';
 import { getContainerContext, getSessionIdFromRequest, getContainerId } from '../../lib/container-helpers';
 import { AuthVariables } from '../../middleware/auth';
+import { createRateLimiter } from '../../middleware/rate-limit';
 import { isBucketNameResponse } from '../../lib/type-guards';
-import { ContainerError, AuthError, ValidationError, toError, toErrorMessage } from '../../lib/error-types';
+import { ContainerError, toError, toErrorMessage } from '../../lib/error-types';
 import { BUCKET_NAME_SETTLE_DELAY_MS, CONTAINER_ID_DISPLAY_LENGTH } from '../../lib/constants';
 import { containerLogger, containerInternalCB } from './shared';
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
 /**
+ * Rate limiter for container start endpoint
+ * Limits to 5 start requests per minute per user
+ */
+const containerStartRateLimiter = createRateLimiter({
+  windowMs: 60000,
+  maxRequests: 5,
+  keyPrefix: 'container-start',
+});
+
+/**
  * POST /api/container/start
  * Kicks off container start and returns immediately (non-blocking)
  * Use GET /api/container/startup-status to poll for readiness
  */
-app.post('/start', async (c) => {
+app.post('/start', containerStartRateLimiter, async (c) => {
   try {
     const bucketName = c.get('bucketName');
     const sessionId = getSessionIdFromRequest(c);
@@ -140,45 +151,6 @@ app.post('/start', async (c) => {
       throw error;
     }
     throw new ContainerError('start');
-  }
-});
-
-/**
- * POST /api/container/explicit-start
- * Explicitly start the container using start() method
- */
-app.post('/explicit-start', async (c) => {
-  const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
-
-  try {
-    const { containerId, container } = getContainerContext(c);
-
-    // Step 1: Get current state
-    const stateBefore = await container.getState();
-    reqLogger.info('State before start', { containerId, state: stateBefore });
-
-    // Step 2: Start container and wait for port 8080
-    try {
-      await container.startAndWaitForPorts();
-      reqLogger.info('startAndWaitForPorts() completed', { containerId });
-    } catch (startError) {
-      reqLogger.error('start() failed', toError(startError), { containerId });
-    }
-
-    // Step 3: Get state after start
-    const stateAfter = await container.getState();
-    reqLogger.info('State after start', { containerId, state: stateAfter });
-
-    return c.json({
-      success: true,
-      containerId,
-      stateBefore,
-      stateAfter,
-      message: 'Container start attempted',
-    });
-  } catch (error) {
-    reqLogger.error('Explicit container start error', toError(error));
-    throw new ContainerError('explicit-start', toErrorMessage(error));
   }
 });
 

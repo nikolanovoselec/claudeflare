@@ -3,7 +3,9 @@ import type { Env } from '../types';
 import { createLogger } from '../lib/logger';
 import { ValidationError, AuthError, SetupError, toError, toErrorMessage } from '../lib/error-types';
 import { resetCorsOriginsCache } from '../lib/cors-cache';
+import { resetAuthConfigCache } from '../lib/access';
 import { createRateLimiter } from '../middleware/rate-limit';
+import { verifyAdminSecret } from '../lib/admin-auth';
 // R2 permission IDs no longer needed — we derive S3 credentials from the user's token
 
 const logger = createLogger('setup');
@@ -633,7 +635,8 @@ async function handleCreateAccessApp(
   accountId: string,
   customDomain: string,
   allowedUsers: string[],
-  steps: SetupStep[]
+  steps: SetupStep[],
+  kv: KVNamespace
 ): Promise<void> {
   steps.push({ step: 'create_access_app', status: 'pending' });
   const stepIndex = steps.length - 1;
@@ -691,7 +694,7 @@ async function handleCreateAccessApp(
   );
   const accessAppData = await accessAppRes.json() as {
     success: boolean;
-    result?: { id: string };
+    result?: { id: string; aud: string };
     errors?: Array<{ code?: number; message: string }>;
   };
 
@@ -718,6 +721,36 @@ async function handleCreateAccessApp(
 
   logger.info(`Access app ${existingAppId ? 'updated' : 'created'}`, { domain: customDomain, appId: accessAppData.result.id });
 
+  // Store the Access app audience tag (aud) in KV for JWT verification
+  if (accessAppData.result.aud) {
+    await kv.put('setup:access_aud', accessAppData.result.aud);
+    logger.info('Stored access_aud in KV', { aud: accessAppData.result.aud.substring(0, 16) + '...' });
+  }
+
+  // Fetch and store the auth_domain from the Access organization
+  try {
+    const orgRes = await fetch(
+      `${CF_API_BASE}/accounts/${accountId}/access/organizations`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    const orgData = await orgRes.json() as {
+      success: boolean;
+      result?: { auth_domain: string };
+    };
+
+    if (orgData.success && orgData.result?.auth_domain) {
+      await kv.put('setup:auth_domain', orgData.result.auth_domain);
+      logger.info('Stored auth_domain in KV', { authDomain: orgData.result.auth_domain });
+    } else {
+      logger.warn('Could not retrieve auth_domain from Access organization', { success: orgData.success });
+    }
+  } catch (orgError) {
+    // Non-fatal: JWT verification will fall back to header-based trust
+    logger.warn('Failed to fetch Access organization for auth_domain', {
+      error: toErrorMessage(orgError)
+    });
+  }
+
   // Create or update Access policy — always email-based using allowedUsers
   const appId = accessAppData.result.id;
   const include = allowedUsers.map(email => ({ email: { email } }));
@@ -737,7 +770,7 @@ async function handleCreateAccessApp(
       if (policiesData.success && policiesData.result?.length) {
         // Update the first policy (usually "Allow users")
         const existingPolicy = policiesData.result[0];
-        await fetch(
+        const policyUpdateRes = await fetch(
           `${CF_API_BASE}/accounts/${accountId}/access/apps/${appId}/policies/${existingPolicy.id}`,
           {
             method: 'PUT',
@@ -752,6 +785,10 @@ async function handleCreateAccessApp(
             })
           }
         );
+        if (!policyUpdateRes.ok) {
+          const errorText = await policyUpdateRes.text();
+          logger.warn(`Policy update failed: ${policyUpdateRes.status} - ${errorText}`);
+        }
         logger.info('Access policy updated', { appId, policyId: existingPolicy.id });
         steps[stepIndex].status = 'success';
         return;
@@ -766,7 +803,7 @@ async function handleCreateAccessApp(
   }
 
   // Create new policy (for new apps or if policy lookup failed)
-  await fetch(
+  const policyCreateRes = await fetch(
     `${CF_API_BASE}/accounts/${accountId}/access/apps/${appId}/policies`,
     {
       method: 'POST',
@@ -781,6 +818,10 @@ async function handleCreateAccessApp(
       })
     }
   );
+  if (!policyCreateRes.ok) {
+    const errorText = await policyCreateRes.text();
+    logger.warn(`Policy creation failed: ${policyCreateRes.status} - ${errorText}`);
+  }
 
   logger.info('Access policy created', { appId });
   steps[stepIndex].status = 'success';
@@ -864,27 +905,18 @@ app.post('/configure', async (c) => {
   // After initial setup is complete, require admin auth to reconfigure
   const isComplete = await c.env.KV.get('setup:complete');
   if (isComplete === 'true') {
-    const authHeader = c.req.header('Authorization');
-    const providedSecret = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
-    if (!providedSecret || !c.env.ADMIN_SECRET) {
-      throw new AuthError('Reconfiguration requires admin authentication');
-    }
-    // Timing-safe comparison
-    const encoder = new TextEncoder();
-    const a = encoder.encode(providedSecret);
-    const b = encoder.encode(c.env.ADMIN_SECRET);
-    if (a.byteLength !== b.byteLength || !crypto.subtle.timingSafeEqual(a, b)) {
-      throw new AuthError('Unauthorized');
-    }
+    verifyAdminSecret(c.env, c.req.header('Authorization'));
   }
 
   const {
     customDomain,
     allowedUsers,
+    adminUsers,
     allowedOrigins
   } = await c.req.json<{
     customDomain?: string;
     allowedUsers?: string[];
+    adminUsers?: string[];
     allowedOrigins?: string[];
   }>();
 
@@ -894,6 +926,10 @@ app.post('/configure', async (c) => {
   // Validate required fields
   if (!customDomain) {
     throw new ValidationError('customDomain is required');
+  }
+
+  if (!adminUsers || adminUsers.length === 0) {
+    throw new ValidationError('At least one admin user is required');
   }
 
   if (!allowedUsers || allowedUsers.length === 0) {
@@ -920,17 +956,19 @@ app.post('/configure', async (c) => {
       steps
     );
 
-    // Store users in KV
+    // Store users in KV with role
+    const adminSet = new Set(adminUsers);
     for (const email of allowedUsers) {
+      const role = adminSet.has(email) ? 'admin' : 'user';
       await c.env.KV.put(
         `user:${email}`,
-        JSON.stringify({ addedBy: 'setup', addedAt: new Date().toISOString() })
+        JSON.stringify({ addedBy: 'setup', addedAt: new Date().toISOString(), role })
       );
     }
 
     // Step 4 & 5: Custom domain + CF Access
     await handleConfigureCustomDomain(token, accountId, customDomain, c.req.url, steps);
-    await handleCreateAccessApp(token, accountId, customDomain, allowedUsers, steps);
+    await handleCreateAccessApp(token, accountId, customDomain, allowedUsers, steps, c.env.KV);
 
     // Store custom domain in KV
     await c.env.KV.put('setup:custom_domain', customDomain);
@@ -952,8 +990,9 @@ app.post('/configure', async (c) => {
     await c.env.KV.put('setup:completed_at', new Date().toISOString());
     steps[steps.length - 1].status = 'success';
 
-    // Reset in-memory CORS cache so subsequent requests pick up new KV origins
+    // Reset in-memory caches so subsequent requests pick up new KV values
     resetCorsOriginsCache();
+    resetAuthConfigCache();
 
     // Get the workers.dev URL from request
     const url = new URL(c.req.url);
@@ -982,19 +1021,7 @@ app.post('/configure', async (c) => {
  * Reset setup state (admin only, requires existing ADMIN_SECRET)
  */
 app.post('/reset', async (c) => {
-  const authHeader = c.req.header('Authorization');
-  const providedSecret = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : null;
-
-  if (!providedSecret || !c.env.ADMIN_SECRET) {
-    throw new AuthError('Unauthorized');
-  }
-  // Timing-safe comparison
-  const encoder = new TextEncoder();
-  const a = encoder.encode(providedSecret);
-  const b = encoder.encode(c.env.ADMIN_SECRET);
-  if (a.byteLength !== b.byteLength || !crypto.subtle.timingSafeEqual(a, b)) {
-    throw new AuthError('Unauthorized');
-  }
+  verifyAdminSecret(c.env, c.req.header('Authorization'));
 
   // Clear setup state
   await c.env.KV.delete('setup:complete');
@@ -1002,6 +1029,8 @@ app.post('/reset', async (c) => {
   await c.env.KV.delete('setup:completed_at');
   await c.env.KV.delete('setup:custom_domain');
   await c.env.KV.delete('setup:r2_endpoint');
+  await c.env.KV.delete('setup:auth_domain');
+  await c.env.KV.delete('setup:access_aud');
 
   return c.json({ success: true, message: 'Setup state reset' });
 });
@@ -1015,6 +1044,7 @@ app.post('/reset-for-tests', async (c) => {
   if (c.env.DEV_MODE !== 'true') {
     throw new AuthError('Not available in production');
   }
+  verifyAdminSecret(c.env, c.req.header('Authorization'));
 
   // Clear setup state
   await c.env.KV.delete('setup:complete');
@@ -1032,6 +1062,7 @@ app.post('/restore-for-tests', async (c) => {
   if (c.env.DEV_MODE !== 'true') {
     throw new AuthError('Not available in production');
   }
+  verifyAdminSecret(c.env, c.req.header('Authorization'));
 
   // Restore setup state
   await c.env.KV.put('setup:complete', 'true');

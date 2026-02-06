@@ -252,6 +252,63 @@ describe('SettingsPanel Component', () => {
     });
   });
 
+  describe('Admin-gated User Management', () => {
+    it('should show add user form when currentUserRole is admin', async () => {
+      render(() => (
+        <SettingsPanel
+          isOpen={true}
+          onClose={() => {}}
+          currentUserRole="admin"
+          currentUserEmail="admin@example.com"
+        />
+      ));
+
+      // Admin should see the role selector for new users
+      const roleSelect = screen.queryByTestId('settings-new-user-role-select');
+      expect(roleSelect).toBeInTheDocument();
+    });
+
+    it('should show admin-only message when currentUserRole is user', () => {
+      render(() => (
+        <SettingsPanel
+          isOpen={true}
+          onClose={() => {}}
+          currentUserRole="user"
+          currentUserEmail="viewer@example.com"
+        />
+      ));
+
+      const message = screen.queryByTestId('settings-admin-only-message');
+      expect(message).toBeInTheDocument();
+      expect(message!.textContent).toContain('Only admins');
+    });
+
+    it('should show admin-only message when no role provided', () => {
+      render(() => (
+        <SettingsPanel
+          isOpen={true}
+          onClose={() => {}}
+        />
+      ));
+
+      const message = screen.queryByTestId('settings-admin-only-message');
+      expect(message).toBeInTheDocument();
+    });
+
+    it('should render user management section', () => {
+      render(() => (
+        <SettingsPanel
+          isOpen={true}
+          onClose={() => {}}
+          currentUserRole="admin"
+        />
+      ));
+
+      const section = screen.getByTestId('settings-user-management');
+      expect(section).toBeInTheDocument();
+    });
+  });
+
   describe('Accessibility', () => {
     it('should have correct ARIA attributes', () => {
       render(() => <SettingsPanel isOpen={true} onClose={() => {}} />);

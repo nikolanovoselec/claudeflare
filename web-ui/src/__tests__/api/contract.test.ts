@@ -406,6 +406,41 @@ describe('Frontend-Backend Contract Tests', () => {
 
         await expect(getUser()).rejects.toThrow();
       });
+
+      it('should accept user response with role field', async () => {
+        const backendResponse = {
+          email: 'admin@example.com',
+          authenticated: true,
+          bucketName: 'claudeflare-admin-example-com',
+          role: 'admin',
+        };
+
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          text: () => Promise.resolve(JSON.stringify(backendResponse)),
+        });
+
+        const user = await getUser();
+        expect(user.role).toBe('admin');
+      });
+
+      it('should accept user response without role field (backward compat)', async () => {
+        const backendResponse = {
+          email: 'user@example.com',
+          authenticated: true,
+          bucketName: 'claudeflare-user-example-com',
+        };
+
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          text: () => Promise.resolve(JSON.stringify(backendResponse)),
+        });
+
+        const user = await getUser();
+        expect(user.role).toBeUndefined();
+      });
     });
   });
 
@@ -680,6 +715,39 @@ describe('Frontend-Backend Contract Tests', () => {
       const response = {
         email: 'user@example.com',
         bucketName: 'claudeflare-user-example-com',
+      };
+
+      expect(() => UserResponseSchema.parse(response)).toThrow();
+    });
+
+    it('should accept response with role: admin', () => {
+      const response = {
+        email: 'admin@example.com',
+        authenticated: true,
+        bucketName: 'claudeflare-admin-example-com',
+        role: 'admin',
+      };
+
+      expect(() => UserResponseSchema.parse(response)).not.toThrow();
+    });
+
+    it('should accept response with role: user', () => {
+      const response = {
+        email: 'user@example.com',
+        authenticated: true,
+        bucketName: 'claudeflare-user-example-com',
+        role: 'user',
+      };
+
+      expect(() => UserResponseSchema.parse(response)).not.toThrow();
+    });
+
+    it('should reject response with invalid role value', () => {
+      const response = {
+        email: 'user@example.com',
+        authenticated: true,
+        bucketName: 'claudeflare-user-example-com',
+        role: 'superadmin',
       };
 
       expect(() => UserResponseSchema.parse(response)).toThrow();

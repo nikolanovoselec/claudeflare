@@ -53,6 +53,7 @@ export interface SettingsPanelProps {
   isOpen: boolean;
   onClose: () => void;
   currentUserEmail?: string;
+  currentUserRole?: 'admin' | 'user';
 }
 
 const fontSizeOptions = [12, 13, 14, 15, 16];
@@ -95,7 +96,10 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
   const [users, setUsers] = createSignal<UserEntry[]>([]);
   const [usersLoading, setUsersLoading] = createSignal(false);
   const [userEmail, setUserEmail] = createSignal('');
+  const [newUserRole, setNewUserRole] = createSignal<'admin' | 'user'>('user');
   const [userError, setUserError] = createSignal('');
+
+  const isAdmin = () => props.currentUserRole === 'admin';
 
   // Load settings on mount
   onMount(() => {
@@ -137,8 +141,9 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
     if (!email || !email.includes('@')) return;
     try {
       setUserError('');
-      await addUser(email);
+      await addUser(email, newUserRole());
       setUserEmail('');
+      setNewUserRole('user');
       await loadUsers();
     } catch (e) {
       setUserError(e instanceof Error ? e.message : 'Failed to add user');
@@ -317,19 +322,37 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
               <h3 class="settings-section-title">User Management</h3>
             </div>
 
-            {/* Add user form */}
-            <div class="setting-row" style="flex-direction: column; align-items: stretch">
-              <div style="display: flex; gap: 8px; width: 100%; align-items: flex-start">
-                <div style="flex: 1" onKeyDown={handleUserEmailKeyDown}>
-                  <Input
-                    value={userEmail()}
-                    onInput={(value) => { setUserEmail(value); setUserError(''); }}
-                    placeholder="user@example.com"
-                  />
+            {/* Admin-only: Add user form */}
+            <Show when={isAdmin()}>
+              <div class="setting-row" style="flex-direction: column; align-items: stretch">
+                <div style="display: flex; gap: 8px; width: 100%; align-items: flex-start">
+                  <div style="flex: 1" onKeyDown={handleUserEmailKeyDown}>
+                    <Input
+                      value={userEmail()}
+                      onInput={(value) => { setUserEmail(value); setUserError(''); }}
+                      placeholder="user@example.com"
+                    />
+                  </div>
+                  <select
+                    value={newUserRole()}
+                    onChange={(e) => setNewUserRole(e.currentTarget.value as 'admin' | 'user')}
+                    class="settings-role-select"
+                    data-testid="settings-new-user-role-select"
+                  >
+                    <option value="user">User</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                  <Button onClick={handleAddUser} variant="secondary" size="sm">Add</Button>
                 </div>
-                <Button onClick={handleAddUser} variant="secondary" size="sm">Add</Button>
               </div>
-            </div>
+            </Show>
+
+            {/* Non-admin: info message */}
+            <Show when={!isAdmin()}>
+              <div class="setting-row" data-testid="settings-admin-only-message">
+                <span class="settings-hint">Only admins can manage users</span>
+              </div>
+            </Show>
 
             {/* Error */}
             <Show when={userError()}>
@@ -346,20 +369,28 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
               <For each={users()}>
                 {(user) => (
                   <div class="setting-row" style="display: flex; justify-content: space-between; align-items: center" data-testid="settings-user-row">
-                    <div style="min-width: 0; flex: 1">
+                    <div style="min-width: 0; flex: 1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
                       <span style="font-size: var(--text-sm); color: var(--color-text-primary)">{user.email}</span>
-                      <span class="settings-hint" style="margin-left: 8px; font-size: var(--text-xs)">
+                      <span
+                        class={`settings-role-badge ${user.role === 'admin' ? 'settings-role-badge--admin' : 'settings-role-badge--user'}`}
+                        data-testid="settings-user-role-badge"
+                      >
+                        {user.role === 'admin' ? 'Admin' : 'User'}
+                      </span>
+                      <span class="settings-hint" style="font-size: var(--text-xs)">
                         added by {user.addedBy}
                       </span>
                     </div>
-                    <Button
-                      onClick={() => handleRemoveUser(user.email)}
-                      variant="ghost"
-                      size="sm"
-                      disabled={user.email === props.currentUserEmail}
-                    >
-                      Remove
-                    </Button>
+                    <Show when={isAdmin()}>
+                      <Button
+                        onClick={() => handleRemoveUser(user.email)}
+                        variant="ghost"
+                        size="sm"
+                        disabled={user.email === props.currentUserEmail}
+                      >
+                        Remove
+                      </Button>
+                    </Show>
                   </div>
                 )}
               </For>

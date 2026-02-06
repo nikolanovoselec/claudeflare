@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../types';
-import { authMiddleware, type AuthVariables } from '../middleware/auth';
+import { authMiddleware, requireAdmin, type AuthVariables } from '../middleware/auth';
+import { createRateLimiter } from '../middleware/rate-limit';
 import { getAllUsers, syncAccessPolicy } from '../lib/access-policy';
 import { getBucketName } from '../lib/access';
 import { createLogger } from '../lib/logger';
@@ -11,14 +12,24 @@ const logger = createLogger('users');
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 app.use('*', authMiddleware);
 
+/**
+ * Rate limiter for user mutations (POST/DELETE)
+ * Limits to 20 mutations per minute per user
+ */
+const userMutationRateLimiter = createRateLimiter({
+  windowMs: 60000,
+  maxRequests: 20,
+  keyPrefix: 'user-mutation',
+});
+
 // GET /api/users - List all users
 app.get('/', async (c) => {
   const users = await getAllUsers(c.env.KV);
   return c.json({ users });
 });
 
-// POST /api/users - Add a user
-app.post('/', async (c) => {
+// POST /api/users - Add a user (admin only)
+app.post('/', requireAdmin, userMutationRateLimiter, async (c) => {
   const body = await c.req.json();
   const email = body.email?.trim().toLowerCase();
 
@@ -33,9 +44,11 @@ app.post('/', async (c) => {
   }
 
   const currentUser = c.get('user');
+  const role = body.role === 'admin' ? 'admin' : 'user';
   await c.env.KV.put(`user:${email}`, JSON.stringify({
     addedBy: currentUser.email,
     addedAt: new Date().toISOString(),
+    role,
   }));
 
   // Sync Access policy
@@ -50,11 +63,11 @@ app.post('/', async (c) => {
     logger.error('Failed to sync Access policy', toError(e));
   }
 
-  return c.json({ success: true, email });
+  return c.json({ success: true, email, role });
 });
 
-// DELETE /api/users/:email - Remove a user
-app.delete('/:email', async (c) => {
+// DELETE /api/users/:email - Remove a user (admin only)
+app.delete('/:email', requireAdmin, userMutationRateLimiter, async (c) => {
   const email = decodeURIComponent(c.req.param('email'));
   const currentUser = c.get('user');
 

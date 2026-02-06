@@ -6,6 +6,7 @@ import '@xterm/xterm/css/xterm.css';
 import { terminalStore } from '../stores/terminal';
 import { sessionStore } from '../stores/session';
 import { CSS_TRANSITION_DELAY_MS } from '../lib/constants';
+import { loadSettings, defaultSettings } from './SettingsPanel';
 import InitProgress from './InitProgress';
 
 interface TerminalProps {
@@ -40,12 +41,15 @@ const Terminal: Component<TerminalProps> = (props) => {
   onMount(() => {
     if (!containerRef) return;
 
-    // Create terminal with dark theme
+    // Load user settings (with defaults as fallback)
+    const settings = loadSettings();
+
+    // Create terminal with dark theme, using saved settings
     terminal = new XTerm({
-      cursorBlink: true,
-      cursorStyle: 'block',
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, Monaco, 'Courier New', monospace",
-      fontSize: 14,
+      cursorBlink: settings.cursorBlink ?? defaultSettings.cursorBlink,
+      cursorStyle: settings.cursorStyle ?? defaultSettings.cursorStyle,
+      fontFamily: `'${settings.terminalFont ?? defaultSettings.terminalFont}', 'Fira Code', 'SF Mono', Menlo, Monaco, 'Courier New', monospace`,
+      fontSize: settings.fontSize ?? defaultSettings.fontSize,
       lineHeight: 1.2,
       theme: {
         background: '#1a1a2e',
@@ -73,7 +77,7 @@ const Terminal: Component<TerminalProps> = (props) => {
       },
       allowProposedApi: true,
       convertEol: true,
-      scrollback: 10000,
+      scrollback: settings.scrollback ?? defaultSettings.scrollback,
     });
 
     // Add addons

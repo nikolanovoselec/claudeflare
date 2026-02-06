@@ -51,9 +51,9 @@ export class AuthError extends AppError {
   }
 }
 
-export class WebSocketUpgradeError extends AppError {
-  constructor() {
-    super('WS_UPGRADE_REQUIRED', 426, 'Expected WebSocket upgrade');
+export class ForbiddenError extends AppError {
+  constructor(message: string = 'Access denied') {
+    super('FORBIDDEN', 403, message, 'Access denied');
   }
 }
 

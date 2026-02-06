@@ -82,6 +82,7 @@ export interface UserInfo {
   authenticated: boolean;
   bucketName: string;
   bucketCreated?: boolean;
+  role?: 'admin' | 'user';
 }
 
 // Terminal connection state

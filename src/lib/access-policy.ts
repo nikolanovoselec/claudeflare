@@ -1,13 +1,26 @@
-import type { Env } from '../types';
+import type { Env, UserRole } from '../types';
 import { createLogger } from './logger';
 
 const CF_API_BASE = 'https://api.cloudflare.com/client/v4';
 const logger = createLogger('access-policy');
 
+/** Response shape from the CF Access applications list endpoint */
+interface CfAccessAppsResponse {
+  success: boolean;
+  result?: Array<{ id: string; domain: string; aud: string }>;
+}
+
+/** Response shape from the CF Access policies list endpoint */
+interface CfAccessPoliciesResponse {
+  success: boolean;
+  result?: Array<{ id: string; include: unknown[] }>;
+}
+
 export interface UserEntry {
   email: string;
   addedBy: string;
   addedAt: string;
+  role: UserRole;
 }
 
 /**
@@ -32,9 +45,13 @@ export async function getAllUsers(kv: KVNamespace): Promise<UserEntry[]> {
   const keys = await listAllKvKeys(kv, 'user:');
   const users: UserEntry[] = [];
   for (const key of keys) {
-    const data = await kv.get(key.name, 'json');
+    const data = await kv.get(key.name, 'json') as Omit<UserEntry, 'email'> | null;
     if (data) {
-      users.push({ email: key.name.replace('user:', ''), ...(data as Omit<UserEntry, 'email'>) });
+      users.push({
+        ...data,
+        email: key.name.replace('user:', ''),
+        role: data.role ?? 'user',
+      });
     }
   }
   return users;
@@ -59,14 +76,14 @@ export async function syncAccessPolicy(
   const appsRes = await fetch(`${CF_API_BASE}/accounts/${accountId}/access/apps`, {
     headers: { Authorization: `Bearer ${token}` },
   });
-  const appsData = await appsRes.json() as any;
+  const appsData = await appsRes.json() as CfAccessAppsResponse;
 
   if (!appsData.success) {
     logger.error('syncAccessPolicy: Failed to fetch Access apps', new Error('API request failed'), { response: appsData });
     return;
   }
 
-  const app = appsData.result?.find((a: any) => a.domain === domain);
+  const app = appsData.result?.find((a) => a.domain === domain);
   if (!app) return;
 
   // Get existing policies
@@ -74,7 +91,7 @@ export async function syncAccessPolicy(
     `${CF_API_BASE}/accounts/${accountId}/access/apps/${app.id}/policies`,
     { headers: { Authorization: `Bearer ${token}` } }
   );
-  const policiesData = await policiesRes.json() as any;
+  const policiesData = await policiesRes.json() as CfAccessPoliciesResponse;
 
   if (!policiesData.success || !policiesData.result?.length) return;
 

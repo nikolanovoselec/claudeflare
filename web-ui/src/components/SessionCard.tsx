@@ -8,6 +8,7 @@ import Icon from './Icon';
 import type { SessionWithStatus, SessionStatus, TerminalConnectionState } from '../types';
 import { sessionStore } from '../stores/session';
 import { terminalStore } from '../stores/terminal';
+import { MAX_TERMINALS_PER_SESSION } from '../lib/constants';
 
 export interface SessionCardProps {
   session: SessionWithStatus;
@@ -165,7 +166,7 @@ const SessionCard: Component<SessionCardProps> = (props) => {
               <div class="session-card-metrics-row">
                 <div class="session-card-metric" data-testid={`session-card-${props.session.id}-metric-terminals`}>
                   <span class="metric-label">Terminals</span>
-                  <span class="metric-value">{getTabCount()}/6</span>
+                  <span class="metric-value">{getTabCount()}/{MAX_TERMINALS_PER_SESSION}</span>
                 </div>
                 <div class="session-card-metric" data-testid={`session-card-${props.session.id}-metric-uptime`}>
                   <span class="metric-label">Uptime</span>

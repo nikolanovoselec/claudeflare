@@ -4,35 +4,7 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import setupRoutes from '../../routes/setup';
 import type { Env } from '../../types';
 import { ValidationError, AuthError, SetupError } from '../../lib/error-types';
-
-// Mock KV storage
-function createMockKV() {
-  const store = new Map<string, string>();
-  return {
-    get: vi.fn(async (key: string, format?: string) => {
-      const val = store.get(key) || null;
-      if (val && format === 'json') {
-        try { return JSON.parse(val); } catch { return val; }
-      }
-      return val;
-    }),
-    put: vi.fn(async (key: string, value: string) => {
-      store.set(key, value);
-    }),
-    delete: vi.fn(async (key: string) => {
-      store.delete(key);
-    }),
-    list: vi.fn(async (opts?: { prefix?: string }) => {
-      const prefix = opts?.prefix || '';
-      const keys = Array.from(store.keys())
-        .filter(k => k.startsWith(prefix))
-        .map(k => ({ name: k }));
-      return { keys };
-    }),
-    _store: store,
-    _clear: () => store.clear(),
-  };
-}
+import { createMockKV } from '../helpers/mock-kv';
 
 // URL-based mock fetch factory — routes requests by URL pattern (and optionally method)
 // instead of fragile positional mockResolvedValueOnce chaining.
@@ -207,6 +179,7 @@ describe('Setup Routes', () => {
   const standardBody = {
     customDomain: 'claude.example.com',
     allowedUsers: ['user@example.com'],
+    adminUsers: ['user@example.com'],
   };
 
   describe('GET /api/setup/status', () => {
@@ -261,7 +234,7 @@ describe('Setup Routes', () => {
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ allowedUsers: ['user@example.com'] }),
+        body: JSON.stringify({ allowedUsers: ['user@example.com'], adminUsers: ['user@example.com'] }),
       });
 
       expect(res.status).toBe(400);
@@ -275,7 +248,7 @@ describe('Setup Routes', () => {
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customDomain: 'claude.example.com' }),
+        body: JSON.stringify({ customDomain: 'claude.example.com', adminUsers: ['admin@example.com'] }),
       });
 
       expect(res.status).toBe(400);
@@ -289,7 +262,7 @@ describe('Setup Routes', () => {
       const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customDomain: 'claude.example.com', allowedUsers: [] }),
+        body: JSON.stringify({ customDomain: 'claude.example.com', allowedUsers: [], adminUsers: ['admin@example.com'] }),
       });
 
       expect(res.status).toBe(400);
@@ -415,19 +388,20 @@ describe('Setup Routes', () => {
         body: JSON.stringify({
           customDomain: 'claude.example.com',
           allowedUsers: ['alice@example.com', 'bob@example.com'],
+          adminUsers: ['alice@example.com'],
         }),
       });
 
       expect(res.status).toBe(200);
 
-      // Verify user entries stored in KV
+      // Verify user entries stored in KV with correct roles
       expect(mockKV.put).toHaveBeenCalledWith(
         'user:alice@example.com',
-        expect.stringContaining('"addedBy":"setup"')
+        expect.stringContaining('"role":"admin"')
       );
       expect(mockKV.put).toHaveBeenCalledWith(
         'user:bob@example.com',
-        expect.stringContaining('"addedBy":"setup"')
+        expect.stringContaining('"role":"user"')
       );
     });
 
@@ -456,6 +430,7 @@ describe('Setup Routes', () => {
         body: JSON.stringify({
           customDomain: 'claude.example.com',
           allowedUsers: ['user@example.com'],
+          adminUsers: ['user@example.com'],
         }),
       });
 
@@ -499,6 +474,7 @@ describe('Setup Routes', () => {
         body: JSON.stringify({
           customDomain: 'claude.example.com',
           allowedUsers: ['alice@example.com', 'bob@example.com'],
+          adminUsers: ['alice@example.com'],
         }),
       });
 
@@ -1036,6 +1012,7 @@ describe('Setup Routes', () => {
         body: JSON.stringify({
           customDomain: 'claude.example.com',
           allowedUsers: ['user@example.com'],
+          adminUsers: ['user@example.com'],
         }),
       });
 
@@ -1168,13 +1145,14 @@ describe('Setup Routes', () => {
         body: JSON.stringify({
           customDomain: 'claude.example.com',
           allowedUsers: ['user@example.com'],
+          adminUsers: ['user@example.com'],
           allowedOrigins: ['https://app.example.com', 'https://dev.example.com'],
         }),
       });
 
       // Should contain user-provided origins + custom domain + .workers.dev
       const putCall = mockKV.put.mock.calls.find(
-        (call: [string, string]) => call[0] === 'setup:allowed_origins'
+        (call: unknown[]) => call[0] === 'setup:allowed_origins'
       );
       expect(putCall).toBeDefined();
       const storedOrigins = JSON.parse(putCall![1]) as string[];
@@ -1194,11 +1172,12 @@ describe('Setup Routes', () => {
         body: JSON.stringify({
           customDomain: 'claude.example.com',
           allowedUsers: ['user@example.com'],
+          adminUsers: ['user@example.com'],
         }),
       });
 
       const putCall = mockKV.put.mock.calls.find(
-        (call: [string, string]) => call[0] === 'setup:allowed_origins'
+        (call: unknown[]) => call[0] === 'setup:allowed_origins'
       );
       expect(putCall).toBeDefined();
       const storedOrigins = JSON.parse(putCall![1]) as string[];
@@ -1217,6 +1196,86 @@ describe('Setup Routes', () => {
       });
 
       expect(mockKV.put).toHaveBeenCalledWith('setup:custom_domain', 'claude.example.com');
+    });
+
+    it('stores admin users with role admin and regular users with role user', async () => {
+      const app = createTestApp();
+      mockFullSuccessFlow();
+
+      const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customDomain: 'claude.example.com',
+          allowedUsers: ['admin1@example.com', 'admin2@example.com', 'viewer@example.com'],
+          adminUsers: ['admin1@example.com', 'admin2@example.com'],
+        }),
+      });
+
+      expect(res.status).toBe(200);
+
+      // Admin users should have role: admin
+      expect(mockKV.put).toHaveBeenCalledWith(
+        'user:admin1@example.com',
+        expect.stringContaining('"role":"admin"')
+      );
+      expect(mockKV.put).toHaveBeenCalledWith(
+        'user:admin2@example.com',
+        expect.stringContaining('"role":"admin"')
+      );
+      // Regular users should have role: user
+      expect(mockKV.put).toHaveBeenCalledWith(
+        'user:viewer@example.com',
+        expect.stringContaining('"role":"user"')
+      );
+    });
+
+    it('accepts adminUsers field in configure body', async () => {
+      const app = createTestApp();
+      mockFullSuccessFlow();
+
+      const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customDomain: 'claude.example.com',
+          allowedUsers: ['user@example.com'],
+          adminUsers: ['user@example.com'],
+        }),
+      });
+
+      expect(res.status).toBe(200);
+      const body = await res.json() as { success: boolean };
+      expect(body.success).toBe(true);
+    });
+
+    it('stores access_aud in KV when Access app is created', async () => {
+      const app = createTestApp();
+
+      // Custom mock that returns aud in the Access app create response
+      globalThis.fetch = createUrlMockFetch({
+        ...baseFlowMocks(),
+        ...customDomainFlowMocks(),
+        '~/access/apps': (_url: string, init?: RequestInit) => {
+          if (!init?.method || init.method === 'GET') {
+            return mockResponses.accessAppsLookupEmpty();
+          }
+          return new Response(
+            JSON.stringify({ success: true, result: { id: 'app123', aud: 'test-aud-tag-12345' } }),
+            { status: 200 }
+          );
+        },
+        '~/policies': mockResponses.accessPolicyCreate,
+      });
+
+      const res = await app.request('https://claudeflare.test.workers.dev/api/setup/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(standardBody),
+      });
+
+      expect(res.status).toBe(200);
+      expect(mockKV.put).toHaveBeenCalledWith('setup:access_aud', 'test-aud-tag-12345');
     });
   });
 
@@ -1280,17 +1339,28 @@ describe('Setup Routes', () => {
       expect(res.status).toBe(401);
     });
 
-    it('clears setup:complete when DEV_MODE is true', async () => {
+    it('clears setup:complete when DEV_MODE is true and admin secret provided', async () => {
       const app = createTestApp({ DEV_MODE: 'true' });
 
       const res = await app.request('/api/setup/reset-for-tests', {
         method: 'POST',
+        headers: { Authorization: 'Bearer test-admin-secret' },
       });
 
       expect(res.status).toBe(200);
       const body = await res.json() as { success: boolean };
       expect(body.success).toBe(true);
       expect(mockKV.delete).toHaveBeenCalledWith('setup:complete');
+    });
+
+    it('returns 401 when DEV_MODE is true but no admin secret', async () => {
+      const app = createTestApp({ DEV_MODE: 'true' });
+
+      const res = await app.request('/api/setup/reset-for-tests', {
+        method: 'POST',
+      });
+
+      expect(res.status).toBe(401);
     });
   });
 
@@ -1305,17 +1375,28 @@ describe('Setup Routes', () => {
       expect(res.status).toBe(401);
     });
 
-    it('restores setup:complete when DEV_MODE is true', async () => {
+    it('restores setup:complete when DEV_MODE is true and admin secret provided', async () => {
       const app = createTestApp({ DEV_MODE: 'true' });
 
       const res = await app.request('/api/setup/restore-for-tests', {
         method: 'POST',
+        headers: { Authorization: 'Bearer test-admin-secret' },
       });
 
       expect(res.status).toBe(200);
       const body = await res.json() as { success: boolean };
       expect(body.success).toBe(true);
       expect(mockKV.put).toHaveBeenCalledWith('setup:complete', 'true');
+    });
+
+    it('returns 401 when DEV_MODE is true but no admin secret', async () => {
+      const app = createTestApp({ DEV_MODE: 'true' });
+
+      const res = await app.request('/api/setup/restore-for-tests', {
+        method: 'POST',
+      });
+
+      expect(res.status).toBe(401);
     });
   });
 });

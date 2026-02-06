@@ -160,8 +160,15 @@ export class container extends Container<Env> {
       });
     }
 
-    // Handle internal envVars debug endpoint (shows masked values)
+    // Handle internal envVars debug endpoint (shows masked values) - DEV_MODE only
     if (url.pathname === '/_internal/debugEnvVars' && request.method === 'GET') {
+      if (this.env.DEV_MODE !== 'true') {
+        return new Response(JSON.stringify({ error: 'Not found' }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
       const debugInfo = {
         bucketName: this._bucketName,
         resolvedR2Config: {
