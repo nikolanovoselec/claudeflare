@@ -1,6 +1,8 @@
 /**
  * KV key utilities for session management
  */
+import type { Session } from '../types';
+import { NotFoundError } from './error-types';
 
 /** Maximum number of pagination iterations for listAllKvKeys to prevent infinite loops */
 const MAX_KV_LIST_ITERATIONS = 100;
@@ -32,6 +34,17 @@ export function generateSessionId(): string {
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
+}
+
+/**
+ * Fetch a session from KV or throw NotFoundError if it doesn't exist.
+ */
+export async function getSessionOrThrow(kv: KVNamespace, key: string): Promise<Session> {
+  const session = await kv.get<Session>(key, 'json');
+  if (!session) {
+    throw new NotFoundError('Session');
+  }
+  return session;
 }
 
 /**

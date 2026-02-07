@@ -1,4 +1,4 @@
-import { Component, createSignal, createEffect, Show, For, onMount } from 'solid-js';
+import { Component, createSignal, createEffect, on, Show, For, onMount } from 'solid-js';
 import {
   mdiClose,
   mdiPaletteOutline,
@@ -107,10 +107,8 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
     setSettings(loadSettings());
   });
 
-  // Save settings whenever they change
-  createEffect(() => {
-    saveSettings(settings());
-  });
+  // Save settings whenever they change (deferred to skip initial mount)
+  createEffect(on(() => settings(), (s) => saveSettings(s), { defer: true }));
 
   const updateSetting = <K extends keyof Settings>(key: K, value: Settings[K]) => {
     setSettings((prev) => ({ ...prev, [key]: value }));

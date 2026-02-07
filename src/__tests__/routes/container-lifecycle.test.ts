@@ -3,7 +3,7 @@ import { Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { Env } from '../../types';
 import type { AuthVariables } from '../../middleware/auth';
-import { ContainerError } from '../../lib/error-types';
+import { AppError, ContainerError } from '../../lib/error-types';
 import { createMockKV } from '../helpers/mock-kv';
 
 // ---------------------------------------------------------------------------
@@ -64,6 +64,15 @@ describe('Container Lifecycle Routes', () => {
     mockKV = createMockKV();
     testState.container = createMockContainer();
     testState.createBucketResult = { success: true, created: false };
+    // Seed a session in KV so the session existence check (S3 fix) passes
+    mockKV._set('session:test-bucket:abcdef1234567890abcdef12', {
+      id: 'abcdef1234567890abcdef12',
+      name: 'Test Session',
+      userId: 'test-bucket',
+      status: 'stopped',
+      createdAt: new Date().toISOString(),
+      lastAccessedAt: new Date().toISOString(),
+    });
   });
 
   afterEach(() => {
@@ -78,9 +87,9 @@ describe('Container Lifecycle Routes', () => {
   function createTestApp(bucketName = 'test-bucket') {
     const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
-    // Error handler
+    // Error handler (mirrors real app.onError in src/index.ts)
     app.onError((err, c) => {
-      if (err instanceof ContainerError) {
+      if (err instanceof AppError) {
         return c.json(err.toJSON(), err.statusCode as ContentfulStatusCode);
       }
       return c.json({ error: err.message }, 500);
@@ -177,11 +186,19 @@ describe('Container Lifecycle Routes', () => {
         method: 'POST',
       });
 
-      expect(res.status).toBe(500);
+      expect(res.status).toBe(400);
     });
 
     it('creates R2 bucket before starting container', async () => {
       const fetch = createTestApp('my-bucket');
+      mockKV._set('session:my-bucket:abcdef1234567890abcdef12', {
+        id: 'abcdef1234567890abcdef12',
+        name: 'Test Session',
+        userId: 'my-bucket',
+        status: 'stopped',
+        createdAt: new Date().toISOString(),
+        lastAccessedAt: new Date().toISOString(),
+      });
       container().getState.mockResolvedValue({ status: 'stopped' });
       container().fetch.mockResolvedValue(
         new Response(JSON.stringify({ bucketName: null }), { status: 200 })
@@ -213,6 +230,14 @@ describe('Container Lifecycle Routes', () => {
 
     it('restarts container when bucket name changed', async () => {
       const fetch = createTestApp('new-bucket');
+      mockKV._set('session:new-bucket:abcdef1234567890abcdef12', {
+        id: 'abcdef1234567890abcdef12',
+        name: 'Test Session',
+        userId: 'new-bucket',
+        status: 'stopped',
+        createdAt: new Date().toISOString(),
+        lastAccessedAt: new Date().toISOString(),
+      });
       container().getState.mockResolvedValue({ status: 'running' });
 
       // First fetch: getBucketName returns different bucket
@@ -233,6 +258,14 @@ describe('Container Lifecycle Routes', () => {
 
     it('throws ContainerError when setBucketName fails (Q11)', async () => {
       const fetch = createTestApp('my-bucket');
+      mockKV._set('session:my-bucket:abcdef1234567890abcdef12', {
+        id: 'abcdef1234567890abcdef12',
+        name: 'Test Session',
+        userId: 'my-bucket',
+        status: 'stopped',
+        createdAt: new Date().toISOString(),
+        lastAccessedAt: new Date().toISOString(),
+      });
       container().getState.mockResolvedValue({ status: 'stopped' });
 
       // First fetch: getBucketName returns null (needs update)
@@ -254,6 +287,14 @@ describe('Container Lifecycle Routes', () => {
 
     it('aborts container start when setBucketName throws', async () => {
       const fetch = createTestApp('my-bucket');
+      mockKV._set('session:my-bucket:abcdef1234567890abcdef12', {
+        id: 'abcdef1234567890abcdef12',
+        name: 'Test Session',
+        userId: 'my-bucket',
+        status: 'stopped',
+        createdAt: new Date().toISOString(),
+        lastAccessedAt: new Date().toISOString(),
+      });
       container().getState.mockResolvedValue({ status: 'stopped' });
 
       // getBucketName returns different bucket name -> needs update

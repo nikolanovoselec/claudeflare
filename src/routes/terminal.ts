@@ -1,3 +1,17 @@
+/**
+ * Terminal routes — dual responsibility by design (AD36).
+ *
+ * 1. **WebSocket intercept** (`validateWebSocketRoute` + `handleWebSocketUpgrade`):
+ *    Called from `src/index.ts` BEFORE the Hono router because Hono cannot
+ *    handle WebSocket upgrade requests (AD13). These functions perform their
+ *    own authentication by calling `authenticateRequest()` directly.
+ *
+ * 2. **Hono status route** (`GET /api/terminal/:sessionId/status`):
+ *    Served through the normal Hono middleware chain with `authMiddleware`.
+ *
+ * Both paths live here because they are terminal-related concerns. Splitting
+ * them into separate files would add indirection for no structural benefit.
+ */
 import { Hono } from 'hono';
 import { getContainer } from '@cloudflare/containers';
 import type { Env, Session } from '../types';

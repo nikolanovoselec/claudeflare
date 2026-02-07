@@ -5,14 +5,48 @@
 import { Hono } from 'hono';
 import { getContainer } from '@cloudflare/containers';
 import type { Env, Session } from '../../types';
-import { getSessionKey, getSessionPrefix, listAllKvKeys } from '../../lib/kv-keys';
+import { getSessionKey, getSessionPrefix, listAllKvKeys, getSessionOrThrow } from '../../lib/kv-keys';
 import { AuthVariables } from '../../middleware/auth';
 import { getContainerId, checkContainerHealth } from '../../lib/container-helpers';
 import { createLogger } from '../../lib/logger';
 import { containerSessionsCB } from '../../lib/circuit-breakers';
-import { NotFoundError } from '../../lib/error-types';
 
 const logger = createLogger('session-lifecycle');
+
+/**
+ * Check container health and PTY status for a session.
+ * Returns the container status and whether the given session has an active PTY.
+ */
+async function getContainerSessionStatus(
+  container: DurableObjectStub,
+  sessionId: string
+): Promise<{ status: string; ptyActive: boolean; terminalSessions: { id: string; [key: string]: unknown }[] }> {
+  const healthResult = await checkContainerHealth(container);
+
+  if (!healthResult.healthy) {
+    return { status: 'stopped', ptyActive: false, terminalSessions: [] };
+  }
+
+  let terminalSessions: { id: string; [key: string]: unknown }[] = [];
+  try {
+    const sessionsRes = await containerSessionsCB.execute(() =>
+      container.fetch(
+        new Request('http://container/sessions', { method: 'GET' })
+      )
+    );
+    if (sessionsRes.ok) {
+      const data = (await sessionsRes.json()) as {
+        sessions: { id: string; [key: string]: unknown }[];
+      };
+      terminalSessions = data.sessions || [];
+    }
+  } catch {
+    // PTY check failed, but container is healthy
+  }
+
+  const ptyActive = terminalSessions.some((s) => s.id === sessionId);
+  return { status: 'running', ptyActive, terminalSessions };
+}
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
@@ -40,34 +74,8 @@ app.get('/batch-status', async (c) => {
       try {
         const containerId = getContainerId(bucketName, session.id);
         const container = getContainer(c.env.CONTAINER, containerId);
-
-        // Check container health
-        const healthResult = await checkContainerHealth(container);
-
-        if (!healthResult.healthy) {
-          statuses[session.id] = { status: 'stopped', ptyActive: false };
-          return;
-        }
-
-        // Container is healthy - check for active PTY sessions
-        let ptyActive = false;
-        try {
-          const sessionsRes = await containerSessionsCB.execute(() =>
-            container.fetch(
-              new Request('http://container/sessions', { method: 'GET' })
-            )
-          );
-          if (sessionsRes.ok) {
-            const data = (await sessionsRes.json()) as {
-              sessions: { id: string; [key: string]: unknown }[];
-            };
-            ptyActive = (data.sessions || []).some((s) => s.id === session.id);
-          }
-        } catch {
-          // PTY check failed, but container is healthy
-        }
-
-        statuses[session.id] = { status: 'running', ptyActive };
+        const result = await getContainerSessionStatus(container, session.id);
+        statuses[session.id] = { status: result.status, ptyActive: result.ptyActive };
       } catch (error) {
         // Container check failed entirely - mark as stopped
         reqLogger.warn('Batch status check failed for session', {
@@ -94,11 +102,7 @@ app.post('/:id/stop', async (c) => {
   const sessionId = c.req.param('id');
   const key = getSessionKey(bucketName, sessionId);
 
-  const session = await c.env.KV.get<Session>(key, 'json');
-
-  if (!session) {
-    throw new NotFoundError('Session');
-  }
+  await getSessionOrThrow(c.env.KV, key);
 
   const containerId = getContainerId(bucketName, sessionId);
   const container = getContainer(c.env.CONTAINER, containerId);
@@ -136,51 +140,26 @@ app.get('/:id/status', async (c) => {
   const sessionId = c.req.param('id');
   const key = getSessionKey(bucketName, sessionId);
 
-  const session = await c.env.KV.get<Session>(key, 'json');
-
-  if (!session) {
-    throw new NotFoundError('Session');
-  }
+  const session = await getSessionOrThrow(c.env.KV, key);
 
   // Check container status
-  let containerStatus = 'unknown';
-  let terminalSessions: { id: string; [key: string]: unknown }[] = [];
+  let result = { status: 'stopped', ptyActive: false, terminalSessions: [] as { id: string; [key: string]: unknown }[] };
 
   try {
     const containerId = getContainerId(bucketName, sessionId);
     const container = getContainer(c.env.CONTAINER, containerId);
-
-    // Check terminal server health (runs on default port 8080)
-    const healthResult = await checkContainerHealth(container);
-    if (healthResult.healthy) {
-      containerStatus = 'running';
-    }
-
-    // Get terminal sessions from container (terminal server on default port 8080)
-    const sessionsRes = await containerSessionsCB.execute(() =>
-      container.fetch(
-        new Request('http://container/sessions', { method: 'GET' })
-      )
-    );
-    if (sessionsRes.ok) {
-      const data = (await sessionsRes.json()) as {
-        sessions: { id: string; [key: string]: unknown }[];
-      };
-      terminalSessions = data.sessions || [];
-    }
-  } catch (error) {
-    containerStatus = 'stopped';
+    result = await getContainerSessionStatus(container, sessionId);
+  } catch {
+    // Container check failed - defaults to stopped
   }
 
-  // Check if this specific session has an active PTY
-  const activePty = terminalSessions.find((s) => s.id === sessionId);
+  const activePty = result.terminalSessions.find((s) => s.id === sessionId);
 
   return c.json({
     session,
-    containerStatus,
-    // Add 'status' field for frontend compatibility
-    status: containerStatus === 'running' ? 'running' : 'stopped',
-    ptyActive: !!activePty,
+    containerStatus: result.status,
+    status: result.status === 'running' ? 'running' : 'stopped',
+    ptyActive: result.ptyActive,
     ptyInfo: activePty || null,
   });
 });

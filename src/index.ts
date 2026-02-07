@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import type { Env } from './types';
-import userRoutes from './routes/user';
+import userRoutes from './routes/user-profile';
 import containerRoutes from './routes/container/index';
 import sessionRoutes from './routes/session/index';
 import terminalRoutes, { validateWebSocketRoute, handleWebSocketUpgrade } from './routes/terminal';
@@ -13,6 +13,7 @@ import { REQUEST_ID_LENGTH, REQUEST_ID_PATTERN, CORS_MAX_AGE_SECONDS } from './l
 import { AppError } from './lib/error-types';
 import { resetCorsOriginsCache, isAllowedOrigin } from './lib/cors-cache';
 import { resetAuthConfigCache } from './lib/access';
+import { resetJWKSCache } from './lib/jwt';
 import { createLogger } from './lib/logger';
 
 // Type for app context with request ID
@@ -38,6 +39,8 @@ app.use('*', async (c, next) => {
   const start = Date.now();
   await next();
   const duration = Date.now() - start;
+
+  c.header('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
 
   logger.info('Request completed', {
     requestId,
@@ -133,6 +136,7 @@ export function resetSetupCache() {
   setupComplete = null;
   resetCorsOriginsCache();
   resetAuthConfigCache();
+  resetJWKSCache();
 }
 
 // ============================================================================
@@ -208,6 +212,7 @@ export default {
     // With not_found_handling = "single-page-application", missing routes get index.html
     const assetResponse = await env.ASSETS.fetch(request);
     const secureResponse = new Response(assetResponse.body, assetResponse);
+    secureResponse.headers.set('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
     secureResponse.headers.set('X-Frame-Options', 'DENY');
     secureResponse.headers.set('X-Content-Type-Options', 'nosniff');
     secureResponse.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');

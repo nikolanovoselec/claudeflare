@@ -48,15 +48,15 @@ async function fetchApi<T>(
     throw new ApiError(response.status, errorMessage);
   }
 
-  // Handle empty responses
+  // Handle empty responses (e.g., 204 No Content or empty 200).
+  // Return undefined rather than {} — callers expecting void get a valid
+  // value, and callers expecting real data should guard against it.
   const text = await response.text();
   if (!text) {
-    // For empty responses, validate against schema if provided
-    // Otherwise return empty object (caller must handle this case)
     if (schema) {
       return schema.parse({});
     }
-    return {} as T;
+    return undefined as unknown as T;
   }
 
   let data: unknown;

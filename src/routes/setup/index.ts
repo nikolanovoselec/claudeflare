@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { z } from 'zod';
 import type { Env } from '../../types';
 import { ValidationError, SetupError, toError } from '../../lib/error-types';
 import { resetCorsOriginsCache } from '../../lib/cors-cache';
@@ -12,6 +13,25 @@ import { handleSetSecrets } from './secrets';
 import { handleConfigureCustomDomain } from './custom-domain';
 import { handleCreateAccessApp } from './access';
 import handlers from './handlers';
+
+const ConfigureBodySchema = z.object({
+  customDomain: z
+    .string()
+    .min(1, 'customDomain is required')
+    .regex(/^([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$/, 'customDomain must be a valid domain (e.g. claude.example.com)'),
+  allowedUsers: z
+    .array(z.string().email('Each allowedUsers entry must be a valid email'))
+    .min(1, 'allowedUsers must not be empty'),
+  adminUsers: z
+    .array(z.string().email('Each adminUsers entry must be a valid email'))
+    .min(1, 'At least one admin user is required'),
+  allowedOrigins: z
+    .array(z.string().min(1))
+    .optional(),
+}).refine(
+  (data) => data.adminUsers.every((admin) => data.allowedUsers.includes(admin)),
+  { message: 'All adminUsers must also be in allowedUsers', path: ['adminUsers'] }
+);
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
@@ -40,33 +60,17 @@ app.use('/configure', async (c, next) => {
  */
 app.use('/configure', setupRateLimiter);
 app.post('/configure', async (c) => {
-  const {
-    customDomain,
-    allowedUsers,
-    adminUsers,
-    allowedOrigins
-  } = await c.req.json<{
-    customDomain?: string;
-    allowedUsers?: string[];
-    adminUsers?: string[];
-    allowedOrigins?: string[];
-  }>();
+  const body = await c.req.json();
+  const parsed = ConfigureBodySchema.safeParse(body);
+  if (!parsed.success) {
+    const firstError = parsed.error.errors[0];
+    throw new ValidationError(firstError.message);
+  }
+
+  const { customDomain, allowedUsers, adminUsers, allowedOrigins } = parsed.data;
 
   // Token from env (already set by GitHub Actions deploy)
   const token = c.env.CLOUDFLARE_API_TOKEN;
-
-  // Validate required fields
-  if (!customDomain) {
-    throw new ValidationError('customDomain is required');
-  }
-
-  if (!adminUsers || adminUsers.length === 0) {
-    throw new ValidationError('At least one admin user is required');
-  }
-
-  if (!allowedUsers || allowedUsers.length === 0) {
-    throw new ValidationError('allowedUsers is required and must not be empty');
-  }
 
   const steps: SetupStep[] = [];
 

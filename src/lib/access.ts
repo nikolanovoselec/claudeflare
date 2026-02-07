@@ -149,19 +149,20 @@ export async function authenticateRequest(
   request: Request,
   env: Env
 ): Promise<{ user: AccessUser; bucketName: string }> {
-  const user = await getUserFromRequest(request, env);
-  if (!user.authenticated) {
+  const rawUser = await getUserFromRequest(request, env);
+  if (!rawUser.authenticated) {
     throw new AuthError('Not authenticated');
   }
+  let role: UserRole;
   if (env.DEV_MODE !== 'true') {
-    const kvEntry = await resolveUserFromKV(env.KV, user.email);
+    const kvEntry = await resolveUserFromKV(env.KV, rawUser.email);
     if (!kvEntry) {
       throw new ForbiddenError('User not in allowlist');
     }
-    user.role = kvEntry.role;
+    role = kvEntry.role;
   } else {
-    user.role = 'admin';
+    role = 'admin';
   }
-  const bucketName = getBucketName(user.email);
-  return { user, bucketName };
+  const bucketName = getBucketName(rawUser.email);
+  return { user: { ...rawUser, role }, bucketName };
 }

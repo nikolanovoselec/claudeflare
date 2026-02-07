@@ -8,6 +8,7 @@ import { getBucketName } from '../lib/access';
 import { createLogger } from '../lib/logger';
 import { AppError, ValidationError, NotFoundError, toError } from '../lib/error-types';
 import { CF_API_BASE } from '../lib/constants';
+import { r2AdminCB } from '../lib/circuit-breakers';
 
 const logger = createLogger('users');
 
@@ -96,14 +97,16 @@ app.delete('/:email', requireAdmin, userMutationRateLimiter, async (c) => {
 
   const accountId = await c.env.KV.get('setup:account_id');
 
-  // Try to delete R2 bucket
+  // Try to delete R2 bucket (wrapped in circuit breaker for resilience)
   try {
     if (accountId && c.env.CLOUDFLARE_API_TOKEN) {
       const bucketName = getBucketName(email);
-      await fetch(`${CF_API_BASE}/accounts/${accountId}/r2/buckets/${bucketName}`, {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${c.env.CLOUDFLARE_API_TOKEN}` },
-      });
+      await r2AdminCB.execute(() =>
+        fetch(`${CF_API_BASE}/accounts/${accountId}/r2/buckets/${bucketName}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${c.env.CLOUDFLARE_API_TOKEN}` },
+        })
+      );
     }
   } catch (e) {
     // Non-fatal

@@ -10,10 +10,10 @@ import { getR2Config } from '../../lib/r2-config';
 import { getContainerContext, getSessionIdFromRequest, getContainerId } from '../../lib/container-helpers';
 import { AuthVariables } from '../../middleware/auth';
 import { createRateLimiter } from '../../middleware/rate-limit';
-import { isBucketNameResponse } from '../../lib/type-guards';
-import { ContainerError, toError, toErrorMessage } from '../../lib/error-types';
+import { AppError, ContainerError, NotFoundError, toError, toErrorMessage } from '../../lib/error-types';
 import { BUCKET_NAME_SETTLE_DELAY_MS, CONTAINER_ID_DISPLAY_LENGTH } from '../../lib/constants';
-import { containerLogger, containerInternalCB } from './shared';
+import { getSessionKey } from '../../lib/kv-keys';
+import { containerLogger, containerInternalCB, getStoredBucketName } from './shared';
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
@@ -37,6 +37,14 @@ app.post('/start', containerStartRateLimiter, async (c) => {
   try {
     const bucketName = c.get('bucketName');
     const sessionId = getSessionIdFromRequest(c);
+
+    // Verify session exists in KV before creating a container DO
+    const sessionKey = getSessionKey(bucketName, sessionId);
+    const session = await c.env.KV.get(sessionKey);
+    if (!session) {
+      throw new NotFoundError('Session', sessionId);
+    }
+
     const containerId = getContainerId(bucketName, sessionId);
     const shortContainerId = containerId.substring(0, CONTAINER_ID_DISPLAY_LENGTH);
 
@@ -59,25 +67,7 @@ app.post('/start', containerStartRateLimiter, async (c) => {
 
     // Check if bucket name needs to be set/updated
     // If container is running with wrong bucket name, we need to restart it
-    let storedBucketName: string | null = null;
-    try {
-      const getBucketResp = await containerInternalCB.execute(() =>
-        container.fetch(
-          new Request('http://container/_internal/getBucketName', { method: 'GET' })
-        )
-      );
-      const data = await getBucketResp.json();
-      if (isBucketNameResponse(data)) {
-        storedBucketName = data.bucketName;
-      }
-    } catch (error) {
-      const errMsg = toErrorMessage(error);
-      if (errMsg.includes('not found') || errMsg.includes('does not exist') || errMsg.includes('Network')) {
-        reqLogger.debug('Could not get stored bucket name, DO may not exist yet');
-      } else {
-        reqLogger.warn('Unexpected error getting stored bucket name', { error: errMsg });
-      }
-    }
+    const storedBucketName = await getStoredBucketName(container, reqLogger);
 
     // If bucket name is different or not set, update it
     const needsBucketUpdate = storedBucketName !== bucketName;
@@ -156,7 +146,7 @@ app.post('/start', containerStartRateLimiter, async (c) => {
     });
   } catch (error) {
     reqLogger.error('Container start error', toError(error));
-    if (error instanceof ContainerError) {
+    if (error instanceof AppError) {
       throw error;
     }
     throw new ContainerError('start');

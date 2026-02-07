@@ -5,6 +5,7 @@ import SetupWizard from './components/setup/SetupWizard';
 import { getUser } from './api/client';
 import { sessionStore } from './stores/session';
 import { terminalStore } from './stores/terminal';
+import './styles/app.css';
 
 // Check setup status from API
 async function checkSetupStatus(): Promise<boolean> {
@@ -109,85 +110,17 @@ const SetupGuard: Component<{ children: JSX.Element }> = (props) => {
 
 const App: Component = () => {
   return (
-    <>
-      <Router>
-        <Route path="/setup" component={SetupWizard} />
-        <Route
-          path="/*"
-          component={() => (
-            <SetupGuard>
-              <AppContent />
-            </SetupGuard>
-          )}
-        />
-      </Router>
-
-      <style>{`
-        .app-loading {
-          height: 100vh;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          gap: 16px;
-          color: var(--color-text-secondary);
-          background: var(--color-bg-primary);
-        }
-
-        .app-loading-spinner {
-          width: 32px;
-          height: 32px;
-          border: 3px solid var(--color-border);
-          border-top-color: var(--color-accent);
-          border-radius: 50%;
-          animation: spin 1s linear infinite;
-        }
-
-        @keyframes spin {
-          to {
-            transform: rotate(360deg);
-          }
-        }
-
-        .app-auth-error {
-          height: 100vh;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          gap: 16px;
-          padding: 32px;
-          text-align: center;
-          background: var(--color-bg-primary);
-        }
-
-        .app-auth-error h1 {
-          margin: 0;
-          font-size: 24px;
-          color: var(--color-error);
-        }
-
-        .app-auth-error p {
-          margin: 0;
-          color: var(--color-text-secondary);
-        }
-
-        .app-auth-error button {
-          padding: 12px 24px;
-          font-size: 14px;
-          font-weight: 500;
-          color: var(--color-bg-primary);
-          background: var(--color-accent);
-          border-radius: 6px;
-          transition: background var(--transition-fast);
-          cursor: pointer;
-        }
-
-        .app-auth-error button:hover {
-          background: var(--color-accent-hover);
-        }
-      `}</style>
-    </>
+    <Router>
+      <Route path="/setup" component={SetupWizard} />
+      <Route
+        path="/*"
+        component={() => (
+          <SetupGuard>
+            <AppContent />
+          </SetupGuard>
+        )}
+      />
+    </Router>
   );
 };
 

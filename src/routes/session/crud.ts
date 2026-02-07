@@ -5,15 +5,14 @@
 import { Hono } from 'hono';
 import { getContainer } from '@cloudflare/containers';
 import type { Env, Session } from '../../types';
-import { getSessionKey, getSessionPrefix, generateSessionId } from '../../lib/kv-keys';
+import { getSessionKey, getSessionPrefix, generateSessionId, getSessionOrThrow, listAllKvKeys } from '../../lib/kv-keys';
 import { AuthVariables } from '../../middleware/auth';
 import { createRateLimiter } from '../../middleware/rate-limit';
 import { MAX_SESSION_NAME_LENGTH } from '../../lib/constants';
 import { getContainerId } from '../../lib/container-helpers';
 import { createLogger } from '../../lib/logger';
 import { containerSessionsCB } from '../../lib/circuit-breakers';
-import { ValidationError, NotFoundError } from '../../lib/error-types';
-import { listAllKvKeys } from '../../lib/kv-keys';
+import { ValidationError } from '../../lib/error-types';
 
 const logger = createLogger('session-crud');
 
@@ -69,8 +68,8 @@ app.post('/', sessionCreateRateLimiter, async (c) => {
   if (sessionName.length > MAX_SESSION_NAME_LENGTH) {
     throw new ValidationError(`Session name too long (max ${MAX_SESSION_NAME_LENGTH} characters)`);
   }
-  // Sanitize: remove potentially dangerous characters
-  sessionName = sessionName.replace(/[\x00-\x1f<>&"'`]/g, '');
+  // Sanitize: restrict to printable ASCII and remove HTML-dangerous characters
+  sessionName = sessionName.replace(/[^\x20-\x7e]/g, '').replace(/[<>&"'`]/g, '');
 
   const sessionId = generateSessionId();
   const now = new Date().toISOString();
@@ -99,11 +98,7 @@ app.get('/:id', async (c) => {
   const sessionId = c.req.param('id');
   const key = getSessionKey(bucketName, sessionId);
 
-  const session = await c.env.KV.get<Session>(key, 'json');
-
-  if (!session) {
-    throw new NotFoundError('Session');
-  }
+  const session = await getSessionOrThrow(c.env.KV, key);
 
   return c.json({ session });
 });
@@ -117,11 +112,7 @@ app.patch('/:id', async (c) => {
   const sessionId = c.req.param('id');
   const key = getSessionKey(bucketName, sessionId);
 
-  const session = await c.env.KV.get<Session>(key, 'json');
-
-  if (!session) {
-    throw new NotFoundError('Session');
-  }
+  const session = await getSessionOrThrow(c.env.KV, key);
 
   const body = await c.req.json<{ name?: string }>();
 
@@ -130,7 +121,7 @@ app.patch('/:id', async (c) => {
     if (body.name.length > MAX_SESSION_NAME_LENGTH) {
       throw new ValidationError(`Session name too long (max ${MAX_SESSION_NAME_LENGTH} characters)`);
     }
-    session.name = body.name.replace(/[\x00-\x1f<>&"'`]/g, '');
+    session.name = body.name.replace(/[^\x20-\x7e]/g, '');
   }
   session.lastAccessedAt = new Date().toISOString();
 
@@ -151,11 +142,7 @@ app.delete('/:id', async (c) => {
   const key = getSessionKey(bucketName, sessionId);
 
   // Check if session exists
-  const session = await c.env.KV.get<Session>(key, 'json');
-
-  if (!session) {
-    throw new NotFoundError('Session');
-  }
+  await getSessionOrThrow(c.env.KV, key);
 
   const containerId = getContainerId(bucketName, sessionId);
   const container = getContainer(c.env.CONTAINER, containerId);
@@ -198,11 +185,7 @@ app.post('/:id/touch', async (c) => {
   const sessionId = c.req.param('id');
   const key = getSessionKey(bucketName, sessionId);
 
-  const session = await c.env.KV.get<Session>(key, 'json');
-
-  if (!session) {
-    throw new NotFoundError('Session');
-  }
+  const session = await getSessionOrThrow(c.env.KV, key);
 
   session.lastAccessedAt = new Date().toISOString();
   await c.env.KV.put(key, JSON.stringify(session));

@@ -2,107 +2,118 @@ import { SetupError, toErrorMessage } from '../../lib/error-types';
 import { CF_API_BASE, logger } from './shared';
 import type { SetupStep } from './shared';
 
+/** CF API response shape for Access app operations */
+interface AccessAppResponse {
+  success: boolean;
+  result?: { id: string; aud: string };
+  errors?: Array<{ code?: number; message: string }>;
+}
+
 /**
- * Step 5: Create or update CF Access application for custom domain
+ * Look up an existing CF Access app by domain.
+ * Returns the app ID if found, null otherwise.
  */
-export async function handleCreateAccessApp(
+async function findExistingAccessApp(
   token: string,
   accountId: string,
-  customDomain: string,
-  allowedUsers: string[],
-  steps: SetupStep[],
-  kv: KVNamespace
-): Promise<void> {
-  steps.push({ step: 'create_access_app', status: 'pending' });
-  const stepIndex = steps.length - 1;
-
-  // Check if Access app already exists for this domain
-  let existingAppId: string | null = null;
+  customDomain: string
+): Promise<string | null> {
   try {
-    const appsLookupRes = await fetch(
+    const res = await fetch(
       `${CF_API_BASE}/accounts/${accountId}/access/apps`,
       { headers: { 'Authorization': `Bearer ${token}` } }
     );
-    const appsLookupData = await appsLookupRes.json() as {
+    const data = await res.json() as {
       success: boolean;
       result?: Array<{ id: string; domain: string; name: string }>;
     };
-    if (appsLookupData.success && appsLookupData.result?.length) {
-      // Find app matching this domain
-      const existingApp = appsLookupData.result.find(app => app.domain === customDomain);
-      if (existingApp) {
-        existingAppId = existingApp.id;
-        logger.info('Found existing Access app, will update', { domain: customDomain, appId: existingAppId, name: existingApp.name });
+    if (data.success && data.result?.length) {
+      const existing = data.result.find(app => app.domain === customDomain);
+      if (existing) {
+        logger.info('Found existing Access app, will update', { domain: customDomain, appId: existing.id, name: existing.name });
+        return existing.id;
       }
     }
   } catch (lookupError) {
-    // If lookup fails, fall back to create (POST)
     logger.warn('Access app lookup failed, falling back to create', {
       domain: customDomain,
       error: toErrorMessage(lookupError)
     });
   }
+  return null;
+}
 
-  // Use PUT to update existing app, or POST to create new one
-  const accessMethod = existingAppId ? 'PUT' : 'POST';
-  const accessUrl = existingAppId
+/**
+ * Create or update the CF Access application.
+ * Returns the app result (id + aud) on success, or handles "already exists" gracefully.
+ * Throws SetupError on unrecoverable failures.
+ */
+async function upsertAccessApp(
+  token: string,
+  accountId: string,
+  customDomain: string,
+  existingAppId: string | null,
+  steps: SetupStep[],
+  stepIndex: number
+): Promise<{ id: string; aud: string } | null> {
+  const method = existingAppId ? 'PUT' : 'POST';
+  const url = existingAppId
     ? `${CF_API_BASE}/accounts/${accountId}/access/apps/${existingAppId}`
     : `${CF_API_BASE}/accounts/${accountId}/access/apps`;
 
-  const accessAppRes = await fetch(
-    accessUrl,
-    {
-      method: accessMethod,
-      headers: {
-        'Authorization': `Bearer ${token}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({
-        name: 'Claudeflare',
-        domain: customDomain,
-        type: 'self_hosted',
-        session_duration: '24h',
-        auto_redirect_to_identity: false,
-        skip_interstitial: true
-      })
-    }
-  );
-  const accessAppData = await accessAppRes.json() as {
-    success: boolean;
-    result?: { id: string; aud: string };
-    errors?: Array<{ code?: number; message: string }>;
-  };
+  const res = await fetch(url, {
+    method,
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      name: 'Claudeflare',
+      domain: customDomain,
+      type: 'self_hosted',
+      session_duration: '24h',
+      auto_redirect_to_identity: false,
+      skip_interstitial: true
+    })
+  });
+  const data = await res.json() as AccessAppResponse;
 
-  if (!accessAppData.success || !accessAppData.result) {
-    // Check if this is an "already exists" error and we didn't detect it in lookup
-    const alreadyExistsError = accessAppData.errors?.some(e =>
+  if (!data.success || !data.result) {
+    const alreadyExistsError = data.errors?.some(e =>
       e.message?.toLowerCase().includes('already exists') ||
       e.message?.toLowerCase().includes('duplicate')
     );
 
     if (alreadyExistsError && !existingAppId) {
-      // App exists but we couldn't find it - this shouldn't happen often
       logger.warn('Access app already exists but was not found in lookup', { domain: customDomain });
-      // We can't update without the ID, so just log and continue
-      // The existing app should still work
       steps[stepIndex].status = 'success';
-      return;
+      return null;
     }
 
+    const errorMsg = data.errors?.[0]?.message || `Failed to ${existingAppId ? 'update' : 'create'} Access app`;
     steps[stepIndex].status = 'error';
-    steps[stepIndex].error = accessAppData.errors?.[0]?.message || `Failed to ${existingAppId ? 'update' : 'create'} Access app`;
-    throw new SetupError(accessAppData.errors?.[0]?.message || `Failed to ${existingAppId ? 'update' : 'create'} Access app`, steps);
+    steps[stepIndex].error = errorMsg;
+    throw new SetupError(errorMsg, steps);
   }
 
-  logger.info(`Access app ${existingAppId ? 'updated' : 'created'}`, { domain: customDomain, appId: accessAppData.result.id });
+  logger.info(`Access app ${existingAppId ? 'updated' : 'created'}`, { domain: customDomain, appId: data.result.id });
+  return data.result;
+}
 
-  // Store the Access app audience tag (aud) in KV for JWT verification
-  if (accessAppData.result.aud) {
-    await kv.put('setup:access_aud', accessAppData.result.aud);
-    logger.info('Stored access_aud in KV', { aud: accessAppData.result.aud.substring(0, 16) + '...' });
+/**
+ * Store the Access app audience tag and auth_domain in KV.
+ */
+async function storeAccessConfig(
+  token: string,
+  accountId: string,
+  aud: string | undefined,
+  kv: KVNamespace
+): Promise<void> {
+  if (aud) {
+    await kv.put('setup:access_aud', aud);
+    logger.info('Stored access_aud in KV', { aud: aud.substring(0, 16) + '...' });
   }
 
-  // Fetch and store the auth_domain from the Access organization
   try {
     const orgRes = await fetch(
       `${CF_API_BASE}/accounts/${accountId}/access/organizations`,
@@ -125,12 +136,25 @@ export async function handleCreateAccessApp(
       error: toErrorMessage(orgError)
     });
   }
+}
 
-  // Create or update Access policy — always email-based using allowedUsers
-  const appId = accessAppData.result.id;
+/**
+ * Create or update the Access policy for the given app.
+ * For existing apps, tries to update the first existing policy.
+ * Falls back to creating a new policy if update fails or no existing policy found.
+ */
+async function upsertAccessPolicy(
+  token: string,
+  accountId: string,
+  appId: string,
+  allowedUsers: string[],
+  existingAppId: string | null,
+  steps: SetupStep[],
+  stepIndex: number
+): Promise<void> {
   const include = allowedUsers.map(email => ({ email: { email } }));
 
-  // For existing apps, we need to check for existing policies and update them
+  // For existing apps, try to update the existing policy first
   if (existingAppId) {
     try {
       const policiesRes = await fetch(
@@ -143,9 +167,8 @@ export async function handleCreateAccessApp(
       };
 
       if (policiesData.success && policiesData.result?.length) {
-        // Update the first policy (usually "Allow users")
         const existingPolicy = policiesData.result[0];
-        const policyUpdateRes = await fetch(
+        const updateRes = await fetch(
           `${CF_API_BASE}/accounts/${accountId}/access/apps/${appId}/policies/${existingPolicy.id}`,
           {
             method: 'PUT',
@@ -160,9 +183,9 @@ export async function handleCreateAccessApp(
             })
           }
         );
-        if (!policyUpdateRes.ok) {
-          const errorText = await policyUpdateRes.text();
-          logger.warn(`Policy update failed: ${policyUpdateRes.status} - ${errorText}`);
+        if (!updateRes.ok) {
+          const errorText = await updateRes.text();
+          logger.warn(`Policy update failed: ${updateRes.status} - ${errorText}`);
         } else {
           logger.info('Access policy updated', { appId, policyId: existingPolicy.id });
           steps[stepIndex].status = 'success';
@@ -170,7 +193,6 @@ export async function handleCreateAccessApp(
         }
       }
     } catch (policyLookupError) {
-      // If policy lookup fails, create a new policy
       logger.warn('Access policy lookup failed, creating new policy', {
         appId,
         error: toErrorMessage(policyLookupError)
@@ -178,8 +200,8 @@ export async function handleCreateAccessApp(
     }
   }
 
-  // Create new policy (for new apps or if policy lookup failed)
-  const policyCreateRes = await fetch(
+  // Create new policy (for new apps or if policy lookup/update failed)
+  const createRes = await fetch(
     `${CF_API_BASE}/accounts/${accountId}/access/apps/${appId}/policies`,
     {
       method: 'POST',
@@ -194,11 +216,41 @@ export async function handleCreateAccessApp(
       })
     }
   );
-  if (!policyCreateRes.ok) {
-    const errorText = await policyCreateRes.text();
-    logger.warn(`Policy creation failed: ${policyCreateRes.status} - ${errorText}`);
+  if (!createRes.ok) {
+    const errorText = await createRes.text();
+    const message = `Policy creation failed: ${createRes.status} - ${errorText}`;
+    logger.warn(message);
+    steps[stepIndex].status = 'error';
+    steps[stepIndex].error = message;
   } else {
     logger.info('Access policy created', { appId });
     steps[stepIndex].status = 'success';
   }
+}
+
+/**
+ * Step 5: Create or update CF Access application for custom domain.
+ * Orchestrates: findExistingAccessApp -> upsertAccessApp -> storeAccessConfig -> upsertAccessPolicy
+ */
+export async function handleCreateAccessApp(
+  token: string,
+  accountId: string,
+  customDomain: string,
+  allowedUsers: string[],
+  steps: SetupStep[],
+  kv: KVNamespace
+): Promise<void> {
+  steps.push({ step: 'create_access_app', status: 'pending' });
+  const stepIndex = steps.length - 1;
+
+  const existingAppId = await findExistingAccessApp(token, accountId, customDomain);
+
+  const appResult = await upsertAccessApp(token, accountId, customDomain, existingAppId, steps, stepIndex);
+  if (!appResult) {
+    // "already exists" graceful exit — step already marked success
+    return;
+  }
+
+  await storeAccessConfig(token, accountId, appResult.aud, kv);
+  await upsertAccessPolicy(token, accountId, appResult.id, allowedUsers, existingAppId, steps, stepIndex);
 }

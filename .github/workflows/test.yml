@@ -61,3 +61,12 @@ jobs:
       - name: Type check frontend
         run: npm run typecheck
         working-directory: web-ui
+
+      - name: Audit root dependencies
+        run: npm audit --audit-level=high
+        continue-on-error: true
+
+      - name: Audit web-ui dependencies
+        run: npm audit --audit-level=high
+        working-directory: web-ui
+        continue-on-error: true

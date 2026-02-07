@@ -7,6 +7,13 @@ import {
 import Icon from './Icon';
 import type { SessionWithStatus, SessionStatus, TerminalConnectionState } from '../types';
 import { sessionStore } from '../stores/session';
+
+const statusLabel: Record<SessionStatus, string> = {
+  running: 'Live',
+  initializing: 'Starting',
+  stopped: 'Stopped',
+  error: 'Stopped',
+};
 import { terminalStore } from '../stores/terminal';
 import { MAX_TERMINALS_PER_SESSION } from '../lib/constants';
 import { formatUptime } from '../lib/format';
@@ -114,7 +121,7 @@ const SessionCard: Component<SessionCardProps> = (props) => {
               <Show when={props.session.status === 'running'}>
                 <span class="session-status-dot" />
               </Show>
-              {props.session.status === 'running' ? 'Live' : props.session.status === 'initializing' ? 'Starting' : 'Stopped'}
+              {statusLabel[props.session.status]}
             </span>
           </div>
 

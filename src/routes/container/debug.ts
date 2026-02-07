@@ -7,9 +7,8 @@ import { Hono } from 'hono';
 import type { Env } from '../../types';
 import { getContainerContext } from '../../lib/container-helpers';
 import { AuthVariables } from '../../middleware/auth';
-import { isBucketNameResponse } from '../../lib/type-guards';
 import { ContainerError, AuthError, toError, toErrorMessage } from '../../lib/error-types';
-import { containerLogger, containerHealthCB, containerInternalCB } from './shared';
+import { containerLogger, containerHealthCB, containerInternalCB, getStoredBucketName } from './shared';
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
@@ -35,22 +34,7 @@ app.get('/debug', async (c) => {
     const { bucketName, containerId, container } = getContainerContext(c);
 
     // Get stored bucket name from DO
-    let storedBucketName: string | null = null;
-    try {
-      const getBucketResp = await containerInternalCB.execute(() =>
-        container.fetch(
-          new Request('http://container/_internal/getBucketName', { method: 'GET' })
-        )
-      );
-      const data = await getBucketResp.json();
-      if (isBucketNameResponse(data)) {
-        storedBucketName = data.bucketName;
-      } else {
-        storedBucketName = 'error: invalid response';
-      }
-    } catch (error) {
-      storedBucketName = `error: ${error}`;
-    }
+    const storedBucketName = await getStoredBucketName(container, reqLogger);
 
     // Get envVars debug info from DO
     let envVarsDebug: Record<string, unknown> = {};
