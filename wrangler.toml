@@ -22,11 +22,10 @@ ALLOWED_ORIGINS = ".workers.dev"
 # bucket_name = "claudeflare-storage"
 
 # KV namespace for session metadata
-# Uses title for auto-creation on deploy (wrangler creates/reuses the namespace by title).
-# The id is a placeholder required by vitest-pool-workers; wrangler deploy ignores it when title is set.
+# The id "placeholder" is for local dev/tests (vitest-pool-workers creates in-memory KV).
+# deploy.yml resolves the real namespace ID at deploy time via wrangler kv namespace commands.
 [[kv_namespaces]]
 binding = "KV"
-title = "claudeflare-kv"
 id = "placeholder"
 
 # Container configuration - using custom instance type
