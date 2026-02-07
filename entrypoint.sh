@@ -131,6 +131,9 @@ initial_sync_from_r2() {
         --exclude ".cache/rclone/**" \
         --exclude ".npm/**" \
         --exclude "**/node_modules/**" \
+        --include "workspace/**/CLAUDE.md" \
+        --include "workspace/**/.claude/**" \
+        --exclude "workspace/**" \
         --fast-list \
         --size-only \
         --multi-thread-streams 4 \
@@ -167,6 +170,9 @@ establish_bisync_baseline() {
         --exclude ".cache/rclone/**" \
         --exclude ".npm/**" \
         --exclude "**/node_modules/**" \
+        --include "workspace/**/CLAUDE.md" \
+        --include "workspace/**/.claude/**" \
+        --exclude "workspace/**" \
         --resync \
         --fast-list \
         --conflict-resolve newer \
@@ -209,6 +215,9 @@ bisync_with_r2() {
         --exclude ".cache/rclone/**" \
         --exclude ".npm/**" \
         --exclude "**/node_modules/**" \
+        --include "workspace/**/CLAUDE.md" \
+        --include "workspace/**/.claude/**" \
+        --exclude "workspace/**" \
         --fast-list \
         --conflict-resolve newer \
         --resilient \
