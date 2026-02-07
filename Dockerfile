@@ -59,8 +59,7 @@ RUN apk add --no-cache \
 
 # Install claude-unleashed globally (wraps Claude Code with permission bypass)
 # Ships with Claude Code 2.1.25 baseline; auto-updates to latest on first container start
-# Pin to commit hash to bust Docker layer cache on updates
-RUN npm install -g github:nikolanovoselec/claude-unleashed#7441d99
+RUN npm install -g github:nikolanovoselec/claude-unleashed
 
 # Create 'claude' wrapper that uses claude-unleashed transparently
 # Users type 'claude' as usual, gets unleashed mode under the hood
