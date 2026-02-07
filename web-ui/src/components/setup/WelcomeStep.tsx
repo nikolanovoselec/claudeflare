@@ -1,12 +1,83 @@
-import { Component, Show, onMount } from 'solid-js';
+import { Component, Show, onMount, createSignal } from 'solid-js';
 import {
   mdiCheckCircleOutline,
   mdiAlertCircleOutline,
   mdiLoading,
+  mdiChevronDown,
 } from '@mdi/js';
 import Icon from '../Icon';
 import { setupStore } from '../../stores/setup';
 import Button from '../ui/Button';
+
+const PermissionsReference: Component = () => {
+  const [expanded, setExpanded] = createSignal(false);
+
+  return (
+    <div class="permissions-reference">
+      <button
+        class="permissions-toggle"
+        onClick={() => setExpanded(!expanded())}
+        aria-expanded={expanded()}
+      >
+        <span class="permissions-toggle-label">Required token permissions</span>
+        <span class={`permissions-toggle-icon ${expanded() ? 'permissions-toggle-icon--open' : ''}`}>
+          <Icon path={mdiChevronDown} size={18} />
+        </span>
+      </button>
+
+      <Show when={expanded()}>
+        <div class="permissions-content">
+          <div class="permissions-group">
+            <span class="permissions-group-label">Account permissions</span>
+            <ul class="permissions-list">
+              <li>
+                <strong>Account Settings (Read)</strong>
+                <span> -- Discovers your account ID and verifies the token</span>
+              </li>
+              <li>
+                <strong>Workers Scripts (Edit)</strong>
+                <span> -- Sets worker secrets (R2 credentials, admin secret) during setup</span>
+              </li>
+              <li>
+                <strong>Workers KV Storage (Edit)</strong>
+                <span> -- Creates the KV namespace during deployment</span>
+              </li>
+              <li>
+                <strong>Workers R2 Storage (Edit)</strong>
+                <span> -- Creates per-user storage buckets</span>
+              </li>
+              <li>
+                <strong>Containers (Edit)</strong>
+                <span> -- Manages container lifecycle (start, stop, destroy)</span>
+              </li>
+              <li>
+                <strong>Access: Apps and Policies (Edit)</strong>
+                <span> -- Creates authentication app and manages user allowlist</span>
+              </li>
+            </ul>
+          </div>
+          <div class="permissions-group">
+            <span class="permissions-group-label">Zone permissions</span>
+            <ul class="permissions-list">
+              <li>
+                <strong>Zone (Read)</strong>
+                <span> -- Resolves zone ID for custom domain setup</span>
+              </li>
+              <li>
+                <strong>DNS (Edit)</strong>
+                <span> -- Creates DNS record for your custom domain</span>
+              </li>
+              <li>
+                <strong>Workers Routes (Edit)</strong>
+                <span> -- Routes custom domain traffic to the worker</span>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </Show>
+    </div>
+  );
+};
 
 const WelcomeStep: Component = () => {
   onMount(() => {
@@ -48,6 +119,8 @@ const WelcomeStep: Component = () => {
             </div>
           </div>
 
+          <PermissionsReference />
+
           <Button onClick={() => setupStore.nextStep()}>
             Get Started
           </Button>
@@ -72,6 +145,8 @@ const WelcomeStep: Component = () => {
               via GitHub Actions.
             </p>
           </div>
+
+          <PermissionsReference />
         </Show>
 
         {/* Not detected at all */}
@@ -88,6 +163,8 @@ const WelcomeStep: Component = () => {
               </span>
             </div>
           </div>
+
+          <PermissionsReference />
         </Show>
       </div>
 
@@ -218,6 +295,93 @@ const WelcomeStep: Component = () => {
           border-radius: 4px;
           font-size: 12px;
           color: var(--color-accent);
+        }
+
+        .permissions-reference {
+          width: 100%;
+          border: 1px solid var(--color-border);
+          border-radius: 8px;
+          overflow: hidden;
+        }
+
+        .permissions-toggle {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          width: 100%;
+          padding: 10px 14px;
+          background: var(--color-bg-tertiary);
+          border: none;
+          cursor: pointer;
+          transition: background 0.15s ease;
+        }
+
+        .permissions-toggle:hover {
+          background: var(--color-bg-primary);
+        }
+
+        .permissions-toggle-label {
+          font-size: 13px;
+          font-weight: 500;
+          color: var(--color-text-secondary);
+        }
+
+        .permissions-toggle-icon {
+          display: flex;
+          align-items: center;
+          color: var(--color-text-tertiary);
+          transition: transform 0.2s ease;
+        }
+
+        .permissions-toggle-icon--open {
+          transform: rotate(180deg);
+        }
+
+        .permissions-content {
+          padding: 12px 14px 14px;
+          background: var(--color-bg-tertiary);
+          border-top: 1px solid var(--color-border);
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .permissions-group {
+          display: flex;
+          flex-direction: column;
+          gap: 6px;
+        }
+
+        .permissions-group-label {
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: var(--color-text-tertiary);
+        }
+
+        .permissions-list {
+          margin: 0;
+          padding: 0;
+          list-style: none;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .permissions-list li {
+          font-size: 12px;
+          line-height: 1.5;
+          color: var(--color-text-secondary);
+        }
+
+        .permissions-list li strong {
+          color: var(--color-text-primary);
+          font-weight: 500;
+        }
+
+        .permissions-list li span {
+          color: var(--color-text-secondary);
         }
       `}</style>
     </div>

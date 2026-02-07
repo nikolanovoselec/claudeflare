@@ -167,6 +167,31 @@ echo "your-token" | npx wrangler secret put CLOUDFLARE_API_TOKEN
 | `test.yml` | Pull requests | Tests + typecheck only (no deploy) |
 | `e2e.yml` | Manual | E2E tests against a deployed worker |
 
+## API Token Permissions
+
+Claudeflare requires a Cloudflare API token with the following permissions. Each is actively used -- none are optional.
+
+### Account Permissions
+
+| Permission | Access | Why |
+|-----------|--------|-----|
+| Account Settings | Read | Discovers your account ID (required by all other API calls) and verifies the token during setup |
+| Workers Scripts | Edit | Sets worker secrets (R2 credentials, admin secret) during setup. Used by `wrangler deploy` for CI/CD |
+| Workers KV Storage | Edit | Creates the KV namespace (`claudeflare-kv`) during deployment. Runtime KV access uses the binding, not the token |
+| Workers R2 Storage | Edit | Creates per-user R2 buckets on container start, deletes them on user removal |
+| Containers | Edit | Full container lifecycle -- start, stop, destroy, health checks via `@cloudflare/containers` SDK |
+| Access: Apps and Policies | Edit | Creates the CF Access app protecting your domain and syncs the user allowlist policy when users are added/removed |
+
+### Zone Permissions
+
+| Permission | Access | Why |
+|-----------|--------|-----|
+| Zone | Read | Resolves the zone ID from your root domain during custom domain setup |
+| DNS | Edit | Creates a proxied CNAME record pointing your custom domain to the workers.dev hostname |
+| Workers Routes | Edit | Creates a worker route mapping `{customDomain}/*` to the claudeflare worker |
+
+> **Note:** Zone permissions are only used during setup when configuring a custom domain. Account permissions are required for core functionality.
+
 ## Configuration
 
 All secrets are set automatically by the deploy workflow (`CLOUDFLARE_API_TOKEN`) and the setup wizard (`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `ADMIN_SECRET`). See [Getting Started](#getting-started) for the full setup flow.
