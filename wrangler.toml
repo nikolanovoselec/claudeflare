@@ -14,7 +14,10 @@ DEV_MODE = "false"
 # Allowed CORS origins (comma-separated domain patterns)
 # Additional origins are managed dynamically via KV (setup:custom_domain, setup:allowed_origins)
 ALLOWED_ORIGINS = ".workers.dev"
-# R2_BUCKET_NAME removed - per-user buckets now
+# R2 config - used by getR2Config() to construct S3 endpoint for container rclone sync
+# Also available as KV fallback (setup:account_id, setup:r2_endpoint) for forks using setup wizard
+R2_ACCOUNT_ID = "ab75f75941a21a81db27bf12e99c620b"
+R2_ENDPOINT = "https://ab75f75941a21a81db27bf12e99c620b.r2.cloudflarestorage.com"
 
 # REMOVE or comment out - per-user buckets are created dynamically
 # [[r2_buckets]]
