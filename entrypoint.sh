@@ -131,7 +131,9 @@ initial_sync_from_r2() {
         --exclude ".cache/rclone/**" \
         --exclude ".npm/**" \
         --exclude "**/node_modules/**" \
-        --exclude "workspace/**" \
+        --include "CLAUDE.md" \
+        --include "**/CLAUDE.md" \
+        --exclude "*" \
         --fast-list \
         --size-only \
         --multi-thread-streams 4 \
@@ -168,7 +170,9 @@ establish_bisync_baseline() {
         --exclude ".cache/rclone/**" \
         --exclude ".npm/**" \
         --exclude "**/node_modules/**" \
-        --exclude "workspace/**" \
+        --include "CLAUDE.md" \
+        --include "**/CLAUDE.md" \
+        --exclude "*" \
         --resync \
         --fast-list \
         --conflict-resolve newer \
@@ -211,7 +215,9 @@ bisync_with_r2() {
         --exclude ".cache/rclone/**" \
         --exclude ".npm/**" \
         --exclude "**/node_modules/**" \
-        --exclude "workspace/**" \
+        --include "CLAUDE.md" \
+        --include "**/CLAUDE.md" \
+        --exclude "*" \
         --fast-list \
         --conflict-resolve newer \
         --resilient \
@@ -230,7 +236,9 @@ bisync_with_r2() {
             --exclude ".cache/rclone/**" \
             --exclude ".npm/**" \
             --exclude "**/node_modules/**" \
-            --exclude "workspace/**" \
+            --include "CLAUDE.md" \
+            --include "**/CLAUDE.md" \
+            --exclude "*" \
             --conflict-resolve newer \
             --resync \
             --resilient \
@@ -460,6 +468,21 @@ if [ $RCLONE_CONFIG_RESULT -eq 0 ]; then
 else
     update_sync_status "skipped" "$SYNC_ERROR"
 fi
+
+# Pre-accept Claude Code's bypass permissions consent
+# Claude Code stores this in ~/.claude.json (bypassPermissionsModeAccepted field)
+# This prevents the interactive "WARNING: Claude Code running in Bypass Permissions mode" prompt
+if [ -f "$USER_CLAUDE_JSON" ]; then
+    # Merge into existing config (rclone may have restored it from R2)
+    TMP_JSON=$(mktemp)
+    jq '. + {"bypassPermissionsModeAccepted": true}' "$USER_CLAUDE_JSON" > "$TMP_JSON" 2>/dev/null && \
+        mv "$TMP_JSON" "$USER_CLAUDE_JSON" || \
+        echo '{"bypassPermissionsModeAccepted":true}' > "$USER_CLAUDE_JSON"
+    rm -f "$TMP_JSON"
+else
+    echo '{"bypassPermissionsModeAccepted":true}' > "$USER_CLAUDE_JSON"
+fi
+echo "[entrypoint] Claude Code bypass permissions consent pre-accepted"
 
 # Configure Claude auto-start
 configure_claude_autostart
