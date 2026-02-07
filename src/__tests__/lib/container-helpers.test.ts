@@ -96,7 +96,7 @@ describe('waitForContainerHealth', () => {
   });
 
   it('returns ok:true with data when health check succeeds on first attempt', async () => {
-    const healthData: HealthData = { status: 'healthy', cpu: 10, memory: 50, disk: 30 };
+    const healthData: HealthData = { status: 'healthy', cpu: '10%', mem: '1.5/3.0G', hdd: '2.0/10.0G' };
     const mockContainer = {
       fetch: vi.fn().mockResolvedValue(
         new Response(JSON.stringify(healthData), { status: 200 })

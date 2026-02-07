@@ -12,59 +12,66 @@ async function resolveZone(
   steps: SetupStep[],
   stepIndex: number
 ): Promise<string> {
+  // Try progressively shorter domain suffixes to support ccTLDs (.co.uk, .com.au, etc.)
+  // For "app.example.co.uk", try: "app.example.co.uk", "example.co.uk", "co.uk"
   const domainParts = domain.split('.');
-  const zoneName = domainParts.slice(-2).join('.');
-
-  let zonesRes: Response;
-  try {
-    zonesRes = await fetch(
-      `${CF_API_BASE}/zones?name=${zoneName}`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-  } catch (error) {
-    logger.error('Failed to fetch zones API', toError(error));
-    steps[stepIndex].status = 'error';
-    steps[stepIndex].error = 'Failed to connect to Cloudflare Zones API';
-    throw new SetupError('Failed to connect to Cloudflare Zones API', steps);
+  const candidates: string[] = [];
+  for (let i = 0; i < domainParts.length - 1; i++) {
+    candidates.push(domainParts.slice(i).join('.'));
   }
 
-  const zonesData = await zonesRes.json() as {
-    success: boolean;
-    result?: Array<{ id: string }>;
-    errors?: Array<{ code: number; message: string }>;
-  };
-
-  if (!zonesData.success) {
-    const cfErrors = zonesData.errors || [];
-    const errorMessages = cfErrors.map(e => `${e.code}: ${e.message}`).join(', ');
-    logger.error('Cloudflare Zones API error', new Error(errorMessages || 'Unknown zones API error'), {
-      domain: zoneName,
-      status: zonesRes.status,
-      errors: cfErrors,
-    });
-
-    const authError = detectCloudflareAuthError(zonesRes.status, cfErrors);
-    if (authError) {
-      const permError = 'API token lacks Zone permissions required for custom domain configuration. '
-        + 'Add "Zone > Zone > Read", "Zone > DNS > Edit", and "Zone > Workers Routes > Edit" permissions to your token, '
-        + 'or skip custom domain setup.';
+  for (const zoneName of candidates) {
+    let zonesRes: Response;
+    try {
+      zonesRes = await fetch(
+        `${CF_API_BASE}/zones?name=${zoneName}`,
+        { headers: { 'Authorization': `Bearer ${token}` } }
+      );
+    } catch (error) {
+      logger.error('Failed to fetch zones API', toError(error));
       steps[stepIndex].status = 'error';
-      steps[stepIndex].error = permError;
-      throw new SetupError(permError, steps);
+      steps[stepIndex].error = 'Failed to connect to Cloudflare Zones API';
+      throw new SetupError('Failed to connect to Cloudflare Zones API', steps);
     }
 
-    steps[stepIndex].status = 'error';
-    steps[stepIndex].error = `Zones API error: ${errorMessages || 'Unknown error'}`;
-    throw new SetupError(`Zones API error for ${zoneName}: ${errorMessages || 'Unknown error'}`, steps);
+    const zonesData = await zonesRes.json() as {
+      success: boolean;
+      result?: Array<{ id: string }>;
+      errors?: Array<{ code: number; message: string }>;
+    };
+
+    if (!zonesData.success) {
+      const cfErrors = zonesData.errors || [];
+      const errorMessages = cfErrors.map(e => `${e.code}: ${e.message}`).join(', ');
+
+      const authError = detectCloudflareAuthError(zonesRes.status, cfErrors);
+      if (authError) {
+        const permError = 'API token lacks Zone permissions required for custom domain configuration. '
+          + 'Add "Zone > Zone > Read", "Zone > DNS > Edit", and "Zone > Workers Routes > Edit" permissions to your token, '
+          + 'or skip custom domain setup.';
+        steps[stepIndex].status = 'error';
+        steps[stepIndex].error = permError;
+        throw new SetupError(permError, steps);
+      }
+
+      // Log the error but continue trying shorter suffixes
+      logger.warn('Cloudflare Zones API error for candidate', {
+        zoneName,
+        status: zonesRes.status,
+        errors: cfErrors,
+      });
+      continue;
+    }
+
+    if (zonesData.result?.length) {
+      return zonesData.result[0].id;
+    }
   }
 
-  if (!zonesData.result?.length) {
-    steps[stepIndex].status = 'error';
-    steps[stepIndex].error = `Zone not found for domain: ${zoneName}`;
-    throw new SetupError(`Zone not found for domain: ${zoneName}`, steps);
-  }
-
-  return zonesData.result[0].id;
+  // None of the candidates matched
+  steps[stepIndex].status = 'error';
+  steps[stepIndex].error = `Zone not found for domain: ${domain}`;
+  throw new SetupError(`Zone not found for domain: ${domain}`, steps);
 }
 
 /**

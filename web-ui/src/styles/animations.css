@@ -16,16 +16,6 @@
   }
 }
 
-/* Fade Out */
-@keyframes fadeOut {
-  from {
-    opacity: 1;
-  }
-  to {
-    opacity: 0;
-  }
-}
-
 /* Fade In Up (for cards, modals) */
 @keyframes fadeInUp {
   from {
@@ -35,78 +25,6 @@
   to {
     opacity: 1;
     transform: translateY(0);
-  }
-}
-
-/* Fade Out Down (for dismissing) */
-@keyframes fadeOutDown {
-  from {
-    opacity: 1;
-    transform: translateY(0);
-  }
-  to {
-    opacity: 0;
-    transform: translateY(8px);
-  }
-}
-
-/* Fade In Scale (for tooltips, dropdowns) */
-@keyframes fadeInScale {
-  from {
-    opacity: 0;
-    transform: scale(0.95);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-/* Slide In Right (for content entering from left) */
-@keyframes slideInRight {
-  from {
-    opacity: 0;
-    transform: translateX(-16px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-/* Slide In Left (for content entering from right) */
-@keyframes slideInLeft {
-  from {
-    opacity: 0;
-    transform: translateX(16px);
-  }
-  to {
-    opacity: 1;
-    transform: translateX(0);
-  }
-}
-
-/* Slide Out Left (for dismissing) */
-@keyframes slideOutLeft {
-  from {
-    opacity: 1;
-    transform: translateX(0);
-  }
-  to {
-    opacity: 0;
-    transform: translateX(-16px);
-  }
-}
-
-/* Slide Out Right (for dismissing) */
-@keyframes slideOutRight {
-  from {
-    opacity: 1;
-    transform: translateX(0);
-  }
-  to {
-    opacity: 0;
-    transform: translateX(16px);
   }
 }
 
@@ -131,36 +49,6 @@
   }
   50% {
     opacity: 0.5;
-  }
-}
-
-/* Skeleton shimmer */
-@keyframes shimmer {
-  0% {
-    background-position: -200% 0;
-  }
-  100% {
-    background-position: 200% 0;
-  }
-}
-
-/* Progress bar fill */
-@keyframes progressFill {
-  from {
-    width: 0%;
-  }
-}
-
-/* Typing dots */
-@keyframes typingDots {
-  0%, 20% {
-    opacity: 0.3;
-  }
-  50% {
-    opacity: 1;
-  }
-  80%, 100% {
-    opacity: 0.3;
   }
 }
 
@@ -213,26 +101,6 @@
   }
 }
 
-/* Check mark draw in */
-@keyframes drawIn {
-  from {
-    stroke-dashoffset: 24;
-  }
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
-/* Glow pulse (for active states) */
-@keyframes glowPulse {
-  0%, 100% {
-    box-shadow: 0 0 0 0 var(--color-glow-accent);
-  }
-  50% {
-    box-shadow: 0 0 0 4px var(--color-glow-accent);
-  }
-}
-
 /* ==========================================================================
    Utility Classes
    ========================================================================== */
@@ -242,37 +110,8 @@
   animation: fadeIn 200ms ease-out;
 }
 
-.animate-fadeOut {
-  animation: fadeOut 200ms ease-out;
-}
-
 .animate-fadeInUp {
   animation: fadeInUp 200ms ease-out;
-}
-
-.animate-fadeOutDown {
-  animation: fadeOutDown 200ms ease-out;
-}
-
-.animate-fadeInScale {
-  animation: fadeInScale 200ms ease-out;
-}
-
-/* Slide animations */
-.animate-slideInRight {
-  animation: slideInRight 200ms ease-out;
-}
-
-.animate-slideInLeft {
-  animation: slideInLeft 200ms ease-out;
-}
-
-.animate-slideOutLeft {
-  animation: slideOutLeft 200ms ease-out;
-}
-
-.animate-slideOutRight {
-  animation: slideOutRight 200ms ease-out;
 }
 
 /* Loading animations */
@@ -282,10 +121,6 @@
 
 .animate-pulse {
   animation: pulse 2s ease-in-out infinite;
-}
-
-.animate-shimmer {
-  animation: shimmer 1.5s infinite;
 }
 
 /* Special animations */
@@ -305,155 +140,14 @@
   animation: scaleIn 200ms cubic-bezier(0.34, 1.56, 0.64, 1);
 }
 
-.animate-glowPulse {
-  animation: glowPulse 2s ease-in-out infinite;
-}
-
-/* ==========================================================================
-   Skeleton Component
-   ========================================================================== */
-
-.skeleton {
-  background: linear-gradient(
-    90deg,
-    var(--color-bg-surface) 0%,
-    var(--color-bg-elevated) 50%,
-    var(--color-bg-surface) 100%
-  );
-  background-size: 200% 100%;
-  animation: shimmer 1.5s infinite;
-  border-radius: var(--radius-sm);
-}
-
-.skeleton-text {
-  height: 1em;
-  border-radius: var(--radius-sm);
-}
-
-.skeleton-circle {
-  border-radius: var(--radius-full);
-}
-
-.skeleton-rect {
-  border-radius: var(--radius-md);
-}
-
-/* ==========================================================================
-   Stagger Children (for lists)
-   ========================================================================== */
-
-.stagger-children > * {
-  animation: fadeInUp 200ms ease-out backwards;
-}
-
-.stagger-children > *:nth-child(1) { animation-delay: 0ms; }
-.stagger-children > *:nth-child(2) { animation-delay: 50ms; }
-.stagger-children > *:nth-child(3) { animation-delay: 100ms; }
-.stagger-children > *:nth-child(4) { animation-delay: 150ms; }
-.stagger-children > *:nth-child(5) { animation-delay: 200ms; }
-.stagger-children > *:nth-child(6) { animation-delay: 250ms; }
-.stagger-children > *:nth-child(7) { animation-delay: 300ms; }
-.stagger-children > *:nth-child(8) { animation-delay: 350ms; }
-.stagger-children > *:nth-child(9) { animation-delay: 400ms; }
-.stagger-children > *:nth-child(10) { animation-delay: 450ms; }
-
-/* Faster stagger variant */
-.stagger-children-fast > * {
-  animation: fadeInUp 150ms ease-out backwards;
-}
-
-.stagger-children-fast > *:nth-child(1) { animation-delay: 0ms; }
-.stagger-children-fast > *:nth-child(2) { animation-delay: 30ms; }
-.stagger-children-fast > *:nth-child(3) { animation-delay: 60ms; }
-.stagger-children-fast > *:nth-child(4) { animation-delay: 90ms; }
-.stagger-children-fast > *:nth-child(5) { animation-delay: 120ms; }
-.stagger-children-fast > *:nth-child(6) { animation-delay: 150ms; }
-.stagger-children-fast > *:nth-child(7) { animation-delay: 180ms; }
-.stagger-children-fast > *:nth-child(8) { animation-delay: 210ms; }
-.stagger-children-fast > *:nth-child(9) { animation-delay: 240ms; }
-.stagger-children-fast > *:nth-child(10) { animation-delay: 270ms; }
-
-/* ==========================================================================
-   Typing Dots Indicator
-   ========================================================================== */
-
-.typing-dots {
-  display: inline-flex;
-  gap: 4px;
-}
-
-.typing-dots span {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
-  background: var(--color-text-muted);
-  animation: typingDots 1.4s infinite;
-}
-
-.typing-dots span:nth-child(1) { animation-delay: 0ms; }
-.typing-dots span:nth-child(2) { animation-delay: 200ms; }
-.typing-dots span:nth-child(3) { animation-delay: 400ms; }
-
 /* ==========================================================================
    Micro-Interactions
    ========================================================================== */
-
-/* Button hover lift */
-.btn-lift:hover:not(:disabled) {
-  transform: translateY(-1px);
-}
-
-/* Icon button pulse on click */
-.icon-btn-press:active {
-  transform: scale(0.95);
-}
-
-/* Card hover */
-.card-hover {
-  transition: border-color var(--transition-base), background-color var(--transition-base);
-}
-
-.card-hover:hover {
-  border-color: var(--color-border-strong);
-  background: var(--color-bg-elevated);
-}
-
-/* Status dot pulse for running state */
-.status-dot-running {
-  animation: pulse 2s ease-in-out infinite;
-}
-
-/* Tab underline slide effect */
-.tab-underline {
-  position: relative;
-}
-
-.tab-underline::after {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  width: 0;
-  height: 2px;
-  background: var(--color-accent);
-  transition: width var(--transition-base);
-}
-
-.tab-underline.active::after,
-.tab-underline:hover::after {
-  width: 100%;
-}
 
 /* Settings cog rotation on hover */
 .settings-rotate:hover {
   transform: rotate(90deg);
   transition: transform var(--transition-slow);
-}
-
-/* Avatar scale on hover */
-.avatar-hover:hover {
-  transform: scale(1.05);
-  transition: transform var(--transition-base);
 }
 
 /* ==========================================================================
@@ -480,24 +174,6 @@
 
   .animate-float {
     animation: none !important;
-  }
-
-  .animate-shimmer {
-    animation: none !important;
-  }
-
-  .skeleton {
-    animation: none !important;
-  }
-
-  .stagger-children > *,
-  .stagger-children-fast > * {
-    animation: none !important;
-  }
-
-  .typing-dots span {
-    animation: none !important;
-    opacity: 0.6;
   }
 }
 

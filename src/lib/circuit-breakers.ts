@@ -36,3 +36,12 @@ export const r2AdminCB = new CircuitBreaker('r2-admin', {
   failureThreshold: 3,
   resetTimeoutMs: 30000,
 });
+
+/**
+ * Circuit breaker for Cloudflare API calls
+ * Used for Access policy sync and other CF API operations
+ */
+export const cfApiCB = new CircuitBreaker('cf-api', {
+  failureThreshold: 3,
+  resetTimeoutMs: 30000,
+});

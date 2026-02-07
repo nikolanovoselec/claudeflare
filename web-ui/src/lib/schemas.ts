@@ -59,4 +59,12 @@ export const SessionStatusResponseSchema = z.object({
   ptyActive: z.boolean().optional(),
 });
 
+// Batch session status response schema
+export const BatchSessionStatusResponseSchema = z.object({
+  statuses: z.record(z.string(), z.object({
+    status: z.string(),
+    ptyActive: z.boolean(),
+  })),
+});
+
 

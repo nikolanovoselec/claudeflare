@@ -292,6 +292,35 @@ describe('Terminal Store', () => {
       expect(terminalStore.getConnectionState(sessionId, '2')).toBe('disconnected');
     });
 
+    it('should clean up fitAddons, reconnectAttempts, and inputDisposables for the session', async () => {
+      const terminal1 = createMockTerminal();
+      const terminal2 = createMockTerminal();
+      const mockFitAddon = { fit: vi.fn() };
+
+      // Set up connections and fitAddons for the target session
+      terminalStore.connect(sessionId, '1', terminal1);
+      terminalStore.connect(sessionId, '2', terminal2);
+      await vi.advanceTimersByTimeAsync(0);
+
+      terminalStore.registerFitAddon(sessionId, '1', mockFitAddon as any);
+      terminalStore.registerFitAddon(sessionId, '2', mockFitAddon as any);
+
+      // Dispose the session
+      terminalStore.disposeSession(sessionId);
+
+      // Verify terminals are gone
+      expect(terminalStore.getTerminal(sessionId, '1')).toBeUndefined();
+      expect(terminalStore.getTerminal(sessionId, '2')).toBeUndefined();
+
+      // Verify connections are disconnected
+      expect(terminalStore.getConnectionState(sessionId, '1')).toBe('disconnected');
+      expect(terminalStore.getConnectionState(sessionId, '2')).toBe('disconnected');
+
+      // Verify reconnect returns null (no stored terminal = Maps were cleaned up)
+      expect(terminalStore.reconnect(sessionId, '1')).toBeNull();
+      expect(terminalStore.reconnect(sessionId, '2')).toBeNull();
+    });
+
     it('should not affect other sessions', async () => {
       const terminal1 = createMockTerminal();
       const terminal2 = createMockTerminal();

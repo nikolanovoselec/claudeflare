@@ -466,6 +466,29 @@ function disposeSession(sessionId: string): void {
     }
   }
 
+  // Clean up auxiliary Maps (mirrors disposeAll pattern)
+  for (const key of [...fitAddons.keys()]) {
+    if (key.startsWith(prefix)) {
+      fitAddons.delete(key);
+    }
+  }
+
+  for (const key of [...reconnectAttempts.keys()]) {
+    if (key.startsWith(prefix)) {
+      reconnectAttempts.delete(key);
+    }
+  }
+
+  for (const key of [...inputDisposables.keys()]) {
+    if (key.startsWith(prefix)) {
+      const disposable = inputDisposables.get(key);
+      if (disposable) {
+        disposable.dispose();
+      }
+      inputDisposables.delete(key);
+    }
+  }
+
   // Clean up state
   setState(produce((s) => {
     for (const key of Object.keys(s.connectionStates)) {

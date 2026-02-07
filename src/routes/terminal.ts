@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import { getContainer } from '@cloudflare/containers';
 import type { Env, Session } from '../types';
 import { getSessionKey } from '../lib/kv-keys';
-import { SESSION_ID_PATTERN } from '../lib/constants';
+import { SESSION_ID_PATTERN, REQUEST_ID_LENGTH, REQUEST_ID_PATTERN } from '../lib/constants';
 import { authMiddleware, AuthVariables } from '../middleware/auth';
 import { getContainerId, checkContainerHealth } from '../lib/container-helpers';
 import { authenticateRequest } from '../lib/access';
@@ -91,16 +91,22 @@ export async function handleWebSocketUpgrade(
   ctx: ExecutionContext,
   routeResult: WebSocketRouteResult
 ): Promise<Response> {
+  // Extract or generate X-Request-ID for tracing
+  const clientRequestId = request.headers.get('X-Request-ID');
+  const requestId = (clientRequestId && REQUEST_ID_PATTERN.test(clientRequestId))
+    ? clientRequestId
+    : crypto.randomUUID().slice(0, REQUEST_ID_LENGTH);
+
   const { fullSessionId, baseSessionId, terminalId } = routeResult;
 
   if (!fullSessionId || !baseSessionId || !terminalId) {
     return new Response(JSON.stringify({ error: 'Invalid routing result' }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json' }
+      headers: { 'Content-Type': 'application/json', 'X-Request-ID': requestId }
     });
   }
 
-  const jsonHeaders = { 'Content-Type': 'application/json' };
+  const jsonHeaders: Record<string, string> = { 'Content-Type': 'application/json', 'X-Request-ID': requestId };
 
   // Validate Origin header for WebSocket upgrade (S5-14)
   const origin = request.headers.get('Origin');
@@ -151,7 +157,7 @@ export async function handleWebSocketUpgrade(
     if (!session) {
       return new Response(JSON.stringify({ error: 'Session not found' }), {
         status: 404,
-        headers: { 'Content-Type': 'application/json' }
+        headers: jsonHeaders,
       });
     }
 
@@ -186,7 +192,7 @@ export async function handleWebSocketUpgrade(
       error: 'WebSocket connection failed'
     }), {
       status: 500,
-      headers: { 'Content-Type': 'application/json' }
+      headers: jsonHeaders,
     });
   }
 }

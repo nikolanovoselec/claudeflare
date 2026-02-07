@@ -11,6 +11,22 @@ import { CF_API_BASE } from '../lib/constants';
 
 const logger = createLogger('users');
 
+/**
+ * Attempt to sync the CF Access policy after a user mutation.
+ * Non-fatal: logs errors but does not throw.
+ */
+async function trySyncAccessPolicy(env: Env): Promise<void> {
+  try {
+    const accountId = await env.KV.get('setup:account_id');
+    const domain = await env.KV.get('setup:custom_domain');
+    if (accountId && domain && env.CLOUDFLARE_API_TOKEN) {
+      await syncAccessPolicy(env.CLOUDFLARE_API_TOKEN, accountId, domain, env.KV);
+    }
+  } catch (e) {
+    logger.error('Failed to sync Access policy', toError(e));
+  }
+}
+
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 app.use('*', authMiddleware);
 
@@ -53,17 +69,7 @@ app.post('/', requireAdmin, userMutationRateLimiter, async (c) => {
     role,
   }));
 
-  // Sync Access policy
-  try {
-    const accountId = await c.env.KV.get('setup:account_id');
-    const domain = await c.env.KV.get('setup:custom_domain');
-    if (accountId && domain && c.env.CLOUDFLARE_API_TOKEN) {
-      await syncAccessPolicy(c.env.CLOUDFLARE_API_TOKEN, accountId, domain, c.env.KV);
-    }
-  } catch (e) {
-    // Non-fatal: user added to KV even if Access sync fails
-    logger.error('Failed to sync Access policy', toError(e));
-  }
+  await trySyncAccessPolicy(c.env);
 
   return c.json({ success: true, email, role });
 });
@@ -104,16 +110,7 @@ app.delete('/:email', requireAdmin, userMutationRateLimiter, async (c) => {
     logger.error('Failed to delete R2 bucket', toError(e));
   }
 
-  // Sync Access policy
-  try {
-    const domain = await c.env.KV.get('setup:custom_domain');
-    if (accountId && domain && c.env.CLOUDFLARE_API_TOKEN) {
-      await syncAccessPolicy(c.env.CLOUDFLARE_API_TOKEN, accountId, domain, c.env.KV);
-    }
-  } catch (e) {
-    // Non-fatal
-    logger.error('Failed to sync Access policy', toError(e));
-  }
+  await trySyncAccessPolicy(c.env);
 
   return c.json({ success: true, email });
 });

@@ -101,7 +101,9 @@ describe('Setup Store', () => {
 
       await setupStore.detectToken();
 
-      expect(mockFetch).toHaveBeenCalledWith('/api/setup/detect-token');
+      expect(mockFetch).toHaveBeenCalledWith('/api/setup/detect-token', expect.objectContaining({
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
+      }));
     });
 
     it('should set tokenDetecting during detection', async () => {

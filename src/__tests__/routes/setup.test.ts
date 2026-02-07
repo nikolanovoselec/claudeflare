@@ -1327,6 +1327,27 @@ describe('Setup Routes', () => {
       expect(mockKV.delete).toHaveBeenCalledWith('setup:r2_endpoint');
     });
 
+    it('clears all user:* entries from KV', async () => {
+      const app = createTestApp();
+
+      // Pre-populate user entries in KV
+      mockKV._store.set('user:admin@example.com', JSON.stringify({ addedBy: 'setup', addedAt: '2024-01-01', role: 'admin' }));
+      mockKV._store.set('user:user@example.com', JSON.stringify({ addedBy: 'setup', addedAt: '2024-01-01', role: 'user' }));
+
+      const res = await app.request('/api/setup/reset', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test-admin-secret',
+        },
+      });
+
+      expect(res.status).toBe(200);
+      // Verify both user entries were deleted
+      expect(mockKV.delete).toHaveBeenCalledWith('user:admin@example.com');
+      expect(mockKV.delete).toHaveBeenCalledWith('user:user@example.com');
+    });
+
     it('clears auth_domain and access_aud from KV (resetAuthConfigCache side-effect)', async () => {
       const app = createTestApp();
 

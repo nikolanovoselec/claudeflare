@@ -9,7 +9,7 @@ import credentialsRoutes from './routes/credentials';
 import usersRoutes from './routes/users';
 import setupRoutes from './routes/setup/index';
 import adminRoutes from './routes/admin';
-import { REQUEST_ID_LENGTH, CORS_MAX_AGE_SECONDS } from './lib/constants';
+import { REQUEST_ID_LENGTH, REQUEST_ID_PATTERN, CORS_MAX_AGE_SECONDS } from './lib/constants';
 import { AppError } from './lib/error-types';
 import { resetCorsOriginsCache, isAllowedOrigin } from './lib/cors-cache';
 import { resetAuthConfigCache } from './lib/access';
@@ -23,9 +23,6 @@ type AppVariables = {
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
 const logger = createLogger('index');
-
-/** Valid X-Request-ID pattern: 1-64 chars, alphanumeric plus dash and underscore */
-const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 
 // ============================================================================
 // Request Tracing Middleware

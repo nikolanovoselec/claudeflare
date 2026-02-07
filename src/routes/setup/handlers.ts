@@ -3,6 +3,7 @@ import type { Env } from '../../types';
 import { AuthError, toError } from '../../lib/error-types';
 import { resetAuthConfigCache } from '../../lib/access';
 import { verifyAdminSecret } from '../../lib/admin-auth';
+import { listAllKvKeys } from '../../lib/kv-keys';
 import { CF_API_BASE, logger } from './shared';
 
 const handlers = new Hono<{ Bindings: Env }>();
@@ -88,6 +89,10 @@ handlers.post('/reset', async (c) => {
   await c.env.KV.delete('setup:r2_endpoint');
   await c.env.KV.delete('setup:auth_domain');
   await c.env.KV.delete('setup:access_aud');
+
+  // Clear all user entries
+  const userKeys = await listAllKvKeys(c.env.KV, 'user:');
+  await Promise.all(userKeys.map(key => c.env.KV.delete(key.name)));
 
   resetAuthConfigCache();
 

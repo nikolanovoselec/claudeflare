@@ -50,10 +50,14 @@ export interface HealthCheckOptions {
 }
 
 export interface HealthData {
-  status: string;
-  cpu?: number;
-  memory?: number;
-  disk?: number;
+  status?: string;
+  syncStatus?: string;
+  syncError?: string | null;
+  userPath?: string;
+  terminalPid?: number;
+  cpu?: string;
+  mem?: string;
+  hdd?: string;
 }
 
 /**

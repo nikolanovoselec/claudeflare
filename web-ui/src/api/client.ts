@@ -1,5 +1,5 @@
 import type { Session, UserInfo, InitProgress, StartupStatusResponse } from '../types';
-import { STARTUP_POLL_INTERVAL_MS, SESSION_ID_DISPLAY_LENGTH, MAX_STARTUP_POLL_ERRORS } from '../lib/constants';
+import { STARTUP_POLL_INTERVAL_MS, SESSION_ID_DISPLAY_LENGTH, MAX_STARTUP_POLL_ERRORS, MAX_TERMINALS_PER_SESSION } from '../lib/constants';
 import { z } from 'zod';
 import {
   UserResponseSchema,
@@ -7,6 +7,7 @@ import {
   CreateSessionResponseSchema,
   StartupStatusResponseSchema,
   SessionStatusResponseSchema,
+  BatchSessionStatusResponseSchema,
 } from '../lib/schemas';
 
 const BASE_URL = '/api';
@@ -73,16 +74,6 @@ async function fetchApi<T>(
   return data as T;
 }
 
-// Re-export schemas for backward compatibility (contract tests import from here)
-export {
-  UserResponseSchema,
-  SessionsResponseSchema,
-  CreateSessionResponseSchema,
-  InitStageSchema,
-  StartupStatusResponseSchema,
-  SessionStatusResponseSchema,
-} from '../lib/schemas';
-
 // User API
 export async function getUser(): Promise<UserInfo> {
   return fetchApi('/user', {}, UserResponseSchema);
@@ -119,6 +110,15 @@ export async function getSessionStatus(
   id: string
 ): Promise<{ status: string; ptyActive?: boolean }> {
   return fetchApi(`/sessions/${id}/status`, {}, SessionStatusResponseSchema);
+}
+
+/**
+ * Get status for all sessions in a single batch call
+ * Returns a map of sessionId -> { status, ptyActive }
+ */
+export async function getBatchSessionStatus(): Promise<Record<string, { status: string; ptyActive: boolean }>> {
+  const response = await fetchApi('/sessions/batch-status', {}, BatchSessionStatusResponseSchema);
+  return response.statuses;
 }
 
 // Get container startup status (polling endpoint)
@@ -325,8 +325,49 @@ export async function removeUser(email: string): Promise<void> {
   }, UserMutationResponseSchema);
 }
 
+// Setup API
+const DetectTokenResponseSchema = z.object({
+  detected: z.boolean(),
+  valid: z.boolean().optional(),
+  account: z.object({ id: z.string(), name: z.string() }).optional(),
+  error: z.string().optional(),
+});
+
+export type DetectTokenResponse = z.infer<typeof DetectTokenResponseSchema>;
+
+export async function detectToken(): Promise<DetectTokenResponse> {
+  return fetchApi('/setup/detect-token', {}, DetectTokenResponseSchema);
+}
+
+const ConfigureResponseSchema = z.object({
+  success: z.boolean(),
+  steps: z.array(z.object({ step: z.string(), status: z.string(), error: z.string().optional() })).optional(),
+  error: z.string().optional(),
+  customDomainUrl: z.string().optional(),
+  adminSecret: z.string().optional(),
+  accountId: z.string().optional(),
+});
+
+export type ConfigureResponse = z.infer<typeof ConfigureResponseSchema>;
+
+export async function configure(body: {
+  customDomain: string;
+  allowedUsers: string[];
+  adminUsers: string[];
+  allowedOrigins?: string[];
+}): Promise<ConfigureResponse> {
+  return fetchApi('/setup/configure', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }, ConfigureResponseSchema);
+}
+
 // WebSocket URL helper - uses compound session ID for multiple terminals per session
 export function getTerminalWebSocketUrl(sessionId: string, terminalId: string = '1'): string {
+  const id = parseInt(terminalId, 10);
+  if (isNaN(id) || id < 1 || id > MAX_TERMINALS_PER_SESSION) {
+    throw new Error(`Invalid terminalId "${terminalId}": must be between 1 and ${MAX_TERMINALS_PER_SESSION}`);
+  }
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = window.location.host;
   // Compound session ID: sessionId-terminalId (e.g., "abc123-1", "abc123-2")

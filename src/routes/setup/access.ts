@@ -163,10 +163,11 @@ export async function handleCreateAccessApp(
         if (!policyUpdateRes.ok) {
           const errorText = await policyUpdateRes.text();
           logger.warn(`Policy update failed: ${policyUpdateRes.status} - ${errorText}`);
+        } else {
+          logger.info('Access policy updated', { appId, policyId: existingPolicy.id });
+          steps[stepIndex].status = 'success';
+          return;
         }
-        logger.info('Access policy updated', { appId, policyId: existingPolicy.id });
-        steps[stepIndex].status = 'success';
-        return;
       }
     } catch (policyLookupError) {
       // If policy lookup fails, create a new policy
@@ -196,8 +197,8 @@ export async function handleCreateAccessApp(
   if (!policyCreateRes.ok) {
     const errorText = await policyCreateRes.text();
     logger.warn(`Policy creation failed: ${policyCreateRes.status} - ${errorText}`);
+  } else {
+    logger.info('Access policy created', { appId });
+    steps[stepIndex].status = 'success';
   }
-
-  logger.info('Access policy created', { appId });
-  steps[stepIndex].status = 'success';
 }

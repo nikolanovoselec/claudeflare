@@ -70,7 +70,7 @@ app.post('/', sessionCreateRateLimiter, async (c) => {
     throw new ValidationError(`Session name too long (max ${MAX_SESSION_NAME_LENGTH} characters)`);
   }
   // Sanitize: remove potentially dangerous characters
-  sessionName = sessionName.replace(/[<>&"'`]/g, '');
+  sessionName = sessionName.replace(/[\x00-\x1f<>&"'`]/g, '');
 
   const sessionId = generateSessionId();
   const now = new Date().toISOString();
@@ -130,7 +130,7 @@ app.patch('/:id', async (c) => {
     if (body.name.length > MAX_SESSION_NAME_LENGTH) {
       throw new ValidationError(`Session name too long (max ${MAX_SESSION_NAME_LENGTH} characters)`);
     }
-    session.name = body.name.replace(/[<>&"'`]/g, '');
+    session.name = body.name.replace(/[\x00-\x1f<>&"'`]/g, '');
   }
   session.lastAccessedAt = new Date().toISOString();
 

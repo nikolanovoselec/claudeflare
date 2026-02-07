@@ -2,6 +2,7 @@ import type { Env, UserRole } from '../types';
 import { createLogger } from './logger';
 import { listAllKvKeys } from './kv-keys';
 import { CF_API_BASE } from './constants';
+import { cfApiCB } from './circuit-breakers';
 
 const logger = createLogger('access-policy');
 
@@ -14,7 +15,7 @@ interface CfAccessAppsResponse {
 /** Response shape from the CF Access policies list endpoint */
 interface CfAccessPoliciesResponse {
   success: boolean;
-  result?: Array<{ id: string; include: unknown[] }>;
+  result?: Array<{ id: string; name: string; decision: string; include: unknown[]; exclude: unknown[] }>;
 }
 
 interface UserEntry {
@@ -59,9 +60,11 @@ export async function syncAccessPolicy(
   if (emails.length === 0) return;
 
   // Find the access app by domain
-  const appsRes = await fetch(`${CF_API_BASE}/accounts/${accountId}/access/apps`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  const appsRes = await cfApiCB.execute(() =>
+    fetch(`${CF_API_BASE}/accounts/${accountId}/access/apps`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+  );
   const appsData = await appsRes.json() as CfAccessAppsResponse;
 
   if (!appsData.success) {
@@ -73,9 +76,11 @@ export async function syncAccessPolicy(
   if (!app) return;
 
   // Get existing policies
-  const policiesRes = await fetch(
-    `${CF_API_BASE}/accounts/${accountId}/access/apps/${app.id}/policies`,
-    { headers: { Authorization: `Bearer ${token}` } }
+  const policiesRes = await cfApiCB.execute(() =>
+    fetch(
+      `${CF_API_BASE}/accounts/${accountId}/access/apps/${app.id}/policies`,
+      { headers: { Authorization: `Bearer ${token}` } }
+    )
   );
   const policiesData = await policiesRes.json() as CfAccessPoliciesResponse;
 
@@ -83,20 +88,24 @@ export async function syncAccessPolicy(
 
   const policy = policiesData.result[0];
 
-  // Update policy with email includes
-  const updateRes = await fetch(
-    `${CF_API_BASE}/accounts/${accountId}/access/apps/${app.id}/policies/${policy.id}`,
-    {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        ...policy,
-        include: emails.map(email => ({ email: { email } })),
-      }),
-    }
+  // Update policy with email includes - explicitly pick fields for the PUT body
+  const updateRes = await cfApiCB.execute(() =>
+    fetch(
+      `${CF_API_BASE}/accounts/${accountId}/access/apps/${app.id}/policies/${policy.id}`,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          name: policy.name,
+          decision: policy.decision,
+          include: emails.map(email => ({ email: { email } })),
+          exclude: policy.exclude,
+        }),
+      }
+    )
   );
 
   if (!updateRes.ok) {

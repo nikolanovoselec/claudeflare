@@ -5,7 +5,7 @@
 import { Hono } from 'hono';
 import { getContainer } from '@cloudflare/containers';
 import type { Env, Session } from '../../types';
-import { getSessionKey } from '../../lib/kv-keys';
+import { getSessionKey, getSessionPrefix, listAllKvKeys } from '../../lib/kv-keys';
 import { AuthVariables } from '../../middleware/auth';
 import { getContainerId, checkContainerHealth } from '../../lib/container-helpers';
 import { createLogger } from '../../lib/logger';
@@ -15,6 +15,72 @@ import { NotFoundError } from '../../lib/error-types';
 const logger = createLogger('session-lifecycle');
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
+
+/**
+ * GET /api/sessions/batch-status
+ * Get status for all sessions in a single call (eliminates N+1 on page load)
+ * Returns a map of sessionId -> { status, ptyActive }
+ */
+app.get('/batch-status', async (c) => {
+  const reqLogger = logger.child({ requestId: c.get('requestId') });
+  const bucketName = c.get('bucketName');
+  const prefix = getSessionPrefix(bucketName);
+
+  // List all sessions for this user
+  const keys = await listAllKvKeys(c.env.KV, prefix);
+  const sessionPromises = keys.map(key => c.env.KV.get<Session>(key.name, 'json'));
+  const sessionResults = await Promise.all(sessionPromises);
+  const sessions: Session[] = sessionResults.filter((s): s is Session => s !== null);
+
+  // Check container status for each session in parallel
+  const statuses: Record<string, { status: string; ptyActive: boolean }> = {};
+
+  await Promise.all(
+    sessions.map(async (session) => {
+      try {
+        const containerId = getContainerId(bucketName, session.id);
+        const container = getContainer(c.env.CONTAINER, containerId);
+
+        // Check container health
+        const healthResult = await checkContainerHealth(container);
+
+        if (!healthResult.healthy) {
+          statuses[session.id] = { status: 'stopped', ptyActive: false };
+          return;
+        }
+
+        // Container is healthy - check for active PTY sessions
+        let ptyActive = false;
+        try {
+          const sessionsRes = await containerSessionsCB.execute(() =>
+            container.fetch(
+              new Request('http://container/sessions', { method: 'GET' })
+            )
+          );
+          if (sessionsRes.ok) {
+            const data = (await sessionsRes.json()) as {
+              sessions: { id: string; [key: string]: unknown }[];
+            };
+            ptyActive = (data.sessions || []).some((s) => s.id === session.id);
+          }
+        } catch {
+          // PTY check failed, but container is healthy
+        }
+
+        statuses[session.id] = { status: 'running', ptyActive };
+      } catch (error) {
+        // Container check failed entirely - mark as stopped
+        reqLogger.warn('Batch status check failed for session', {
+          sessionId: session.id,
+          error: String(error),
+        });
+        statuses[session.id] = { status: 'stopped', ptyActive: false };
+      }
+    })
+  );
+
+  return c.json({ statuses });
+});
 
 /**
  * POST /api/sessions/:id/stop

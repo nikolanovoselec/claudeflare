@@ -22,6 +22,9 @@ export const BUCKET_NAME_SETTLE_DELAY_MS = 100;
 /** Request ID display length */
 export const REQUEST_ID_LENGTH = 8;
 
+/** Valid X-Request-ID pattern: 1-64 chars, alphanumeric plus dash and underscore */
+export const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
+
 /** CORS max age in seconds */
 export const CORS_MAX_AGE_SECONDS = 86400;
 
@@ -42,3 +45,6 @@ export const CF_API_BASE = 'https://api.cloudflare.com/client/v4';
 
 /** Rate limit key used when no user or IP is available */
 export const ANONYMOUS_RATE_LIMIT_KEY = 'anonymous';
+
+/** Timeout for container fetch operations (5 seconds for cold start) */
+export const CONTAINER_FETCH_TIMEOUT = 5000;

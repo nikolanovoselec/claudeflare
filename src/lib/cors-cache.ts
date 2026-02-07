@@ -18,7 +18,7 @@ const CORS_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 /**
  * Get the cached KV origins. Returns null if cache is empty or expired.
  */
-export function getCachedKvOrigins(): string[] | null {
+function getCachedKvOrigins(): string[] | null {
   if (cachedKvOrigins !== null && Date.now() - cacheTimestamp > CORS_CACHE_TTL_MS) {
     cachedKvOrigins = null; // Expired
   }
@@ -28,7 +28,7 @@ export function getCachedKvOrigins(): string[] | null {
 /**
  * Set the cached KV origins.
  */
-export function setCachedKvOrigins(origins: string[]): void {
+function setCachedKvOrigins(origins: string[]): void {
   cachedKvOrigins = origins;
   cacheTimestamp = Date.now();
 }
@@ -46,7 +46,7 @@ export function resetCorsOriginsCache(): void {
  * Load allowed origin patterns from KV (setup:custom_domain + setup:allowed_origins).
  * Results are cached in memory per isolate.
  */
-export async function getKvOrigins(env: Env): Promise<string[]> {
+async function getKvOrigins(env: Env): Promise<string[]> {
   const cached = getCachedKvOrigins();
   if (cached !== null) {
     return cached;

@@ -90,7 +90,11 @@ async function loadSessions(): Promise<void> {
   setState('error', null);
 
   try {
-    const sessions = await api.getSessions();
+    // Fetch session list and batch status in parallel (2 calls instead of 1+N+M)
+    const [sessions, batchStatuses] = await Promise.all([
+      api.getSessions(),
+      api.getBatchSessionStatus().catch(() => ({} as Record<string, { status: string; ptyActive: boolean }>)),
+    ]);
 
     // Preserve existing status for sessions we already know about
     // This prevents the "flash to stopped" issue
@@ -105,16 +109,18 @@ async function loadSessions(): Promise<void> {
     }));
     setState('sessions', sessionsWithStatus);
 
-    // Check status for each session
+    // Apply batch statuses and handle running sessions
     await Promise.all(
       sessionsWithStatus.map(async (session) => {
         try {
-          // First check KV status (source of truth)
-          const kvStatus = await api.getSessionStatus(session.id);
+          const batchStatus = batchStatuses[session.id];
+          if (!batchStatus) {
+            // No batch status available - keep existing or default
+            return;
+          }
 
-          // If KV says running, verify with live container status
-          // This fixes stale KV data when page is refreshed
-          if (kvStatus.status === 'running') {
+          if (batchStatus.status === 'running') {
+            // Container is healthy - verify live state for running sessions
             try {
               const liveStatus = await api.getStartupStatus(session.id);
               if (liveStatus.stage === 'ready') {
@@ -140,18 +146,17 @@ async function loadSessions(): Promise<void> {
                 );
               }
             } catch {
-              // Container not reachable but KV says running
-              // Trust KV - container might be slow to respond or temporarily unreachable
-              // DON'T mark as stopped - this was causing zombie flickering
-              console.warn(`[SessionStore] Container ${session.id} unreachable, keeping KV status: running`);
+              // Container not reachable via startup-status but batch says running
+              // Trust batch - container might be slow to respond
+              console.warn(`[SessionStore] Container ${session.id} unreachable via startup-status, keeping batch status: running`);
               updateSessionStatus(session.id, 'running');
               initializeTerminalsForSession(session.id);
             }
           } else {
-            updateSessionStatus(session.id, kvStatus.status as SessionStatus);
+            updateSessionStatus(session.id, batchStatus.status as SessionStatus);
           }
         } catch {
-          // Session might not have status endpoint yet, ignore
+          // Status check failed, ignore
         }
       })
     );

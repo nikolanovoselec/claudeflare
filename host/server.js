@@ -525,11 +525,21 @@ const server = http.createServer(async (req, res) => {
 
   // Create session
   if (pathname === '/sessions' && method === 'POST') {
+    const MAX_BODY_SIZE = 64 * 1024; // 64KB
     let body = '';
+    let bodySize = 0;
     req.on('data', (chunk) => {
+      bodySize += chunk.length;
+      if (bodySize > MAX_BODY_SIZE) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Request body too large' }));
+        req.destroy();
+        return;
+      }
       body += chunk;
     });
     req.on('end', () => {
+      if (bodySize > MAX_BODY_SIZE) return;
       try {
         const { id, name } = JSON.parse(body || '{}');
         if (!id) {

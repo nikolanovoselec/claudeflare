@@ -21,6 +21,7 @@ vi.mock('../../api/client', () => ({
   createSession: vi.fn(),
   deleteSession: vi.fn(),
   getSessionStatus: vi.fn(),
+  getBatchSessionStatus: vi.fn().mockResolvedValue({}),
   getStartupStatus: vi.fn(),
   startSession: vi.fn(),
   stopSession: vi.fn(),
@@ -34,7 +35,7 @@ import * as api from '../../api/client';
 const mockGetSessions = vi.mocked(api.getSessions);
 const mockCreateSession = vi.mocked(api.createSession);
 const mockDeleteSession = vi.mocked(api.deleteSession);
-const mockGetSessionStatus = vi.mocked(api.getSessionStatus);
+const mockGetBatchSessionStatus = vi.mocked(api.getBatchSessionStatus);
 const mockGetStartupStatus = vi.mocked(api.getStartupStatus);
 const mockStopSession = vi.mocked(api.stopSession);
 
@@ -46,7 +47,7 @@ describe('Session Store', () => {
 
     // Default mock implementations
     mockGetSessions.mockResolvedValue([]);
-    mockGetSessionStatus.mockResolvedValue({ status: 'stopped' });
+    mockGetBatchSessionStatus.mockResolvedValue({});
     mockGetStartupStatus.mockRejectedValue(new Error('Not found'));
   });
 
@@ -105,7 +106,7 @@ describe('Session Store', () => {
       expect(sessionStore.error).toBe('Network error');
     });
 
-    it('should check status for each session', async () => {
+    it('should use batch status endpoint', async () => {
       const mockSessions = [
         {
           id: 'session-1',
@@ -115,7 +116,9 @@ describe('Session Store', () => {
         },
       ];
       mockGetSessions.mockResolvedValue(mockSessions);
-      mockGetSessionStatus.mockResolvedValue({ status: 'running' });
+      mockGetBatchSessionStatus.mockResolvedValue({
+        'session-1': { status: 'running', ptyActive: true },
+      });
       mockGetStartupStatus.mockResolvedValue({
         stage: 'ready',
         progress: 100,
@@ -129,7 +132,7 @@ describe('Session Store', () => {
 
       await sessionStore.loadSessions();
 
-      expect(mockGetSessionStatus).toHaveBeenCalledWith('session-1');
+      expect(mockGetBatchSessionStatus).toHaveBeenCalled();
     });
 
     it('should initialize terminals for running sessions', async () => {
@@ -142,7 +145,9 @@ describe('Session Store', () => {
         },
       ];
       mockGetSessions.mockResolvedValue(mockSessions);
-      mockGetSessionStatus.mockResolvedValue({ status: 'running' });
+      mockGetBatchSessionStatus.mockResolvedValue({
+        'session-1': { status: 'running', ptyActive: true },
+      });
       mockGetStartupStatus.mockResolvedValue({
         stage: 'ready',
         progress: 100,
@@ -171,7 +176,9 @@ describe('Session Store', () => {
         },
       ];
       mockGetSessions.mockResolvedValue(mockSessions);
-      mockGetSessionStatus.mockResolvedValue({ status: 'running' });
+      mockGetBatchSessionStatus.mockResolvedValue({
+        'session-1': { status: 'running', ptyActive: false },
+      });
       mockGetStartupStatus.mockResolvedValue({
         stage: 'syncing',
         progress: 50,
@@ -299,7 +306,7 @@ describe('Session Store', () => {
           lastAccessedAt: new Date().toISOString(),
         },
       ]);
-      mockGetSessionStatus.mockResolvedValue({ status: 'running' });
+      mockGetBatchSessionStatus.mockResolvedValue({ 'session-1': { status: 'running', ptyActive: true } });
       mockGetStartupStatus.mockResolvedValue({
         stage: 'ready',
         progress: 100,
@@ -448,7 +455,7 @@ describe('Session Store', () => {
           lastAccessedAt: new Date().toISOString(),
         },
       ]);
-      mockGetSessionStatus.mockResolvedValue({ status: 'running' });
+      mockGetBatchSessionStatus.mockResolvedValue({ 'session-1': { status: 'running', ptyActive: true } });
       mockGetStartupStatus.mockResolvedValue({
         stage: 'syncing',
         progress: 50,
@@ -479,7 +486,7 @@ describe('Session Store', () => {
           lastAccessedAt: new Date().toISOString(),
         },
       ]);
-      mockGetSessionStatus.mockResolvedValue({ status: 'running' });
+      mockGetBatchSessionStatus.mockResolvedValue({ 'session-1': { status: 'running', ptyActive: true } });
       mockGetStartupStatus.mockResolvedValue({
         stage: 'ready',
         progress: 100,

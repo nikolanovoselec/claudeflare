@@ -1,8 +1,9 @@
 import { createStore, produce } from 'solid-js/store';
+import * as api from '../api/client';
 
 const TOTAL_STEPS = 3;
 
-export interface SetupState {
+interface SetupState {
   step: number;
   // Token detection (auto-detected from env)
   tokenDetected: boolean;
@@ -53,11 +54,10 @@ async function detectToken(): Promise<void> {
   setState('tokenDetecting', true);
   setState('tokenDetectError', null);
   try {
-    const res = await fetch('/api/setup/detect-token');
-    const data = await res.json();
+    const data = await api.detectToken();
     if (data.detected && data.valid) {
       setState('tokenDetected', true);
-      setState('accountInfo', data.account);
+      setState('accountInfo', data.account ?? null);
     } else {
       setState('tokenDetectError', data.error || 'Token not detected');
     }
@@ -149,7 +149,7 @@ async function configure(): Promise<boolean> {
   try {
     // Combine admin + regular users for the allowedUsers list (CF Access needs all emails)
     const allUsers = [...state.adminUsers, ...state.allowedUsers];
-    const body: Record<string, unknown> = {
+    const body: Parameters<typeof api.configure>[0] = {
       customDomain: state.customDomain,
       allowedUsers: allUsers,
       adminUsers: state.adminUsers,
@@ -158,12 +158,7 @@ async function configure(): Promise<boolean> {
       body.allowedOrigins = state.allowedOrigins;
     }
 
-    const res = await fetch('/api/setup/configure', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json();
+    const data = await api.configure(body);
 
     setState({ configureSteps: data.steps || [] });
 

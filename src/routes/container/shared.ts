@@ -3,14 +3,12 @@
  * Includes timeout utilities, circuit breakers, and logger
  */
 import { createLogger } from '../../lib/logger';
+import { CONTAINER_FETCH_TIMEOUT } from '../../lib/constants';
 
 // Re-export circuit breakers from central location
 export { containerHealthCB, containerInternalCB, containerSessionsCB } from '../../lib/circuit-breakers';
 
 export const containerLogger = createLogger('container');
-
-/** Timeout for container fetch operations (5 seconds for cold start) */
-const CONTAINER_FETCH_TIMEOUT = 5000;
 
 /**
  * Fetch with timeout wrapper for container operations

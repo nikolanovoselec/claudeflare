@@ -4,7 +4,7 @@
  */
 import { Hono } from 'hono';
 import type { Env } from '../../types';
-import { getContainerContext, checkContainerHealth } from '../../lib/container-helpers';
+import { getContainerContext, checkContainerHealth, type HealthData } from '../../lib/container-helpers';
 import { AuthVariables } from '../../middleware/auth';
 import { ContainerError, toError, toErrorMessage } from '../../lib/error-types';
 import {
@@ -13,18 +13,6 @@ import {
   containerSessionsCB,
   fetchWithTimeout,
 } from './shared';
-
-/** Shape returned by the container health endpoint (port 8080) */
-type HealthData = {
-  status?: string;
-  syncStatus?: string;
-  syncError?: string | null;
-  userPath?: string;
-  terminalPid?: number;
-  cpu?: string;
-  mem?: string;
-  hdd?: string;
-};
 
 /** Copy cpu/mem/hdd metrics from health data into the response details object */
 function populateMetrics(
@@ -211,36 +199,7 @@ app.get('/startup-status', async (c) => {
 
     // Sync complete (success or skipped) - now check terminal server
     // Step 4: Reuse health response from step 2 (same port 8080 /health endpoint)
-    // No need to fetch again — healthRes already confirms terminal server status
-    const terminalHealthRes = healthRes;
-
-    if (!terminalHealthRes) {
-      // Terminal server timed out - mounting stage (sync done but terminal not ready)
-      response.stage = 'mounting';
-      response.progress = 65;
-      response.message = 'Sync complete, starting terminal...';
-      response.details.containerStatus = containerState?.status || 'running';
-      response.details.syncStatus = syncStatus;
-      response.details.healthServerOk = true;
-      response.details.terminalServerOk = false;
-      response.details.terminalPid = healthData.terminalPid;
-      populateMetrics(response.details, healthData);
-      return c.json(response);
-    }
-
-    if (!terminalHealthRes.ok) {
-      // Terminal server not ready yet
-      response.stage = 'mounting';
-      response.progress = 70;
-      response.message = 'Terminal server starting...';
-      response.details.containerStatus = containerState?.status || 'running';
-      response.details.syncStatus = syncStatus;
-      response.details.healthServerOk = true;
-      response.details.terminalServerOk = false;
-      response.details.terminalPid = healthData.terminalPid;
-      populateMetrics(response.details, healthData);
-      return c.json(response);
-    }
+    // healthRes is guaranteed non-null and ok at this point (healthServerOk is true)
 
     // Terminal server is responding! Now verify sessions endpoint
     const sessionsRequest = new Request('http://container/sessions', { method: 'GET' });

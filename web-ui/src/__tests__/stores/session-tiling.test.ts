@@ -18,6 +18,8 @@ vi.mock('../../api/client', () => ({
   createSession: vi.fn(),
   deleteSession: vi.fn(),
   getSessionStatus: vi.fn(),
+  getBatchSessionStatus: vi.fn().mockResolvedValue({}),
+  getStartupStatus: vi.fn().mockRejectedValue(new Error('Not found')),
   startSession: vi.fn(),
   stopSession: vi.fn(),
 }));
