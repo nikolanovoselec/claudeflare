@@ -22,13 +22,17 @@ export type SetupStep = { step: string; status: 'pending' | 'success' | 'error';
 /**
  * Extract the worker name from the request hostname.
  * For workers.dev: first part of hostname (e.g., "claudeflare" from "claudeflare.test.workers.dev")
- * For custom domains or other: default to "claudeflare"
+ * For custom domains or other: uses envWorkerName if provided, otherwise defaults to "claudeflare"
  */
-export function getWorkerNameFromHostname(requestUrl: string): string {
+export function getWorkerNameFromHostname(requestUrl: string, envWorkerName?: string): string {
   const hostname = new URL(requestUrl).hostname;
 
   if (hostname.endsWith('.workers.dev')) {
     return hostname.split('.')[0];
+  }
+
+  if (envWorkerName) {
+    return envWorkerName;
   }
 
   return 'claudeflare';

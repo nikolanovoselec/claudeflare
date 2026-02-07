@@ -86,7 +86,10 @@ export async function syncAccessPolicy(
 
   if (!policiesData.success || !policiesData.result?.length) return;
 
-  const policy = policiesData.result[0];
+  // Prefer the 'Allow Users' policy by name; fall back to first policy
+  const policy = policiesData.result.find(
+    (p) => p.name === 'Allow Users' || p.name === 'Allow users'
+  ) || policiesData.result[0];
 
   // Update policy with email includes - explicitly pick fields for the PUT body
   const updateRes = await cfApiCB.execute(() =>

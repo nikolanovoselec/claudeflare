@@ -67,6 +67,7 @@ async function detectToken(): Promise<void> {
   }
 }
 
+/** Add a user as admin. If already in allowedUsers, promotes to admin. */
 function addAdminUser(email: string): void {
   if (email && !state.adminUsers.includes(email)) {
     setState(
@@ -93,6 +94,7 @@ function removeAdminUser(email: string): void {
   );
 }
 
+/** Add a user as regular allowed user. If already in adminUsers, demotes to regular user. */
 function addAllowedUser(email: string): void {
   if (email && !state.allowedUsers.includes(email)) {
     setState(

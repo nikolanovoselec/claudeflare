@@ -358,7 +358,7 @@ PROFILE_EOF
 
 # terminal-autostart
 # Start different apps based on terminal tab ID:
-# Tab 1: Claude Code (YOLO mode)
+# Tab 1: Claude Code (unleashed mode)
 # Tab 2: htop (system monitor)
 # Tab 3: yazi (file manager)
 # Tab 4-6: Plain bash terminal in workspace
@@ -370,11 +370,10 @@ if [ -t 1 ] && [ -z "$TERMINAL_APP_STARTED" ]; then
 
     case "${TERMINAL_ID:-1}" in
         1)
-            # Tab 1: Claude Code
-            echo "YOLO" > "$HOME/.claude_yolo_state"
+            # Tab 1: Claude Code (via claude-unleashed)
             export IS_SANDBOX=1
             export DISABLE_INSTALLATION_CHECKS=1
-            claude
+            cu --silent --no-consent
             # If claude exits, drop to bash (don't use exec so PTY survives)
             ;;
         2)
@@ -404,7 +403,7 @@ fi
 BASHRC_EOF
 
     echo "configured" > /tmp/claude-autostart-status.txt
-    echo "[entrypoint] Claude auto-start configured (YOLO mode)"
+    echo "[entrypoint] Claude auto-start configured (unleashed mode)"
     return 0
 }
 
@@ -420,95 +419,10 @@ RCLONE_CONFIG_RESULT=$?
 init_sync_log
 
 # ============================================================================
-# PARALLEL STARTUP: Run R2 sync and claude-yolo pre-seeding simultaneously
+# R2 SYNC STARTUP
 # ============================================================================
-
-# Function to pre-seed claude-yolo consent
-# Uses polling with safety timeouts - prefers early exit but won't block forever
-preseed_claude_yolo() {
-    local CLAUDE_YOLO_DIR="$(npm root -g)/claude-yolo/node_modules/@anthropic-ai/claude-code"
-    local PACKAGE_JSON="$(npm root -g)/claude-yolo/package.json"
-    local MAX_NPM_WAIT=120   # Max 2 minutes for npm install
-    local MAX_CONSENT_WAIT=30  # Max 30 seconds for consent files
-
-    # Get versions (with timeout to prevent hangs on network issues)
-    local LATEST_NPM=$(timeout 10 npm view @anthropic-ai/claude-code version 2>/dev/null || echo "unknown")
-    # Use sed instead of grep -oP (Perl regex not available in Alpine)
-    local CURRENT_PKG=$(sed -n 's/.*"@anthropic-ai\/claude-code":[[:space:]]*"\([^"]*\)".*/\1/p' "$PACKAGE_JSON" 2>/dev/null || echo "none")
-    [ -z "$CURRENT_PKG" ] && CURRENT_PKG="none"
-
-    echo "[entrypoint] Claude-YOLO: current=$CURRENT_PKG, npm latest=$LATEST_NPM"
-
-    # Skip if already up-to-date with consent files
-    if [ "$CURRENT_PKG" = "$LATEST_NPM" ] && \
-       [ -f "$CLAUDE_YOLO_DIR/.claude-yolo-consent" ] && \
-       [ -f "$CLAUDE_YOLO_DIR/cli-yolo.mjs" ]; then
-        echo "[entrypoint] Claude-YOLO already configured, skipping"
-        return 0
-    fi
-
-    echo "[entrypoint] Starting claude-yolo (update + consent)..."
-    (echo "yes"; sleep 5) | claude-yolo 2>&1 | head -100 &
-    local PRESEED_PID=$!
-
-    # Phase 1: Wait for npm install (version update in package.json)
-    # Poll until: (a) version matches, OR (b) process exits, OR (c) timeout
-    if [ "$CURRENT_PKG" != "$LATEST_NPM" ]; then
-        echo "[entrypoint] Waiting for npm install to complete (max ${MAX_NPM_WAIT}s)..."
-        local WAITED=0
-        while kill -0 $PRESEED_PID 2>/dev/null && [ $WAITED -lt $MAX_NPM_WAIT ]; do
-            local UPDATED=$(sed -n 's/.*"@anthropic-ai\/claude-code":[[:space:]]*"\([^"]*\)".*/\1/p' "$PACKAGE_JSON" 2>/dev/null || echo "none")
-            [ -z "$UPDATED" ] && UPDATED="none"
-            if [ "$UPDATED" = "$LATEST_NPM" ]; then
-                echo "[entrypoint] Package updated to $LATEST_NPM (${WAITED}s)"
-                break
-            fi
-            sleep 1
-            WAITED=$((WAITED + 1))
-            [ $((WAITED % 10)) -eq 0 ] && echo "[entrypoint] Still waiting for npm install... (${WAITED}s)"
-        done
-        if [ $WAITED -ge $MAX_NPM_WAIT ]; then
-            echo "[entrypoint] WARNING: npm install timeout after ${MAX_NPM_WAIT}s, continuing..."
-        fi
-    fi
-
-    # Phase 2: Wait for consent files
-    # Poll until: (a) files exist, OR (b) process exits, OR (c) timeout
-    echo "[entrypoint] Waiting for consent files (max ${MAX_CONSENT_WAIT}s)..."
-    local WAITED=0
-    while kill -0 $PRESEED_PID 2>/dev/null && [ $WAITED -lt $MAX_CONSENT_WAIT ]; do
-        if [ -f "$CLAUDE_YOLO_DIR/.claude-yolo-consent" ] && [ -f "$CLAUDE_YOLO_DIR/cli-yolo.mjs" ]; then
-            echo "[entrypoint] Consent complete (${WAITED}s)"
-            break
-        fi
-        sleep 1
-        WAITED=$((WAITED + 1))
-    done
-    if [ $WAITED -ge $MAX_CONSENT_WAIT ]; then
-        echo "[entrypoint] WARNING: consent timeout after ${MAX_CONSENT_WAIT}s, continuing..."
-    fi
-
-    # Cleanup - kill any lingering processes
-    pkill -f "claude-yolo" 2>/dev/null || true
-    pkill -f "cli-yolo" 2>/dev/null || true
-    pkill -f "@anthropic-ai/claude-code" 2>/dev/null || true
-    wait $PRESEED_PID 2>/dev/null || true
-
-    # Verify
-    if [ -f "$CLAUDE_YOLO_DIR/.claude-yolo-consent" ] && [ -f "$CLAUDE_YOLO_DIR/cli-yolo.mjs" ]; then
-        echo "[entrypoint] claude-yolo ready"
-        return 0
-    else
-        echo "[entrypoint] WARNING: claude-yolo setup may be incomplete (will show consent prompt on first launch)"
-        ls -la "$CLAUDE_YOLO_DIR/" 2>/dev/null | head -10 || true
-        return 0  # Return success anyway - don't block container startup
-    fi
-}
-
-# Start claude-yolo pre-seeding in parallel (always, doesn't depend on R2)
-preseed_claude_yolo &
-PRESEED_PID=$!
-echo "[entrypoint] Claude-yolo pre-seeding started in background (PID $PRESEED_PID)"
+# Note: claude-unleashed (cu --silent --no-consent) handles consent automatically,
+# no pre-seeding needed.
 
 if [ $RCLONE_CONFIG_RESULT -eq 0 ]; then
     # Step 1: One-way sync FROM R2 to restore user data (credentials, plugins, etc.)
@@ -549,11 +463,6 @@ fi
 
 # Configure Claude auto-start
 configure_claude_autostart
-
-# Wait for claude-yolo pre-seeding to complete (runs in parallel with R2 sync)
-echo "[entrypoint] Waiting for claude-yolo pre-seeding to complete..."
-wait $PRESEED_PID 2>/dev/null || true
-echo "[entrypoint] Claude-yolo pre-seeding finished"
 
 # ============================================================================
 # Start servers AFTER initial sync completes

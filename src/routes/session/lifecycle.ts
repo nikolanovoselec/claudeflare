@@ -67,15 +67,29 @@ app.get('/batch-status', async (c) => {
   const sessions: Session[] = sessionResults.filter((s): s is Session => s !== null);
 
   // Check container status for each session in parallel
-  const statuses: Record<string, { status: string; ptyActive: boolean }> = {};
+  const statuses: Record<string, { status: string; ptyActive: boolean; startupStage?: string }> = {};
 
   await Promise.all(
     sessions.map(async (session) => {
+      // If KV says stopped, skip the expensive container probe
+      if (session.status === 'stopped') {
+        statuses[session.id] = { status: 'stopped', ptyActive: false };
+        return;
+      }
+
       try {
         const containerId = getContainerId(bucketName, session.id);
         const container = getContainer(c.env.CONTAINER, containerId);
         const result = await getContainerSessionStatus(container, session.id);
-        statuses[session.id] = { status: result.status, ptyActive: result.ptyActive };
+        const entry: { status: string; ptyActive: boolean; startupStage?: string } = {
+          status: result.status,
+          ptyActive: result.ptyActive,
+        };
+        // For running containers, derive a lightweight startup stage
+        if (result.status === 'running') {
+          entry.startupStage = result.ptyActive ? 'ready' : 'verifying';
+        }
+        statuses[session.id] = entry;
       } catch (error) {
         // Container check failed entirely - mark as stopped
         reqLogger.warn('Batch status check failed for session', {
@@ -102,7 +116,7 @@ app.post('/:id/stop', async (c) => {
   const sessionId = c.req.param('id');
   const key = getSessionKey(bucketName, sessionId);
 
-  await getSessionOrThrow(c.env.KV, key);
+  const session = await getSessionOrThrow(c.env.KV, key);
 
   const containerId = getContainerId(bucketName, sessionId);
   const container = getContainer(c.env.CONTAINER, containerId);
@@ -127,6 +141,10 @@ app.post('/:id/stop', async (c) => {
   // Note: We intentionally do NOT call container.destroy() here
   // STOP should allow the session to be restarted later
   // DELETE is used to fully destroy the container
+
+  // Persist stopped status in KV so batch-status can skip container probes
+  session.status = 'stopped';
+  await c.env.KV.put(key, JSON.stringify(session));
 
   return c.json({ stopped: true, id: sessionId });
 });

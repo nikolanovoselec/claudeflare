@@ -1072,6 +1072,7 @@ describe('API Client', () => {
           location: {
             protocol: 'https:',
             host: 'claudeflare.workers.dev',
+            href: 'https://claudeflare.workers.dev/',
           },
         },
         writable: true,
@@ -1088,6 +1089,7 @@ describe('API Client', () => {
           location: {
             protocol: 'http:',
             host: 'localhost:3000',
+            href: 'http://localhost:3000/',
           },
         },
         writable: true,
@@ -1104,6 +1106,7 @@ describe('API Client', () => {
           location: {
             protocol: 'https:',
             host: 'claudeflare.workers.dev',
+            href: 'https://claudeflare.workers.dev/',
           },
         },
         writable: true,

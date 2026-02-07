@@ -6,7 +6,7 @@ export const SessionSchema = z.object({
   name: z.string(),
   createdAt: z.string(),
   lastAccessedAt: z.string(),
-  status: z.enum(['stopped', 'initializing', 'running', 'error']).optional(),
+  status: z.enum(['stopped', 'running']).optional(),
 });
 
 // Response schemas for API endpoints — these are the strict, runtime-validated schemas.
@@ -16,7 +16,6 @@ export const UserResponseSchema = z.object({
   email: z.string(),
   authenticated: z.boolean(),
   bucketName: z.string(),
-  bucketCreated: z.boolean().optional(),
   role: z.enum(['admin', 'user']).optional(),
 });
 
@@ -64,6 +63,7 @@ export const BatchSessionStatusResponseSchema = z.object({
   statuses: z.record(z.string(), z.object({
     status: z.string(),
     ptyActive: z.boolean(),
+    startupStage: z.string().optional(),
   })),
 });
 

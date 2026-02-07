@@ -73,46 +73,50 @@ app.get('/health', async (c) => {
 app.get('/startup-status', async (c) => {
   const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
 
+  // Default response structure — declared outside try so catch can spread it
+  const response: {
+    stage: 'stopped' | 'starting' | 'syncing' | 'mounting' | 'verifying' | 'ready' | 'error';
+    progress: number;
+    message: string;
+    details: {
+      bucketName: string;
+      container: string;
+      path: string;
+      email?: string;
+      containerStatus?: string;
+      syncStatus?: string;
+      syncError?: string | null;
+      terminalPid?: number;
+      healthServerOk?: boolean;
+      terminalServerOk?: boolean;
+      cpu?: string;
+      mem?: string;
+      hdd?: string;
+    };
+    error?: string;
+  } = {
+    stage: 'stopped',
+    progress: 0,
+    message: 'Container not running',
+    details: {
+      bucketName: '',
+      container: '',
+      path: '/home/user/workspace',
+      containerStatus: 'stopped',
+      syncStatus: 'pending',
+      healthServerOk: false,
+      terminalServerOk: false,
+    },
+  };
+
   try {
     const user = c.get('user');
     const { bucketName, containerId, container } = getContainerContext(c);
 
-    // Default response structure
-    const response: {
-      stage: 'stopped' | 'starting' | 'syncing' | 'mounting' | 'verifying' | 'ready' | 'error';
-      progress: number;
-      message: string;
-      details: {
-        bucketName: string;
-        container: string;
-        path: string;
-        email?: string;
-        containerStatus?: string;
-        syncStatus?: string;
-        syncError?: string | null;
-        terminalPid?: number;
-        healthServerOk?: boolean;
-        terminalServerOk?: boolean;
-        cpu?: string;
-        mem?: string;
-        hdd?: string;
-      };
-      error?: string;
-    } = {
-      stage: 'stopped',
-      progress: 0,
-      message: 'Container not running',
-      details: {
-        bucketName,
-        container: `container-${containerId.substring(0, 24)}`,
-        path: '/home/user/workspace',
-        email: user.email,
-        containerStatus: 'stopped',
-        syncStatus: 'pending',
-        healthServerOk: false,
-        terminalServerOk: false,
-      },
-    };
+    // Populate response details now that we have context
+    response.details.bucketName = bucketName;
+    response.details.container = `container-${containerId.substring(0, 24)}`;
+    response.details.email = user.email;
 
     // Step 1: Check container state
     let containerState;
@@ -240,14 +244,10 @@ app.get('/startup-status', async (c) => {
   } catch (error) {
     reqLogger.error('Startup status error', toError(error));
     return c.json({
+      ...response,
       stage: 'error',
       progress: 0,
       message: 'Container startup check failed',
-      details: {
-        bucketName: '',
-        container: '',
-        path: '/home/user/workspace',
-      },
       error: 'Container startup check failed',
     });
   }

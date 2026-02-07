@@ -74,17 +74,12 @@ function getActiveSession(): SessionWithStatus | undefined {
 // Track startup polling cleanup functions per session
 const startupCleanups = new Map<string, () => void>();
 
-// Track if loadSessions is in progress to prevent concurrent calls
-let loadSessionsInProgress = false;
+// Generation counter to detect stale closures when concurrent loadSessions calls overlap
+let loadSessionsGeneration = 0;
 
 // Load sessions from API
 async function loadSessions(): Promise<void> {
-  // Debounce: prevent concurrent loadSessions calls that cause race conditions
-  if (loadSessionsInProgress) {
-    console.log('[SessionStore] loadSessions already in progress, skipping');
-    return;
-  }
-  loadSessionsInProgress = true;
+  const thisGen = ++loadSessionsGeneration;
 
   setState('loading', true);
   setState('error', null);
@@ -95,6 +90,9 @@ async function loadSessions(): Promise<void> {
       api.getSessions(),
       api.getBatchSessionStatus().catch(() => ({} as Record<string, { status: string; ptyActive: boolean }>)),
     ]);
+
+    // Bail out if a newer call has started
+    if (thisGen !== loadSessionsGeneration) return;
 
     // Preserve existing status for sessions we already know about
     // This prevents the "flash to stopped" issue
@@ -123,6 +121,7 @@ async function loadSessions(): Promise<void> {
             // Container is healthy - verify live state for running sessions
             try {
               const liveStatus = await api.getStartupStatus(session.id);
+              if (thisGen !== loadSessionsGeneration) return;
               if (liveStatus.stage === 'ready') {
                 updateSessionStatus(session.id, 'running');
                 initializeTerminalsForSession(session.id);
@@ -148,11 +147,13 @@ async function loadSessions(): Promise<void> {
             } catch {
               // Container not reachable via startup-status but batch says running
               // Trust batch - container might be slow to respond
+              if (thisGen !== loadSessionsGeneration) return;
               console.warn(`[SessionStore] Container ${session.id} unreachable via startup-status, keeping batch status: running`);
               updateSessionStatus(session.id, 'running');
               initializeTerminalsForSession(session.id);
             }
           } else {
+            if (thisGen !== loadSessionsGeneration) return;
             updateSessionStatus(session.id, batchStatus.status as SessionStatus);
           }
         } catch {
@@ -161,10 +162,12 @@ async function loadSessions(): Promise<void> {
       })
     );
   } catch (e) {
+    if (thisGen !== loadSessionsGeneration) return;
     setState('error', e instanceof Error ? e.message : 'Failed to load sessions');
   } finally {
-    setState('loading', false);
-    loadSessionsInProgress = false;
+    if (thisGen === loadSessionsGeneration) {
+      setState('loading', false);
+    }
   }
 }
 
@@ -496,20 +499,13 @@ function addTerminalTab(sessionId: string): string | null {
   return newId;
 }
 
+// Minimum tab counts required for each tiling layout
+const LAYOUT_MIN_TABS: Record<TileLayout, number> = { tabbed: 1, '2-split': 2, '3-split': 3, '4-grid': 4 };
+
 // Helper to check if layout is compatible with tab count
 function isLayoutCompatible(layout: TileLayout, tabCount: number): boolean {
-  switch (layout) {
-    case 'tabbed':
-      return true;
-    case '2-split':
-      return tabCount >= 2;
-    case '3-split':
-      return tabCount >= 3;
-    case '4-grid':
-      return tabCount >= 4;
-    default:
-      return false;
-  }
+  const minTabs = LAYOUT_MIN_TABS[layout];
+  return minTabs !== undefined && tabCount >= minTabs;
 }
 
 // Remove a terminal tab (can't remove last one)

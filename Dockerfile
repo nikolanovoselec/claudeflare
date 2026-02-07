@@ -50,20 +50,16 @@ RUN apk add --no-cache \
     && apk add --no-cache yazi --repository=http://dl-cdn.alpinelinux.org/alpine/edge/testing \
     && apk add --no-cache lazygit --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community
 
-# Install claude-yolo globally (wraps Claude Code with YOLO mode support)
-# This allows --dangerously-skip-permissions when running as root
-RUN npm install -g claude-yolo
+# Install claude-unleashed globally (wraps Claude Code with permission bypass)
+# Provides 'cu' command with --silent --no-consent for non-interactive use
+RUN npm install -g github:nikolanovoselec/claude-unleashed
 
-# Pre-configure claude-yolo consent (skip interactive prompt on first run)
-RUN CLAUDE_CODE_DIR=$(npm root -g)/claude-yolo/node_modules/@anthropic-ai/claude-code && \
-    echo "consent-given" > "$CLAUDE_CODE_DIR/.claude-yolo-consent"
-
-# Create 'claude' wrapper that uses claude-yolo transparently
-# Users type 'claude' as usual, gets YOLO mode under the hood
+# Create 'claude' wrapper that uses claude-unleashed transparently
+# Users type 'claude' as usual, gets unleashed mode under the hood
 RUN echo '#!/bin/bash' > /usr/local/bin/claude && \
     echo 'export IS_SANDBOX=1' >> /usr/local/bin/claude && \
     echo 'export DISABLE_INSTALLATION_CHECKS=1' >> /usr/local/bin/claude && \
-    echo 'exec /usr/local/bin/claude-yolo "$@"' >> /usr/local/bin/claude && \
+    echo 'exec cu --silent --no-consent "$@"' >> /usr/local/bin/claude && \
     chmod +x /usr/local/bin/claude
 
 # Create workspace directory structure

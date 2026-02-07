@@ -5,7 +5,7 @@
 import { Hono } from 'hono';
 import { getContainer } from '@cloudflare/containers';
 import type { Env, Session } from '../../types';
-import { getSessionKey, getSessionPrefix, generateSessionId, getSessionOrThrow, listAllKvKeys } from '../../lib/kv-keys';
+import { getSessionKey, getSessionPrefix, generateSessionId, getSessionOrThrow, listAllKvKeys, sanitizeSessionName } from '../../lib/kv-keys';
 import { AuthVariables } from '../../middleware/auth';
 import { createRateLimiter } from '../../middleware/rate-limit';
 import { MAX_SESSION_NAME_LENGTH } from '../../lib/constants';
@@ -68,8 +68,7 @@ app.post('/', sessionCreateRateLimiter, async (c) => {
   if (sessionName.length > MAX_SESSION_NAME_LENGTH) {
     throw new ValidationError(`Session name too long (max ${MAX_SESSION_NAME_LENGTH} characters)`);
   }
-  // Sanitize: restrict to printable ASCII and remove HTML-dangerous characters
-  sessionName = sessionName.replace(/[^\x20-\x7e]/g, '').replace(/[<>&"'`]/g, '');
+  sessionName = sanitizeSessionName(sessionName);
 
   const sessionId = generateSessionId();
   const now = new Date().toISOString();
@@ -121,7 +120,7 @@ app.patch('/:id', async (c) => {
     if (body.name.length > MAX_SESSION_NAME_LENGTH) {
       throw new ValidationError(`Session name too long (max ${MAX_SESSION_NAME_LENGTH} characters)`);
     }
-    session.name = body.name.replace(/[^\x20-\x7e]/g, '');
+    session.name = sanitizeSessionName(body.name);
   }
   session.lastAccessedAt = new Date().toISOString();
 

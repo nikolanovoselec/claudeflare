@@ -8,6 +8,14 @@ import { NotFoundError } from './error-types';
 const MAX_KV_LIST_ITERATIONS = 100;
 
 /**
+ * Sanitize a session name by stripping non-printable ASCII
+ * and HTML-dangerous characters.
+ */
+export function sanitizeSessionName(name: string): string {
+  return name.replace(/[^\x20-\x7e]/g, '').replace(/[<>&"'`]/g, '');
+}
+
+/**
  * Get KV key for a session
  */
 export function getSessionKey(bucketName: string, sessionId: string): string {

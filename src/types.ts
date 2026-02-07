@@ -36,6 +36,9 @@ export interface Env {
   // Allowed CORS origins (comma-separated patterns, e.g., ".workers.dev,.example.com")
   ALLOWED_ORIGINS?: string;
 
+  // Optional worker name override for forks (set via wrangler.toml [vars] or GitHub Actions)
+  CLOUDFLARE_WORKER_NAME?: string;
+
 }
 
 /**
@@ -61,6 +64,7 @@ export interface Session {
   userId: string;
   createdAt: string;
   lastAccessedAt: string;
+  status?: 'stopped' | 'running';
 }
 
 /**

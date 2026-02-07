@@ -131,7 +131,7 @@ export async function resolveUserFromKV(
     return null;
   }
   if (typeof parsed !== 'object' || parsed === null) return null;
-  const obj = parsed as Record<string, unknown>;
+  const obj = parsed as { addedBy?: unknown; addedAt?: unknown; role?: unknown };
   return {
     addedBy: typeof obj.addedBy === 'string' ? obj.addedBy : 'unknown',
     addedAt: typeof obj.addedAt === 'string' ? obj.addedAt : '',

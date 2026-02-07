@@ -75,6 +75,45 @@ async function resolveZone(
 }
 
 /**
+ * Resolve the account subdomain for workers.dev DNS target.
+ * First tries the Cloudflare API, then falls back to parsing the request hostname.
+ */
+async function resolveAccountSubdomain(
+  token: string,
+  accountId: string,
+  requestUrl: string
+): Promise<string> {
+  const subdomainRes = await fetch(
+    `${CF_API_BASE}/accounts/${accountId}/workers/subdomain`,
+    { headers: { 'Authorization': `Bearer ${token}` } }
+  );
+  const subdomainData = await subdomainRes.json() as {
+    success: boolean;
+    result?: { subdomain: string };
+    errors?: Array<{ code: number; message: string }>;
+  };
+
+  if (subdomainData.success && subdomainData.result?.subdomain) {
+    return subdomainData.result.subdomain;
+  }
+
+  // Fallback: parse from request hostname
+  const hostname = new URL(requestUrl).hostname;
+  if (hostname.endsWith('.workers.dev')) {
+    const parts = hostname.split('.');
+    if (parts.length >= 3) {
+      logger.warn('Subdomain API failed, falling back to hostname parsing', {
+        hostname,
+        subdomain: parts[parts.length - 3],
+      });
+      return parts[parts.length - 3];
+    }
+  }
+
+  throw new Error('Could not determine account subdomain from API or hostname');
+}
+
+/**
  * Create or update a DNS CNAME record pointing the custom domain to the workers.dev target.
  * Resolves the account subdomain, looks up existing records, and performs upsert.
  */
@@ -91,31 +130,7 @@ async function upsertDnsRecord(
   // Resolve account subdomain for workers.dev target
   let accountSubdomain: string;
   try {
-    const subdomainRes = await fetch(
-      `${CF_API_BASE}/accounts/${accountId}/workers/subdomain`,
-      { headers: { 'Authorization': `Bearer ${token}` } }
-    );
-    const subdomainData = await subdomainRes.json() as {
-      success: boolean;
-      result?: { subdomain: string };
-      errors?: Array<{ code: number; message: string }>;
-    };
-
-    if (!subdomainData.success || !subdomainData.result?.subdomain) {
-      const hostname = new URL(requestUrl).hostname;
-      if (hostname.endsWith('.workers.dev')) {
-        const parts = hostname.split('.');
-        if (parts.length >= 3) {
-          accountSubdomain = parts[parts.length - 3];
-        } else {
-          throw new Error('Could not determine account subdomain');
-        }
-      } else {
-        throw new Error('Could not determine account subdomain');
-      }
-    } else {
-      accountSubdomain = subdomainData.result.subdomain;
-    }
+    accountSubdomain = await resolveAccountSubdomain(token, accountId, requestUrl);
   } catch (error) {
     logger.error('Failed to get account subdomain', toError(error));
     steps[stepIndex].status = 'error';

@@ -1,4 +1,4 @@
-import { Component, Show, Accessor } from 'solid-js';
+import { Component, Show, Accessor, createMemo } from 'solid-js';
 import {
   mdiStop,
   mdiLoading,
@@ -58,6 +58,7 @@ const SessionCard: Component<SessionCardProps> = (props) => {
   const canDelete = () => true;
   const wsState = () => terminalStore.getConnectionState(props.session.id, '1');
   const wsConfig = () => wsStatusConfig[wsState()];
+  const metrics = createMemo(() => sessionStore.getMetricsForSession(props.session.id));
 
   // Allow reconnect for any non-connected state (including stuck 'connecting')
   const canReconnect = () => wsState() !== 'connected';
@@ -131,22 +132,22 @@ const SessionCard: Component<SessionCardProps> = (props) => {
               <div class="session-card-metrics-row">
                 <div class="session-card-metric" data-testid={`session-card-${props.session.id}-metric-cpu`}>
                   <span class="metric-label">CPU</span>
-                  <span class="metric-value">{sessionStore.getMetricsForSession(props.session.id)?.cpu || '...'}</span>
+                  <span class="metric-value">{metrics()?.cpu || '...'}</span>
                 </div>
                 <div class="session-card-metric" data-testid={`session-card-${props.session.id}-metric-mem`}>
                   <span class="metric-label">MEM</span>
-                  <span class="metric-value">{sessionStore.getMetricsForSession(props.session.id)?.mem || '...'}</span>
+                  <span class="metric-value">{metrics()?.mem || '...'}</span>
                 </div>
                 <div class="session-card-metric" data-testid={`session-card-${props.session.id}-metric-hdd`}>
                   <span class="metric-label">HDD</span>
-                  <span class="metric-value">{sessionStore.getMetricsForSession(props.session.id)?.hdd || '...'}</span>
+                  <span class="metric-value">{metrics()?.hdd || '...'}</span>
                 </div>
               </div>
               {/* Row 2: R2 Bucket (full width) */}
               <div class="session-card-metrics-row">
                 <div class="session-card-metric session-card-metric--full" data-testid={`session-card-${props.session.id}-metric-bucket`}>
                   <span class="metric-label">R2 Bucket</span>
-                  <span class="metric-value">{sessionStore.getMetricsForSession(props.session.id)?.bucketName || '...'}</span>
+                  <span class="metric-value">{metrics()?.bucketName || '...'}</span>
                 </div>
               </div>
               {/* Row 3: Sync status */}
@@ -154,8 +155,8 @@ const SessionCard: Component<SessionCardProps> = (props) => {
                 <div class="session-card-metric" data-testid={`session-card-${props.session.id}-metric-sync`}>
                   <span class="metric-label">Sync</span>
                   <span class="metric-value metric-value--status">
-                    <span class={`status-dot status-dot--${sessionStore.getMetricsForSession(props.session.id)?.syncStatus || 'pending'}`} />
-                    {sessionStore.getMetricsForSession(props.session.id)?.syncStatus || '...'}
+                    <span class={`status-dot status-dot--${metrics()?.syncStatus || 'pending'}`} />
+                    {metrics()?.syncStatus || '...'}
                   </span>
                 </div>
               </div>

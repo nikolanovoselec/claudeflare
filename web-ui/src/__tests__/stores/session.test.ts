@@ -195,22 +195,31 @@ describe('Session Store', () => {
       expect(sessionStore.isSessionInitializing('session-1')).toBe(true);
     });
 
-    it('should prevent concurrent loadSessions calls', async () => {
+    it('should discard stale results from concurrent loadSessions calls', async () => {
       let resolveFirst: (value: any) => void;
-      mockGetSessions.mockReturnValueOnce(
-        new Promise((resolve) => {
-          resolveFirst = resolve;
-        })
-      );
+      let resolveSecond: (value: any) => void;
+      mockGetSessions
+        .mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve; }))
+        .mockReturnValueOnce(new Promise((resolve) => { resolveSecond = resolve; }));
+      mockGetBatchSessionStatus.mockResolvedValue({});
 
       const firstCall = sessionStore.loadSessions();
       const secondCall = sessionStore.loadSessions();
 
-      // Second call should return immediately without calling API again
-      expect(mockGetSessions).toHaveBeenCalledTimes(1);
+      // Both calls proceed (generation counter allows concurrent calls)
+      expect(mockGetSessions).toHaveBeenCalledTimes(2);
 
-      resolveFirst!([]);
-      await Promise.all([firstCall, secondCall]);
+      // Resolve second call first (newer generation wins)
+      resolveSecond!([{ id: 'session-new', name: 'New', createdAt: 'now', lastAccessedAt: 'now' }]);
+      await secondCall;
+
+      // Resolve first call later (stale generation, results discarded)
+      resolveFirst!([{ id: 'session-old', name: 'Old', createdAt: 'then', lastAccessedAt: 'then' }]);
+      await firstCall;
+
+      // Only the newer generation's sessions should be in state
+      expect(sessionStore.sessions.some(s => s.id === 'session-new')).toBe(true);
+      expect(sessionStore.sessions.some(s => s.id === 'session-old')).toBe(false);
     });
   });
 

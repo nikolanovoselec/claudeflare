@@ -1,5 +1,6 @@
 // users.ts = admin user management (GET/POST/DELETE /api/users). See user.ts for current user identity.
 import { Hono } from 'hono';
+import { z } from 'zod';
 import type { Env } from '../types';
 import { authMiddleware, requireAdmin, type AuthVariables } from '../middleware/auth';
 import { createRateLimiter } from '../middleware/rate-limit';
@@ -9,6 +10,11 @@ import { createLogger } from '../lib/logger';
 import { AppError, ValidationError, NotFoundError, toError } from '../lib/error-types';
 import { CF_API_BASE } from '../lib/constants';
 import { r2AdminCB } from '../lib/circuit-breakers';
+
+const AddUserSchema = z.object({
+  email: z.string({ required_error: 'Valid email is required' }).email('Valid email is required'),
+  role: z.enum(['admin', 'user']).optional(),
+});
 
 const logger = createLogger('users');
 
@@ -50,11 +56,11 @@ app.get('/', async (c) => {
 // POST /api/users - Add a user (admin only)
 app.post('/', requireAdmin, userMutationRateLimiter, async (c) => {
   const body = await c.req.json();
-  const email = body.email?.trim().toLowerCase();
-
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    throw new ValidationError('Valid email is required');
+  const parsed = AddUserSchema.safeParse(body);
+  if (!parsed.success) {
+    throw new ValidationError(parsed.error.errors[0].message);
   }
+  const email = parsed.data.email.trim().toLowerCase();
 
   // Check for duplicate
   const existing = await c.env.KV.get(`user:${email}`);
@@ -63,7 +69,7 @@ app.post('/', requireAdmin, userMutationRateLimiter, async (c) => {
   }
 
   const currentUser = c.get('user');
-  const role = body.role === 'admin' ? 'admin' : 'user';
+  const role = parsed.data.role || 'user';
   await c.env.KV.put(`user:${email}`, JSON.stringify({
     addedBy: currentUser.email,
     addedAt: new Date().toISOString(),

@@ -138,8 +138,9 @@ describe('Frontend-Backend Contract Tests', () => {
         expect(() => SessionSchema.parse(session)).not.toThrow();
       });
 
-      it('should accept session with all status values', async () => {
-        const validStatuses = ['stopped', 'initializing', 'running', 'error'];
+      it('should accept session with all backend status values', async () => {
+        // Backend only returns 'stopped' | 'running' in KV. 'initializing' and 'error' are frontend-computed states.
+        const validStatuses = ['stopped', 'running'];
 
         for (const status of validStatuses) {
           mockFetch.mockResolvedValueOnce({
@@ -710,20 +711,9 @@ describe('Frontend-Backend Contract Tests', () => {
         email: 'user@example.com',
         authenticated: true,
         bucketName: 'claudeflare-user-example-com',
-        bucketCreated: false,
       };
 
       expect(() => UserResponseSchema.parse(backendResponse)).not.toThrow();
-    });
-
-    it('should accept response without optional bucketCreated', () => {
-      const response = {
-        email: 'user@example.com',
-        authenticated: true,
-        bucketName: 'claudeflare-user-example-com',
-      };
-
-      expect(() => UserResponseSchema.parse(response)).not.toThrow();
     });
 
     it('should reject response missing required bucketName', () => {

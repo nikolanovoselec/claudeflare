@@ -2,8 +2,8 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import type { Env } from '../../types';
 import { ValidationError, SetupError, toError } from '../../lib/error-types';
-import { resetCorsOriginsCache } from '../../lib/cors-cache';
-import { resetAuthConfigCache } from '../../lib/access';
+import { resetSetupCache } from '../../lib/cache-reset';
+import { listAllKvKeys } from '../../lib/kv-keys';
 import { authMiddleware, requireAdmin, type AuthVariables } from '../../middleware/auth';
 import { setupRateLimiter, logger } from './shared';
 import type { SetupStep } from './shared';
@@ -72,6 +72,14 @@ app.post('/configure', async (c) => {
   // Token from env (already set by GitHub Actions deploy)
   const token = c.env.CLOUDFLARE_API_TOKEN;
 
+  // Acquire KV-based lock to prevent concurrent configure runs
+  const lockKey = 'setup:configuring';
+  const existingLock = await c.env.KV.get(lockKey);
+  if (existingLock) {
+    throw new ValidationError('Setup configuration is already in progress. Please wait and try again.');
+  }
+  await c.env.KV.put(lockKey, new Date().toISOString(), { expirationTtl: 60 });
+
   const steps: SetupStep[] = [];
 
   try {
@@ -91,6 +99,17 @@ app.post('/configure', async (c) => {
       c.req.url,
       steps
     );
+
+    // Remove stale users not in the new allowedUsers list
+    const allowedSet = new Set(allowedUsers);
+    const existingUserKeys = await listAllKvKeys(c.env.KV, 'user:');
+    for (const key of existingUserKeys) {
+      const email = key.name.replace('user:', '');
+      if (!allowedSet.has(email)) {
+        await c.env.KV.delete(key.name);
+        logger.info('Removed stale user', { email });
+      }
+    }
 
     // Store users in KV with role
     const adminSet = new Set(adminUsers);
@@ -127,8 +146,10 @@ app.post('/configure', async (c) => {
     steps[steps.length - 1].status = 'success';
 
     // Reset in-memory caches so subsequent requests pick up new KV values
-    resetCorsOriginsCache();
-    resetAuthConfigCache();
+    resetSetupCache();
+
+    // Release configure lock
+    await c.env.KV.delete(lockKey);
 
     // Get the workers.dev URL from request
     const url = new URL(c.req.url);
@@ -143,6 +164,9 @@ app.post('/configure', async (c) => {
     });
 
   } catch (error) {
+    // Release configure lock on failure
+    await c.env.KV.delete(lockKey).catch(() => {});
+
     if (error instanceof SetupError || error instanceof ValidationError) {
       throw error;
     }

@@ -51,20 +51,23 @@ export class container extends Container<Env> {
 
       this._bucketName = await this.ctx.storage.get<string>('bucketName') || null;
 
-      // Resolve R2 config via shared helper (env vars first, KV fallback)
-      try {
-        const r2Config = await getR2Config(this.env);
-        this._r2AccountId = r2Config.accountId;
-        this._r2Endpoint = r2Config.endpoint;
-      } catch {
-        // R2 not configured yet — will use empty values in updateEnvVars
-      }
-
       // If no bucket name stored, this is an orphan/zombie DO - self-destruct
       if (!this._bucketName) {
         this.logger.warn('Orphan DO detected, no bucketName, clearing storage');
         await this.ctx.storage.deleteAll();
         return; // Don't initialize anything else
+      }
+
+      // Resolve R2 config via shared helper (env vars first, KV fallback)
+      // Done AFTER zombie/orphan checks to avoid unnecessary KV reads for doomed DOs
+      try {
+        const r2Config = await getR2Config(this.env);
+        this._r2AccountId = r2Config.accountId;
+        this._r2Endpoint = r2Config.endpoint;
+      } catch (e) {
+        this.logger.warn('R2 config not available, will use empty values in envVars', {
+          error: e instanceof Error ? e.message : String(e),
+        });
       }
 
       this.logger.info('Loaded bucket name from storage', { bucketName: this._bucketName });

@@ -5,6 +5,7 @@ import AppSidebar from './AppSidebar';
 import TerminalArea from './TerminalArea';
 import SettingsPanel from './SettingsPanel';
 import './TiledTerminalContainer.css';
+import '../styles/layout.css';
 import { sessionStore } from '../stores/session';
 import { terminalStore } from '../stores/terminal';
 import type { TileLayout } from '../types';
@@ -232,126 +233,6 @@ const Layout: Component<LayoutProps> = (props) => {
       {/* Settings Panel - slides in from right */}
       <SettingsPanel isOpen={isSettingsOpen()} onClose={handleSettingsClose} currentUserEmail={props.userName} currentUserRole={props.userRole} />
 
-      <style>{`
-        .layout {
-          display: flex;
-          flex-direction: column;
-          height: 100%;
-          width: 100%;
-        }
-
-        .layout-middle {
-          display: flex;
-          flex: 1;
-          min-height: 0;
-          overflow: hidden;
-        }
-
-        .layout-sidebar {
-          display: flex;
-          flex-direction: column;
-          width: var(--sidebar-width);
-          background: var(--color-bg-surface);
-          border-right: 1px solid var(--color-border-subtle);
-          transition: width var(--transition-slow);
-        }
-
-        .layout-sidebar--collapsed {
-          width: var(--sidebar-collapsed-width);
-        }
-
-        .layout-sidebar-header {
-          display: flex;
-          align-items: center;
-          justify-content: flex-end;
-          padding: var(--space-3);
-          border-bottom: 1px solid var(--color-border-subtle);
-          min-width: 0;
-        }
-
-        .layout-sidebar--collapsed .layout-sidebar-header {
-          justify-content: center;
-          padding: var(--space-3) var(--space-2);
-        }
-
-        .layout-sidebar-toggle {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          width: 32px;
-          height: 32px;
-          border-radius: var(--radius-md);
-          color: var(--color-text-secondary);
-          transition: all var(--transition-fast);
-        }
-
-        .layout-sidebar-toggle:hover {
-          background: var(--color-bg-muted);
-          color: var(--color-text-primary);
-        }
-
-        .layout-sidebar-content {
-          flex: 1;
-          overflow: hidden;
-        }
-
-        .layout-main {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          position: relative;
-          overflow: hidden;
-          background: var(--color-bg-base);
-        }
-
-        .layout-error {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding: var(--space-3) var(--space-4);
-          background: var(--color-error-muted);
-          border-bottom: 1px solid var(--color-error);
-          color: var(--color-error);
-        }
-
-        .layout-error button {
-          padding: var(--space-1) var(--space-3);
-          font-size: var(--text-xs);
-          background: rgba(239, 68, 68, 0.2);
-          border-radius: var(--radius-sm);
-          transition: background var(--transition-fast);
-        }
-
-        .layout-error button:hover {
-          background: rgba(239, 68, 68, 0.3);
-        }
-
-        /* Bug 4 fix: layout-init-overlay removed - now handled per-terminal */
-
-        .layout-terminal-container {
-          flex: 1;
-          position: relative;
-          overflow: hidden;
-          height: 100%;
-          min-height: 0;
-        }
-
-        .layout-tiling-button-wrapper {
-          position: absolute;
-          top: var(--space-2);
-          right: var(--space-2);
-          z-index: 20;
-        }
-
-        .layout-empty-state {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          padding: var(--space-8);
-        }
-      `}</style>
     </div>
   );
 };

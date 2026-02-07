@@ -9,6 +9,7 @@ import {
   SessionStatusResponseSchema,
   BatchSessionStatusResponseSchema,
 } from '../lib/schemas';
+import { mapStartupDetailsToProgress } from '../lib/status-mapper';
 
 const BASE_URL = '/api';
 
@@ -114,9 +115,9 @@ export async function getSessionStatus(
 
 /**
  * Get status for all sessions in a single batch call
- * Returns a map of sessionId -> { status, ptyActive }
+ * Returns a map of sessionId -> { status, ptyActive, startupStage? }
  */
-export async function getBatchSessionStatus(): Promise<Record<string, { status: string; ptyActive: boolean }>> {
+export async function getBatchSessionStatus(): Promise<Record<string, { status: string; ptyActive: boolean; startupStage?: string }>> {
   const response = await fetchApi('/sessions/batch-status', {}, BatchSessionStatusResponseSchema);
   return response.statuses;
 }
@@ -124,76 +125,6 @@ export async function getBatchSessionStatus(): Promise<Record<string, { status: 
 // Get container startup status (polling endpoint)
 export async function getStartupStatus(sessionId: string): Promise<StartupStatusResponse> {
   return fetchApi(`/container/startup-status?sessionId=${sessionId}`, {}, StartupStatusResponseSchema);
-}
-
-// Map startup status response to InitProgress format with real-time details
-function mapStartupDetailsToProgress(status: StartupStatusResponse): InitProgress {
-  const details: { key: string; value: string; status?: 'ok' | 'error' | 'pending' }[] = [];
-  if (status.details) {
-    // Container status - dynamic
-    const containerStatus = status.details.containerStatus || 'stopped';
-    details.push({
-      key: 'Container',
-      value: containerStatus === 'running' || containerStatus === 'healthy' ? 'Running' : containerStatus,
-      status: containerStatus === 'running' || containerStatus === 'healthy' ? 'ok' : 'pending',
-    });
-
-    // Sync status - dynamic
-    const syncStatus = status.details.syncStatus || 'pending';
-    let syncValue = syncStatus;
-    let syncStatusIndicator: 'ok' | 'error' | 'pending' = 'pending';
-    if (syncStatus === 'success') {
-      syncValue = 'Synced';
-      syncStatusIndicator = 'ok';
-    } else if (syncStatus === 'failed') {
-      syncValue = status.details.syncError || 'Failed';
-      syncStatusIndicator = 'error';
-    } else if (syncStatus === 'syncing') {
-      syncValue = 'Syncing...';
-      syncStatusIndicator = 'pending';
-    } else if (syncStatus === 'skipped') {
-      syncValue = 'Skipped';
-      syncStatusIndicator = 'ok';
-    } else {
-      syncValue = 'Pending';
-      syncStatusIndicator = 'pending';
-    }
-    details.push({
-      key: 'Sync',
-      value: syncValue,
-      status: syncStatusIndicator,
-    });
-
-    // Terminal status - dynamic
-    const terminalServerOk = status.details.terminalServerOk;
-    const terminalPid = status.details.terminalPid;
-    let terminalValue = 'Starting';
-    let terminalStatus: 'ok' | 'error' | 'pending' = 'pending';
-    if (terminalServerOk) {
-      terminalValue = terminalPid ? `Ready (PID ${terminalPid})` : 'Ready';
-      terminalStatus = 'ok';
-    } else if (status.details.healthServerOk) {
-      terminalValue = 'Starting...';
-      terminalStatus = 'pending';
-    }
-    details.push({
-      key: 'Terminal',
-      value: terminalValue,
-      status: terminalStatus,
-    });
-
-    // User email
-    if (status.details.email) {
-      details.push({ key: 'User', value: status.details.email, status: 'ok' });
-    }
-  }
-
-  return {
-    stage: status.stage,
-    progress: status.progress,
-    message: status.message,
-    details,
-  };
 }
 
 // Start session with polling progress (replaces SSE)
@@ -378,10 +309,10 @@ export function getTerminalWebSocketUrl(sessionId: string, terminalId: string = 
   if (isNaN(id) || id < 1 || id > MAX_TERMINALS_PER_SESSION) {
     throw new Error(`Invalid terminalId "${terminalId}": must be between 1 and ${MAX_TERMINALS_PER_SESSION}`);
   }
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = window.location.host;
   // Compound session ID: sessionId-terminalId (e.g., "abc123-1", "abc123-2")
   // Backend treats each as a unique PTY session within the same container
   const compoundSessionId = `${sessionId}-${terminalId}`;
-  return `${protocol}//${host}/api/terminal/${compoundSessionId}/ws`;
+  const wsUrl = new URL(`/api/terminal/${compoundSessionId}/ws`, window.location.href);
+  wsUrl.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return wsUrl.toString();
 }

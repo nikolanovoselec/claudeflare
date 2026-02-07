@@ -17,41 +17,19 @@ import { containerInternalCB } from '../../lib/circuit-breakers';
 export const containerLogger = createLogger('container-routes');
 
 /**
- * Fetch with timeout wrapper for container operations
- * Returns null if request times out instead of hanging indefinitely
- * Real (non-timeout) errors are re-thrown to the caller
- */
-/**
- * Races a fetch against a timeout. Note: this is a "soft timeout" — the underlying
- * fetch continues in the background until the isolate terminates. The AbortSignal
- * is not passed to the fetch function because the caller signature doesn't support it.
+ * Races a fetch against a timeout. Returns null on timeout.
+ *
+ * Note (AD15): The underlying fetch continues in the background until
+ * the isolate terminates — AbortSignal is not passed because the
+ * caller signature (DurableObjectStub.fetch) doesn't support it.
  * In Cloudflare Workers, isolate termination handles cleanup.
  */
 export async function fetchWithTimeout(
   fetchFn: () => Promise<Response>,
   timeoutMs: number = CONTAINER_FETCH_TIMEOUT
 ): Promise<Response | null> {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const response = await Promise.race([
-      fetchFn(),
-      new Promise<never>((_, reject) => {
-        controller.signal.addEventListener('abort', () => {
-          reject(new DOMException('The operation was aborted.', 'AbortError'));
-        });
-      }),
-    ]);
-    return response;
-  } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      return null; // Timeout — return null as before
-    }
-    throw error; // Real errors should propagate
-  } finally {
-    clearTimeout(timeoutId);
-  }
+  const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs));
+  return Promise.race([fetchFn(), timeout]);
 }
 
 /**

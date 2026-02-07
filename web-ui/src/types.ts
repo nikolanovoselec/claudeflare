@@ -8,6 +8,7 @@ export interface Session {
   name: string;
   createdAt: string;
   lastAccessedAt: string;
+  status?: 'stopped' | 'running';
 }
 
 /**
@@ -21,7 +22,7 @@ export interface Session {
  */
 export type SessionStatus = 'stopped' | 'initializing' | 'running' | 'error';
 
-export interface SessionWithStatus extends Session {
+export interface SessionWithStatus extends Omit<Session, 'status'> {
   status: SessionStatus;
 }
 
@@ -77,11 +78,11 @@ export interface StartupStatusResponse {
   error?: string;
 }
 
+// Note: Backend Session includes `userId` which is not exposed to the frontend
 export interface UserInfo {
   email: string;
   authenticated: boolean;
   bucketName: string;
-  bucketCreated?: boolean;
   role?: 'admin' | 'user';
 }
 

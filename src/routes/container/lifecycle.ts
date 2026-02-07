@@ -4,7 +4,7 @@
  */
 import { Hono } from 'hono';
 import { getContainer } from '@cloudflare/containers';
-import type { Env } from '../../types';
+import type { Env, Session } from '../../types';
 import { createBucketIfNotExists } from '../../lib/r2-admin';
 import { getR2Config } from '../../lib/r2-config';
 import { getContainerContext, getSessionIdFromRequest, getContainerId } from '../../lib/container-helpers';
@@ -40,8 +40,8 @@ app.post('/start', containerStartRateLimiter, async (c) => {
 
     // Verify session exists in KV before creating a container DO
     const sessionKey = getSessionKey(bucketName, sessionId);
-    const session = await c.env.KV.get(sessionKey);
-    if (!session) {
+    const sessionData = await c.env.KV.get<Session>(sessionKey, 'json');
+    if (!sessionData) {
       throw new NotFoundError('Session', sessionId);
     }
 
@@ -111,6 +111,12 @@ app.post('/start', containerStartRateLimiter, async (c) => {
       } catch (error) {
         reqLogger.error('Failed to destroy container', toError(error));
       }
+    }
+
+    // Mark session as running in KV so batch-status can include it
+    if (sessionData.status !== 'running') {
+      sessionData.status = 'running';
+      await c.env.KV.put(sessionKey, JSON.stringify(sessionData));
     }
 
     // If container is already running/healthy with correct bucket, return immediately

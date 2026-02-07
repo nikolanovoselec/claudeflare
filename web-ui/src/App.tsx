@@ -2,7 +2,7 @@ import { Component, onMount, onCleanup, createSignal, Show, type JSX } from 'sol
 import { Router, Route, Navigate, useNavigate } from '@solidjs/router';
 import Layout from './components/Layout';
 import SetupWizard from './components/setup/SetupWizard';
-import { getUser } from './api/client';
+import { getUser, getSetupStatus } from './api/client';
 import { sessionStore } from './stores/session';
 import { terminalStore } from './stores/terminal';
 import './styles/app.css';
@@ -10,9 +10,8 @@ import './styles/app.css';
 // Check setup status from API
 async function checkSetupStatus(): Promise<boolean> {
   try {
-    const res = await fetch('/api/setup/status');
-    const data = await res.json();
-    return data.configured === true;
+    const status = await getSetupStatus();
+    return status.configured;
   } catch (e) {
     console.error('Failed to check setup status:', e);
     // If status check fails, assume setup is needed

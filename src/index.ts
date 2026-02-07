@@ -11,9 +11,8 @@ import setupRoutes from './routes/setup/index';
 import adminRoutes from './routes/admin';
 import { REQUEST_ID_LENGTH, REQUEST_ID_PATTERN, CORS_MAX_AGE_SECONDS } from './lib/constants';
 import { AppError } from './lib/error-types';
-import { resetCorsOriginsCache, isAllowedOrigin } from './lib/cors-cache';
-import { resetAuthConfigCache } from './lib/access';
-import { resetJWKSCache } from './lib/jwt';
+import { isAllowedOrigin } from './lib/cors-cache';
+import { resetSetupCache as resetSetupCacheShared } from './lib/cache-reset';
 import { createLogger } from './lib/logger';
 
 // Type for app context with request ID
@@ -41,6 +40,7 @@ app.use('*', async (c, next) => {
   const duration = Date.now() - start;
 
   c.header('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
+  c.header('X-Content-Type-Options', 'nosniff');
 
   logger.info('Request completed', {
     requestId,
@@ -131,13 +131,15 @@ let setupComplete: boolean | null = null;
 /**
  * Reset the in-memory setup cache. Call this when setup completes
  * so the next request re-checks KV.
+ *
+ * Resets the local setupComplete flag plus all shared caches
+ * (CORS origins, auth config, JWKS) via the centralized helper.
  */
 export function resetSetupCache() {
   setupComplete = null;
-  resetCorsOriginsCache();
-  resetAuthConfigCache();
-  resetJWKSCache();
+  resetSetupCacheShared();
 }
+
 
 // ============================================================================
 // Global Error Handler

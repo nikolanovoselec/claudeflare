@@ -151,61 +151,6 @@
   height: 28px;
 }
 
-.icon-btn-lg {
-  width: 44px;
-  height: 44px;
-}
-
-/* Icon button with border */
-.icon-btn-bordered {
-  background: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border-default);
-}
-
-.icon-btn-bordered:hover:not(:disabled) {
-  border-color: var(--color-text-muted);
-}
-
-/* ==========================================================================
-   Form Inputs
-   ========================================================================== */
-
-.form-input {
-  width: 100%;
-  padding: 0.625rem 0.75rem;
-  font-family: var(--font-sans);
-  font-size: var(--text-base);
-  color: var(--color-text-primary);
-  background: var(--color-bg-tertiary);
-  border: 1px solid var(--color-border-default);
-  border-radius: var(--radius-md);
-  outline: none;
-  transition: all var(--transition-fast);
-}
-
-.form-input::placeholder {
-  color: var(--color-text-muted);
-}
-
-.form-input:focus {
-  border-color: var(--color-accent);
-  box-shadow: 0 0 0 3px var(--color-accent-muted);
-}
-
-.form-input:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.form-input-error {
-  border-color: var(--color-error);
-}
-
-.form-input-error:focus {
-  border-color: var(--color-error);
-  box-shadow: 0 0 0 3px var(--color-error-muted);
-}
-
 /* ==========================================================================
    Form Rows
    ========================================================================== */
@@ -220,29 +165,6 @@
 .form-row label {
   font-size: var(--text-sm);
   color: var(--color-text-secondary);
-}
-
-.form-group {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  width: 100%;
-}
-
-.form-label {
-  font-size: var(--text-sm);
-  font-weight: var(--font-medium);
-  color: var(--color-text-secondary);
-}
-
-.form-hint {
-  font-size: var(--text-xs);
-  color: var(--color-text-muted);
-}
-
-.form-error {
-  font-size: var(--text-xs);
-  color: var(--color-error);
 }
 
 /* ==========================================================================
@@ -352,54 +274,6 @@
   background: var(--color-text-muted);
 }
 
-.status-dot-sm {
-  width: 6px;
-  height: 6px;
-}
-
-.status-dot-success {
-  background: var(--color-success);
-}
-
-.status-dot-warning {
-  background: var(--color-warning);
-}
-
-.status-dot-error {
-  background: var(--color-error);
-}
-
-.status-dot-info {
-  background: var(--color-info);
-}
-
-.status-dot-pulsing {
-  animation: pulse 2s ease-in-out infinite;
-}
-
-/* ==========================================================================
-   Badges
-   ========================================================================== */
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  padding: 0.125rem 0.375rem;
-  font-size: var(--text-xs);
-  font-weight: var(--font-semibold);
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  border-radius: var(--radius-sm);
-  background: var(--color-bg-tertiary);
-  color: var(--color-text-muted);
-}
-
-.badge-success {
-  background: var(--color-success-muted);
-  color: var(--color-success);
-}
-
 /* ==========================================================================
    Empty States
    ========================================================================== */
@@ -433,69 +307,11 @@
 }
 
 /* ==========================================================================
-   Dividers
-   ========================================================================== */
-
-.divider {
-  height: 1px;
-  background: var(--color-border-subtle);
-  margin: var(--space-4) 0;
-}
-
-/* ==========================================================================
-   Scrollbar Styling (for containers)
-   ========================================================================== */
-
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-}
-
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: var(--color-border-subtle);
-  border-radius: var(--radius-full);
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: var(--color-border-default);
-}
-
-/* ==========================================================================
-   Close Button (for modals/panels)
-   ========================================================================== */
-
-.close-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: none;
-  border-radius: var(--radius-md);
-  background: transparent;
-  color: var(--color-text-secondary);
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.close-btn:hover {
-  background: var(--color-bg-muted);
-  color: var(--color-text-primary);
-}
-
-/* ==========================================================================
    Reduced Motion
    ========================================================================== */
 
 @media (prefers-reduced-motion: reduce) {
   .progress-bar-animated .progress-bar-fill {
-    animation: none;
-  }
-
-  .status-dot-pulsing {
     animation: none;
   }
 }

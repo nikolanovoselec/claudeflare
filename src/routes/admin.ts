@@ -3,13 +3,17 @@
  * Handles admin-only endpoints like destroy-by-id
  */
 import { Hono } from 'hono';
+import { z } from 'zod';
 import type { Env } from '../types';
-import { isAdminRequest } from '../lib/type-guards';
 import { DO_ID_PATTERN } from '../lib/constants';
 import { AppError, AuthError, ValidationError, toError, toErrorMessage } from '../lib/error-types';
 import { authMiddleware, requireAdmin, type AuthVariables } from '../middleware/auth';
 import { createRateLimiter } from '../middleware/rate-limit';
 import { createLogger } from '../lib/logger';
+
+const DestroyByIdSchema = z.object({
+  doId: z.string().regex(DO_ID_PATTERN, 'Invalid DO ID format - must be 64 hex characters'),
+});
 
 const logger = createLogger('admin');
 
@@ -40,14 +44,11 @@ app.post('/destroy-by-id', requireAdmin, adminRateLimiter, async (c) => {
 
   try {
     const data = await c.req.json();
-    if (!isAdminRequest(data)) {
-      throw new ValidationError('Invalid request - missing doId');
+    const parsed = DestroyByIdSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new ValidationError(parsed.error.errors[0].message);
     }
-    const { doId } = data;
-
-    if (!DO_ID_PATTERN.test(doId)) {
-      throw new ValidationError('Invalid DO ID format - must be 64 hex characters');
-    }
+    const { doId } = parsed.data;
 
     // CRITICAL: Use idFromString to get the ACTUAL existing DO by its hex ID
     // DO NOT use idFromName - it creates a NEW DO with the hex as its name!
