@@ -329,12 +329,14 @@ describe('Session Store', () => {
       expect(session?.status).toBe('stopped');
     });
 
-    it('should clean up terminal state', async () => {
+    it('should preserve terminal state (dispose without cleanup)', async () => {
       mockStopSession.mockResolvedValue(undefined);
 
       await sessionStore.stopSession('session-1');
 
-      expect(sessionStore.getTerminalsForSession('session-1')).toBeNull();
+      // stopSession disposes WebSockets/xterm but preserves tab structure
+      // so tiling layout survives restart. Only deleteSession wipes terminal state.
+      expect(sessionStore.getTerminalsForSession('session-1')).not.toBeNull();
     });
 
     it('should clear initialization state if in progress', async () => {

@@ -108,7 +108,7 @@ app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISO
 // Setup routes (public - no auth required)
 app.route('/api/setup', setupRoutes);
 
-// Admin routes (requires ADMIN_SECRET)
+// Admin routes (requires admin role via CF Access)
 app.route('/api/admin', adminRoutes);
 
 // API routes

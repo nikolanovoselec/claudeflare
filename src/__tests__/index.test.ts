@@ -37,7 +37,6 @@ function createMockEnv(): { env: Env; mockKV: ReturnType<typeof createMockKV>; m
   const env = {
     KV: mockKV as unknown as KVNamespace,
     ASSETS: mockAssets as unknown as Fetcher,
-    ADMIN_SECRET: 'test-admin-secret',
     DEV_MODE: 'false',
   } as Env;
 

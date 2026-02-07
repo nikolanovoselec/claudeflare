@@ -421,7 +421,7 @@ app.use('*', async (c, next) => {
 });
 ```
 
-**Admin Routes:** Use `ADMIN_SECRET` authentication instead of DEV_MODE, allowing production access with proper authorization.
+**Admin Routes:** Use CF Access `authMiddleware` + `requireAdmin` for authentication, allowing production access with role-based authorization.
 
 ### 2.14 Session Route Architecture
 
@@ -1081,8 +1081,7 @@ Error codes:
 |--------|----------|-------------|
 | GET | `/api/setup/status` | Check setup status (`{ configured, tokenDetected }`) |
 | GET | `/api/setup/detect-token` | Auto-detect token from env |
-| POST | `/api/setup/configure` | Run configuration (`{ customDomain, allowedUsers, allowedOrigins? }`) |
-| POST | `/api/setup/reset` | Reset setup state (requires ADMIN_SECRET) |
+| POST | `/api/setup/configure` | Run configuration (`{ customDomain, allowedUsers, allowedOrigins? }`). After initial setup, requires admin role via CF Access. |
 | POST | `/api/setup/reset-for-tests` | Reset for E2E tests (DEV_MODE only) |
 | POST | `/api/setup/restore-for-tests` | Restore after E2E tests (DEV_MODE only) |
 
@@ -1090,10 +1089,9 @@ Error codes:
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/admin/destroy-by-id` | Kill zombie container by raw DO ID (requires ADMIN_SECRET) |
+| POST | `/api/admin/destroy-by-id` | Kill zombie container by raw DO ID (requires admin role via CF Access) |
 
-**Admin Endpoint Parameters:**
-- `secret` - Must match `ADMIN_SECRET` environment variable (query param or Bearer token)
+**Admin Endpoint Authentication:** Requires CF Access authentication with admin role (`authMiddleware` + `requireAdmin`).
 - Body: `{ "doId": "<64-char-hex-do-id>" }`
 
 **Use case:** When a container becomes a zombie (alarm keeps restarting it), use this endpoint to forcibly destroy it by its DO ID visible in the Cloudflare dashboard.
@@ -1168,7 +1166,6 @@ curl https://claudeflare.your-subdomain.workers.dev/api/container/startup-status
 | `R2_ACCOUNT_ID` | R2 endpoint construction | Dynamic (env var with KV fallback via r2-config.ts) |
 | `R2_ENDPOINT` | S3-compatible endpoint | Dynamic (env var with KV fallback via r2-config.ts) |
 | `ALLOWED_ORIGINS` | CORS allowed origins (comma-separated patterns) | wrangler.toml |
-| `ADMIN_SECRET` | Admin endpoint authentication | Wrangler secret |
 | `ENCRYPTION_KEY` | AES-256 key for encrypting credentials at rest | Wrangler secret (optional) |
 
 ### Container Environment
@@ -1819,7 +1816,7 @@ Each permission is actively used -- none are optional.
 | Permission | Access | Why |
 |-----------|--------|-----|
 | Account Settings | Read | Discovers account ID and verifies the token during setup |
-| Workers Scripts | Edit | Sets worker secrets (R2 credentials, admin secret) during setup. Used by `wrangler deploy` for CI/CD |
+| Workers Scripts | Edit | Sets worker secrets (R2 credentials) during setup. Used by `wrangler deploy` for CI/CD |
 | Workers KV Storage | Edit | Creates the KV namespace (`claudeflare-kv`) during deployment |
 | Workers R2 Storage | Edit | Creates per-user R2 buckets on container start, deletes them on user removal |
 | Containers | Edit | Full container lifecycle -- start, stop, destroy, health checks |
@@ -1841,7 +1838,7 @@ Zone permissions are only used during setup when configuring a custom domain. Ac
 
 ### Secrets
 
-All secrets are set automatically by the deploy workflow (`CLOUDFLARE_API_TOKEN`) and the setup wizard (`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `ADMIN_SECRET`).
+All secrets are set automatically by the deploy workflow (`CLOUDFLARE_API_TOKEN`) and the setup wizard (`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`).
 
 The only optional manual secret is `ENCRYPTION_KEY` (AES-256 key for encrypting credentials at rest).
 
@@ -1980,11 +1977,11 @@ override async destroy(): Promise<void> {
 }
 ```
 
-**Recovery:** Use admin endpoint to kill zombie:
+**Recovery:** Use admin endpoint to kill zombie (requires CF Access admin auth):
 ```bash
-curl -X POST "/api/admin/destroy-by-id" \
-  -H "Authorization: Bearer ADMIN_SECRET" \
+curl -X POST "https://claude.example.com/api/admin/destroy-by-id" \
   -H "Content-Type: application/json" \
+  -H "Cookie: CF_Authorization=<your-cf-access-jwt>" \
   -d '{"doId":"<DO_ID_FROM_DASHBOARD>"}'
 ```
 
@@ -2006,7 +2003,7 @@ function connect() {
 
 ### Secrets Lost After Worker Deletion
 
-**Symptom:** After running `wrangler delete`, worker redeploys with missing secrets (R2 credentials, admin secret, etc.).
+**Symptom:** After running `wrangler delete`, worker redeploys with missing secrets (R2 credentials, etc.).
 
 **Cause:** `wrangler delete` nukes the entire worker including all stored secrets. They are NOT restored on redeployment.
 
@@ -2015,7 +2012,6 @@ function connect() {
 wrangler secret put CLOUDFLARE_API_TOKEN
 wrangler secret put R2_ACCESS_KEY_ID
 wrangler secret put R2_SECRET_ACCESS_KEY
-wrangler secret put ADMIN_SECRET
 ```
 
 Verify with:
@@ -2109,7 +2105,6 @@ wrangler secret list
 # CLOUDFLARE_API_TOKEN
 # R2_ACCESS_KEY_ID
 # R2_SECRET_ACCESS_KEY
-# ADMIN_SECRET
 ```
 
 **If missing after `wrangler delete`:**
@@ -2119,7 +2114,6 @@ wrangler secret put CLOUDFLARE_API_TOKEN
 
 wrangler secret put R2_ACCESS_KEY_ID
 wrangler secret put R2_SECRET_ACCESS_KEY
-wrangler secret put ADMIN_SECRET
 ```
 
 ### Monitor with wrangler tail

@@ -33,9 +33,6 @@ export interface Env {
   // Cloudflare API token for R2 bucket management
   CLOUDFLARE_API_TOKEN: string;
 
-  // Admin secret for privileged endpoints (destroy-by-id)
-  ADMIN_SECRET?: string;
-
   // Allowed CORS origins (comma-separated patterns, e.g., ".workers.dev,.example.com")
   ALLOWED_ORIGINS?: string;
 

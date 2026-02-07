@@ -4,6 +4,7 @@ import {
   mdiPaletteOutline,
   mdiConsole,
   mdiAccountGroupOutline,
+  mdiCogOutline,
 } from '@mdi/js';
 import Icon from './Icon';
 import Button from './ui/Button';
@@ -401,6 +402,30 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
               </div>
             </Show>
           </section>
+
+          {/* Administration Section */}
+          <Show when={isAdmin()}>
+            <section class="settings-section settings-section-4">
+              <div class="settings-section-header">
+                <Icon path={mdiCogOutline} size={16} />
+                <h3 class="settings-section-title">Administration</h3>
+              </div>
+              <div class="setting-row" style="flex-direction: column; align-items: stretch; gap: 8px">
+                <span class="settings-hint">
+                  Re-run the setup wizard to reconfigure domain, users, or secrets
+                </span>
+                <div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => { window.location.href = '/setup'; }}
+                  >
+                    Open Setup
+                  </Button>
+                </div>
+              </div>
+            </section>
+          </Show>
 
         </div>
       </aside>

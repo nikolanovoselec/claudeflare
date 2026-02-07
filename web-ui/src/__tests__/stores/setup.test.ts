@@ -81,10 +81,6 @@ describe('Setup Store', () => {
       expect(setupStore.customDomainUrl).toBeNull();
     });
 
-    it('should have no adminSecret', () => {
-      expect(setupStore.adminSecret).toBeNull();
-    });
-
     it('should have no accountId', () => {
       expect(setupStore.accountId).toBeNull();
     });
@@ -445,7 +441,6 @@ describe('Setup Store', () => {
             success: true,
             steps: [{ step: 'Create R2', status: 'success' }],
             customDomainUrl: 'https://my-app.example.com',
-            adminSecret: 'secret-123',
             accountId: 'acc-456',
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } }
@@ -457,7 +452,6 @@ describe('Setup Store', () => {
       expect(result).toBe(true);
       expect(setupStore.setupComplete).toBe(true);
       expect(setupStore.customDomainUrl).toBe('https://my-app.example.com');
-      expect(setupStore.adminSecret).toBe('secret-123');
       expect(setupStore.accountId).toBe('acc-456');
     });
 
@@ -531,7 +525,6 @@ describe('Setup Store', () => {
           JSON.stringify({
             success: true,
             steps: [],
-            adminSecret: 'secret-123',
             accountId: 'acc-456',
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } }
@@ -618,7 +611,6 @@ describe('Setup Store', () => {
       expect(setupStore.configureError).toBeNull();
       expect(setupStore.setupComplete).toBe(false);
       expect(setupStore.customDomainUrl).toBeNull();
-      expect(setupStore.adminSecret).toBeNull();
       expect(setupStore.accountId).toBeNull();
     });
   });

@@ -1,9 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from '../../types';
 import { AuthError, toError } from '../../lib/error-types';
-import { resetAuthConfigCache } from '../../lib/access';
-import { verifyAdminSecret } from '../../lib/admin-auth';
-import { listAllKvKeys } from '../../lib/kv-keys';
 import { CF_API_BASE, logger } from './shared';
 
 const handlers = new Hono<{ Bindings: Env }>();
@@ -75,31 +72,6 @@ handlers.get('/detect-token', async (c) => {
 });
 
 /**
- * POST /api/setup/reset
- * Reset setup state (admin only, requires existing ADMIN_SECRET)
- */
-handlers.post('/reset', async (c) => {
-  verifyAdminSecret(c.env, c.req.header('Authorization'));
-
-  // Clear setup state
-  await c.env.KV.delete('setup:complete');
-  await c.env.KV.delete('setup:account_id');
-  await c.env.KV.delete('setup:completed_at');
-  await c.env.KV.delete('setup:custom_domain');
-  await c.env.KV.delete('setup:r2_endpoint');
-  await c.env.KV.delete('setup:auth_domain');
-  await c.env.KV.delete('setup:access_aud');
-
-  // Clear all user entries
-  const userKeys = await listAllKvKeys(c.env.KV, 'user:');
-  await Promise.all(userKeys.map(key => c.env.KV.delete(key.name)));
-
-  resetAuthConfigCache();
-
-  return c.json({ success: true, message: 'Setup state reset' });
-});
-
-/**
  * POST /api/setup/reset-for-tests
  * Test-only reset endpoint (DEV_MODE required)
  * Used by E2E tests to reset setup state before test runs
@@ -108,7 +80,6 @@ handlers.post('/reset-for-tests', async (c) => {
   if (c.env.DEV_MODE !== 'true') {
     throw new AuthError('Not available in production');
   }
-  verifyAdminSecret(c.env, c.req.header('Authorization'));
 
   // Clear setup state
   await c.env.KV.delete('setup:complete');
@@ -126,7 +97,6 @@ handlers.post('/restore-for-tests', async (c) => {
   if (c.env.DEV_MODE !== 'true') {
     throw new AuthError('Not available in production');
   }
-  verifyAdminSecret(c.env, c.req.header('Authorization'));
 
   // Restore setup state
   await c.env.KV.put('setup:complete', 'true');

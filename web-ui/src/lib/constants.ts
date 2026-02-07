@@ -32,14 +32,17 @@ export const MAX_RECONNECT_ATTEMPTS = 5;
 /** Delay between reconnection attempts (ms) */
 export const RECONNECT_DELAY_MS = 2000;
 
-/**
- * Terminal refresh delay after WebSocket connection (ms)
- * Keep in sync with backend TERMINAL_REFRESH_DELAY_MS in src/lib/constants.ts
- */
-export const TERMINAL_REFRESH_DELAY_MS = 150;
-
 /** Secondary refresh delay for cursor position fix (ms) */
 export const TERMINAL_SECONDARY_REFRESH_DELAY_MS = 100;
+
+/** Idle threshold: if no data received for this long, buffer replay is considered done (ms) */
+export const BUFFER_REPLAY_IDLE_THRESHOLD_MS = 100;
+
+/** Maximum time to wait for buffer replay to finish before forcing refresh (ms) */
+export const BUFFER_REPLAY_MAX_WAIT_MS = 2000;
+
+/** Polling interval for checking buffer replay idle state (ms) */
+export const BUFFER_REPLAY_CHECK_INTERVAL_MS = 50;
 
 // =============================================================================
 // UI Timing

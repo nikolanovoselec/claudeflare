@@ -99,6 +99,10 @@
   animation: fadeInUp 200ms ease-out 150ms backwards;
 }
 
+.settings-panel.open .settings-section-4 {
+  animation: fadeInUp 200ms ease-out 200ms backwards;
+}
+
 /* Error message */
 .settings-error {
   padding: var(--space-2) 0;
@@ -300,7 +304,8 @@
 
   .settings-panel.open .settings-section-1,
   .settings-panel.open .settings-section-2,
-  .settings-panel.open .settings-section-3 {
+  .settings-panel.open .settings-section-3,
+  .settings-panel.open .settings-section-4 {
     animation: none;
   }
 }

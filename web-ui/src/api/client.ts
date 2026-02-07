@@ -326,6 +326,17 @@ export async function removeUser(email: string): Promise<void> {
 }
 
 // Setup API
+const SetupStatusResponseSchema = z.object({
+  configured: z.boolean(),
+  tokenDetected: z.boolean(),
+});
+
+export type SetupStatusResponse = z.infer<typeof SetupStatusResponseSchema>;
+
+export async function getSetupStatus(): Promise<SetupStatusResponse> {
+  return fetchApi('/setup/status', {}, SetupStatusResponseSchema);
+}
+
 const DetectTokenResponseSchema = z.object({
   detected: z.boolean(),
   valid: z.boolean().optional(),
@@ -344,7 +355,6 @@ const ConfigureResponseSchema = z.object({
   steps: z.array(z.object({ step: z.string(), status: z.string(), error: z.string().optional() })).optional(),
   error: z.string().optional(),
   customDomainUrl: z.string().optional(),
-  adminSecret: z.string().optional(),
   accountId: z.string().optional(),
 });
 

@@ -5,7 +5,6 @@
 # CLOUDFLARE_API_TOKEN=your-api-token
 # R2_ACCESS_KEY_ID=your-r2-access-key
 # R2_SECRET_ACCESS_KEY=your-r2-secret-key
-# ADMIN_SECRET=your-admin-secret
 
 # Optional: Override dynamic resolution (normally resolved from KV)
 # R2_ACCOUNT_ID=your-account-id

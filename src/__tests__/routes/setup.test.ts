@@ -114,7 +114,6 @@ describe('Setup Routes', () => {
     app.use('*', async (c, next) => {
       c.env = {
         KV: mockKV as unknown as KVNamespace,
-        ADMIN_SECRET: 'test-admin-secret',
         DEV_MODE: 'false',
         CLOUDFLARE_API_TOKEN: TEST_TOKEN,
         ...envOverrides,
@@ -330,7 +329,6 @@ describe('Setup Routes', () => {
       const body = await res.json() as {
         success: boolean;
         steps: Array<{ step: string; status: string }>;
-        adminSecret: string;
       };
       expect(body.success).toBe(true);
       expect(body.steps).toContainEqual(
@@ -345,10 +343,9 @@ describe('Setup Routes', () => {
       expect(body.steps).toContainEqual(
         expect.objectContaining({ step: 'finalize', status: 'success' })
       );
-      expect(body.adminSecret).toBeDefined();
     });
 
-    it('sets only 3 secrets (not CLOUDFLARE_API_TOKEN)', async () => {
+    it('sets only 2 secrets (R2 credentials, not CLOUDFLARE_API_TOKEN or ADMIN_SECRET)', async () => {
       const app = createTestApp();
       mockFullSuccessFlow();
 
@@ -365,7 +362,7 @@ describe('Setup Routes', () => {
           call[0].includes('/secrets') &&
           (call[1] as RequestInit)?.method === 'PUT'
       );
-      expect(secretCalls).toHaveLength(3);
+      expect(secretCalls).toHaveLength(2);
 
       // Extract secret names
       const secretNames = secretCalls.map(call => {
@@ -374,7 +371,7 @@ describe('Setup Routes', () => {
       });
       expect(secretNames).toContain('R2_ACCESS_KEY_ID');
       expect(secretNames).toContain('R2_SECRET_ACCESS_KEY');
-      expect(secretNames).toContain('ADMIN_SECRET');
+      expect(secretNames).not.toContain('ADMIN_SECRET');
       expect(secretNames).not.toContain('CLOUDFLARE_API_TOKEN');
     });
 
@@ -807,13 +804,11 @@ describe('Setup Routes', () => {
       const body = await res.json() as {
         success: boolean;
         steps: Array<{ step: string; status: string }>;
-        adminSecret: string;
       };
       expect(body.success).toBe(true);
       expect(body.steps).toContainEqual(
         expect.objectContaining({ step: 'set_secrets', status: 'success' })
       );
-      expect(body.adminSecret).toBeDefined();
 
       // Verify the versions list and deployment calls were made
       const mockFetch = globalThis.fetch as ReturnType<typeof createUrlMockFetch>;
@@ -1279,97 +1274,6 @@ describe('Setup Routes', () => {
     });
   });
 
-  describe('POST /api/setup/reset', () => {
-    it('returns 401 when no auth header provided', async () => {
-      const app = createTestApp();
-
-      const res = await app.request('/api/setup/reset', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-      });
-
-      expect(res.status).toBe(401);
-    });
-
-    it('returns 401 when wrong admin secret provided', async () => {
-      const app = createTestApp();
-
-      const res = await app.request('/api/setup/reset', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer wrong-secret',
-        },
-      });
-
-      expect(res.status).toBe(401);
-    });
-
-    it('clears setup state with correct admin secret', async () => {
-      const app = createTestApp();
-
-      const res = await app.request('/api/setup/reset', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer test-admin-secret',
-        },
-      });
-
-      expect(res.status).toBe(200);
-      const body = await res.json() as { success: boolean; message: string };
-      expect(body.success).toBe(true);
-
-      expect(mockKV.delete).toHaveBeenCalledWith('setup:complete');
-      expect(mockKV.delete).toHaveBeenCalledWith('setup:account_id');
-      expect(mockKV.delete).toHaveBeenCalledWith('setup:completed_at');
-      expect(mockKV.delete).toHaveBeenCalledWith('setup:custom_domain');
-      expect(mockKV.delete).toHaveBeenCalledWith('setup:r2_endpoint');
-    });
-
-    it('clears all user:* entries from KV', async () => {
-      const app = createTestApp();
-
-      // Pre-populate user entries in KV
-      mockKV._store.set('user:admin@example.com', JSON.stringify({ addedBy: 'setup', addedAt: '2024-01-01', role: 'admin' }));
-      mockKV._store.set('user:user@example.com', JSON.stringify({ addedBy: 'setup', addedAt: '2024-01-01', role: 'user' }));
-
-      const res = await app.request('/api/setup/reset', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer test-admin-secret',
-        },
-      });
-
-      expect(res.status).toBe(200);
-      // Verify both user entries were deleted
-      expect(mockKV.delete).toHaveBeenCalledWith('user:admin@example.com');
-      expect(mockKV.delete).toHaveBeenCalledWith('user:user@example.com');
-    });
-
-    it('clears auth_domain and access_aud from KV (resetAuthConfigCache side-effect)', async () => {
-      const app = createTestApp();
-
-      // Pre-populate auth config in KV
-      mockKV._store.set('setup:auth_domain', 'myteam.cloudflareaccess.com');
-      mockKV._store.set('setup:access_aud', 'test-aud-tag');
-
-      const res = await app.request('/api/setup/reset', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: 'Bearer test-admin-secret',
-        },
-      });
-
-      expect(res.status).toBe(200);
-      // Verify auth-related KV keys were deleted
-      expect(mockKV.delete).toHaveBeenCalledWith('setup:auth_domain');
-      expect(mockKV.delete).toHaveBeenCalledWith('setup:access_aud');
-    });
-  });
-
   describe('POST /api/setup/reset-for-tests', () => {
     it('returns 401 when DEV_MODE is not true', async () => {
       const app = createTestApp({ DEV_MODE: 'false' });
@@ -1381,28 +1285,17 @@ describe('Setup Routes', () => {
       expect(res.status).toBe(401);
     });
 
-    it('clears setup:complete when DEV_MODE is true and admin secret provided', async () => {
+    it('clears setup:complete when DEV_MODE is true', async () => {
       const app = createTestApp({ DEV_MODE: 'true' });
 
       const res = await app.request('/api/setup/reset-for-tests', {
         method: 'POST',
-        headers: { Authorization: 'Bearer test-admin-secret' },
       });
 
       expect(res.status).toBe(200);
       const body = await res.json() as { success: boolean };
       expect(body.success).toBe(true);
       expect(mockKV.delete).toHaveBeenCalledWith('setup:complete');
-    });
-
-    it('returns 401 when DEV_MODE is true but no admin secret', async () => {
-      const app = createTestApp({ DEV_MODE: 'true' });
-
-      const res = await app.request('/api/setup/reset-for-tests', {
-        method: 'POST',
-      });
-
-      expect(res.status).toBe(401);
     });
   });
 
@@ -1417,28 +1310,17 @@ describe('Setup Routes', () => {
       expect(res.status).toBe(401);
     });
 
-    it('restores setup:complete when DEV_MODE is true and admin secret provided', async () => {
+    it('restores setup:complete when DEV_MODE is true', async () => {
       const app = createTestApp({ DEV_MODE: 'true' });
 
       const res = await app.request('/api/setup/restore-for-tests', {
         method: 'POST',
-        headers: { Authorization: 'Bearer test-admin-secret' },
       });
 
       expect(res.status).toBe(200);
       const body = await res.json() as { success: boolean };
       expect(body.success).toBe(true);
       expect(mockKV.put).toHaveBeenCalledWith('setup:complete', 'true');
-    });
-
-    it('returns 401 when DEV_MODE is true but no admin secret', async () => {
-      const app = createTestApp({ DEV_MODE: 'true' });
-
-      const res = await app.request('/api/setup/restore-for-tests', {
-        method: 'POST',
-      });
-
-      expect(res.status).toBe(401);
     });
   });
 });

@@ -289,8 +289,8 @@ async function stopSession(id: string): Promise<void> {
     stopMetricsPolling(id);
     await api.stopSession(id);
     updateSessionStatus(id, 'stopped');
-    // Clean up terminal state for this session
-    cleanupTerminalsForSession(id);
+    // Disconnect terminals but preserve tab layout for restart
+    terminalStore.disposeSession(id);
   } catch (e) {
     setState('error', e instanceof Error ? e.message : 'Failed to stop session');
   }

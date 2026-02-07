@@ -7,17 +7,20 @@ import type { Env } from '../types';
 import { isAdminRequest } from '../lib/type-guards';
 import { DO_ID_PATTERN } from '../lib/constants';
 import { AppError, AuthError, ValidationError, toError, toErrorMessage } from '../lib/error-types';
-import { verifyAdminSecret } from '../lib/admin-auth';
+import { authMiddleware, requireAdmin, type AuthVariables } from '../middleware/auth';
 import { createRateLimiter } from '../middleware/rate-limit';
 import { createLogger } from '../lib/logger';
 
 const logger = createLogger('admin');
 
-const app = new Hono<{ Bindings: Env; Variables: { requestId: string } }>();
+const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
+
+// All admin routes require authenticated admin user
+app.use('*', authMiddleware);
 
 /**
  * Rate limiter for admin endpoints
- * Limits to 10 requests per minute (keyed by IP since admin routes don't use auth middleware)
+ * Limits to 10 requests per minute per user
  */
 const adminRateLimiter = createRateLimiter({
   windowMs: 60 * 1000,
@@ -32,12 +35,10 @@ const adminRateLimiter = createRateLimiter({
  * CRITICAL: Uses idFromString to reference EXISTING DOs.
  * DO NOT use idFromName - it creates NEW DOs!
  */
-app.post('/destroy-by-id', adminRateLimiter, async (c) => {
+app.post('/destroy-by-id', requireAdmin, adminRateLimiter, async (c) => {
   const reqLogger = logger.child({ requestId: c.get('requestId') });
 
   try {
-    verifyAdminSecret(c.env, c.req.header('Authorization'));
-
     const data = await c.req.json();
     if (!isAdminRequest(data)) {
       throw new ValidationError('Invalid request - missing doId');

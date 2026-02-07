@@ -9,10 +9,12 @@ import {
   CONNECTION_RETRY_DELAY_MS,
   MAX_RECONNECT_ATTEMPTS,
   RECONNECT_DELAY_MS,
-  TERMINAL_REFRESH_DELAY_MS,
   TERMINAL_SECONDARY_REFRESH_DELAY_MS,
   CSS_TRANSITION_DELAY_MS,
   WS_CLOSE_ABNORMAL,
+  BUFFER_REPLAY_IDLE_THRESHOLD_MS,
+  BUFFER_REPLAY_MAX_WAIT_MS,
+  BUFFER_REPLAY_CHECK_INTERVAL_MS,
 } from '../lib/constants';
 
 // Helper to create compound key from sessionId and terminalId
@@ -190,6 +192,7 @@ function connect(
   reconnectAttempts.delete(key);
 
   let cancelled = false;
+  let lastDataTime = Date.now();
 
   // Attempt connection with retries
   function attemptConnection(attemptNumber: number): void {
@@ -260,13 +263,22 @@ function connect(
       // Fix: After receiving replayed buffer, refresh terminal display
       // On page refresh, PTY replays its buffer with escape sequences for old dimensions
       // This causes cursor to appear at wrong position - double refresh with delay fixes it
-      setTimeout(() => {
-        if (!cancelled) {
+      // Use data-driven idle detection instead of fixed timeout: poll until no data received
+      // for BUFFER_REPLAY_IDLE_THRESHOLD_MS (buffer replay done) or max wait exceeded
+      const startTime = Date.now();
+      const checkInterval = setInterval(() => {
+        if (cancelled) {
+          clearInterval(checkInterval);
+          return;
+        }
+        const idleTime = Date.now() - lastDataTime;
+        if (idleTime >= BUFFER_REPLAY_IDLE_THRESHOLD_MS || Date.now() - startTime >= BUFFER_REPLAY_MAX_WAIT_MS) {
+          clearInterval(checkInterval);
           terminal.scrollToBottom();
           terminal.refresh(0, terminal.rows - 1);
           // Send another resize to force PTY to update cursor position
           ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-          console.log(`[Terminal ${key}] Initial refresh completed`);
+          console.log(`[Terminal ${key}] Initial refresh completed (idle=${idleTime}ms, elapsed=${Date.now() - startTime}ms)`);
 
           // Second refresh after PTY processes resize - fixes cursor jumping to corner
           setTimeout(() => {
@@ -277,11 +289,12 @@ function connect(
             }
           }, TERMINAL_SECONDARY_REFRESH_DELAY_MS);
         }
-      }, TERMINAL_REFRESH_DELAY_MS);
+      }, BUFFER_REPLAY_CHECK_INTERVAL_MS);
     };
 
     ws.onmessage = (event) => {
       if (cancelled) return;
+      lastDataTime = Date.now();
 
       // Server sends RAW terminal data - write directly to xterm
       let messageData: string;

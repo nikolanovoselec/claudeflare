@@ -24,7 +24,6 @@ interface SetupState {
   setupComplete: boolean;
   // Result URLs
   customDomainUrl: string | null;
-  adminSecret: string | null;
   accountId: string | null;
 }
 
@@ -44,7 +43,6 @@ const initialState: SetupState = {
   configureError: null,
   setupComplete: false,
   customDomainUrl: null,
-  adminSecret: null,
   accountId: null,
 };
 
@@ -166,7 +164,6 @@ async function configure(): Promise<boolean> {
       setState({
         setupComplete: true,
         customDomainUrl: data.customDomainUrl || null,
-        adminSecret: data.adminSecret || null,
         accountId: data.accountId || null,
       });
       return true;
@@ -233,9 +230,6 @@ export const setupStore = {
   },
   get customDomainUrl() {
     return state.customDomainUrl;
-  },
-  get adminSecret() {
-    return state.adminSecret;
   },
   get accountId() {
     return state.accountId;

@@ -103,7 +103,7 @@ async function putSecret(
 const VERSION_NOT_DEPLOYED_ERR_CODE = 10215;
 
 /**
- * Step 3: Set worker secrets (R2 credentials, admin secret)
+ * Step 3: Set worker secrets (R2 credentials)
  *
  * Uses the standard secrets API (PUT .../secrets). If Cloudflare returns
  * error 10215 (latest version not deployed — common after `wrangler versions upload`),
@@ -118,23 +118,15 @@ export async function handleSetSecrets(
   r2SecretAccessKey: string,
   requestUrl: string,
   steps: SetupStep[]
-): Promise<string> {
+): Promise<void> {
   steps.push({ step: 'set_secrets', status: 'pending' });
   const stepIndex = steps.length - 1;
   // Extract worker name from the request hostname
   const workerName = getWorkerNameFromHostname(requestUrl);
 
-  // Generate admin secret
-  const adminSecretArray = new Uint8Array(32);
-  crypto.getRandomValues(adminSecretArray);
-  const adminSecret = Array.from(adminSecretArray)
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
-
   const secrets = {
     R2_ACCESS_KEY_ID: r2AccessKeyId,
     R2_SECRET_ACCESS_KEY: r2SecretAccessKey,
-    ADMIN_SECRET: adminSecret
   };
 
   try {
@@ -163,7 +155,6 @@ export async function handleSetSecrets(
       }
     }
     steps[stepIndex].status = 'success';
-    return adminSecret;
   } catch (error) {
     if (error instanceof SetupError) {
       throw error;

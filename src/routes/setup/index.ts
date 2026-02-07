@@ -3,7 +3,7 @@ import type { Env } from '../../types';
 import { ValidationError, SetupError, toError } from '../../lib/error-types';
 import { resetCorsOriginsCache } from '../../lib/cors-cache';
 import { resetAuthConfigCache } from '../../lib/access';
-import { verifyAdminSecret } from '../../lib/admin-auth';
+import { authMiddleware, requireAdmin, type AuthVariables } from '../../middleware/auth';
 import { setupRateLimiter, logger } from './shared';
 import type { SetupStep } from './shared';
 import { handleGetAccount } from './account';
@@ -13,10 +13,23 @@ import { handleConfigureCustomDomain } from './custom-domain';
 import { handleCreateAccessApp } from './access';
 import handlers from './handlers';
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
 // Register simple endpoint handlers
 app.route('/', handlers);
+
+/**
+ * Conditional auth middleware for /configure:
+ * - First-time setup (setup:complete not set): public access (bootstrap)
+ * - After setup complete: require admin auth via CF Access
+ */
+app.use('/configure', async (c, next) => {
+  const isComplete = await c.env.KV.get('setup:complete');
+  if (isComplete === 'true') {
+    return authMiddleware(c, async () => requireAdmin(c, next));
+  }
+  return next();
+});
 
 /**
  * POST /api/setup/configure
@@ -27,12 +40,6 @@ app.route('/', handlers);
  */
 app.use('/configure', setupRateLimiter);
 app.post('/configure', async (c) => {
-  // After initial setup is complete, require admin auth to reconfigure
-  const isComplete = await c.env.KV.get('setup:complete');
-  if (isComplete === 'true') {
-    verifyAdminSecret(c.env, c.req.header('Authorization'));
-  }
-
   const {
     customDomain,
     allowedUsers,
@@ -71,8 +78,8 @@ app.post('/configure', async (c) => {
     const { accessKeyId: r2AccessKeyId, secretAccessKey: r2SecretAccessKey } =
       await handleDeriveR2Credentials(token, steps);
 
-    // Step 3: Set worker secrets (3 secrets: R2 creds + admin secret — NOT CLOUDFLARE_API_TOKEN)
-    const adminSecret = await handleSetSecrets(
+    // Step 3: Set worker secrets (R2 credentials — NOT CLOUDFLARE_API_TOKEN)
+    await handleSetSecrets(
       token,
       accountId,
       r2AccessKeyId,
@@ -128,7 +135,6 @@ app.post('/configure', async (c) => {
       steps,
       workersDevUrl,
       customDomainUrl: `https://${customDomain}`,
-      adminSecret,
       accountId,
     });
 

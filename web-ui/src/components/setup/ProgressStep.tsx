@@ -8,7 +8,6 @@ import {
   mdiLoading,
   mdiRocketLaunchOutline,
   mdiShieldLockOutline,
-  mdiKeyOutline,
   mdiInformationOutline,
 } from '@mdi/js';
 import Icon from '../Icon';
@@ -160,19 +159,6 @@ const ProgressStep: Component = () => {
               To protect your workers.dev URL, enable one-click Access in the Cloudflare dashboard.
             </span>
           </div>
-
-          <Show when={setupStore.adminSecret}>
-            <div class="admin-secret-section">
-              <span class="secret-label">
-                <Icon path={mdiKeyOutline} size={16} class="secret-icon" />
-                Admin Secret (save this!):
-              </span>
-              <code class="secret-value">{setupStore.adminSecret}</code>
-              <span class="secret-note">
-                Used for admin endpoints. Store securely.
-              </span>
-            </div>
-          </Show>
 
           <button class="launch-button" onClick={handleLaunch}>
             <Icon path={mdiRocketLaunchOutline} size={20} />
@@ -413,43 +399,6 @@ const ProgressStep: Component = () => {
         .access-note .note-icon {
           flex-shrink: 0;
           color: var(--color-accent);
-        }
-
-        .admin-secret-section {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-          padding: 16px;
-          background: rgba(124, 58, 237, 0.1);
-          border: 1px solid rgba(124, 58, 237, 0.2);
-          border-radius: 8px;
-        }
-
-        .secret-label {
-          font-size: 14px;
-          font-weight: 500;
-          color: var(--color-text-primary);
-          display: flex;
-          align-items: center;
-          gap: 6px;
-        }
-
-        .secret-icon {
-          color: var(--color-accent);
-        }
-
-        .secret-value {
-          padding: 8px 12px;
-          background: var(--color-bg-primary);
-          border-radius: 6px;
-          font-size: 12px;
-          color: var(--color-accent);
-          word-break: break-all;
-        }
-
-        .secret-note {
-          font-size: 12px;
-          color: var(--color-text-secondary);
         }
 
         .launch-button {
