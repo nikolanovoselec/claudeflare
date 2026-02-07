@@ -4,10 +4,10 @@ import type { Env, Session } from '../types';
 import { getSessionKey } from '../lib/kv-keys';
 import { authMiddleware, AuthVariables } from '../middleware/auth';
 import { getContainerId, checkContainerHealth } from '../lib/container-helpers';
-import { getUserFromRequest, getBucketName, resolveUserFromKV } from '../lib/access';
+import { authenticateRequest } from '../lib/access';
 import { createLogger } from '../lib/logger';
 import { containerSessionsCB } from '../lib/circuit-breakers';
-import { NotFoundError, toError } from '../lib/error-types';
+import { AuthError, ForbiddenError, NotFoundError, toError } from '../lib/error-types';
 
 const logger = createLogger('terminal');
 
@@ -98,32 +98,24 @@ export async function handleWebSocketUpgrade(
     });
   }
 
+  const jsonHeaders = { 'Content-Type': 'application/json' };
+
   try {
-    // Authenticate user
-    const user = await getUserFromRequest(request, env);
-    if (!user.authenticated) {
-      return new Response(JSON.stringify({ error: 'Not authenticated' }), {
-        status: 401,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-
-    // Check user allowlist in KV and resolve role (same check as authMiddleware)
-    if (env.DEV_MODE !== 'true') {
-      const kvEntry = await resolveUserFromKV(env.KV, user.email);
-      if (!kvEntry) {
-        return new Response(JSON.stringify({ error: 'User not in allowlist' }), {
-          status: 403,
-          headers: { 'Content-Type': 'application/json' },
-        });
+    // Authenticate user (shared logic with authMiddleware)
+    let user;
+    let bucketName;
+    try {
+      ({ user, bucketName } = await authenticateRequest(request, env));
+    } catch (err) {
+      if (err instanceof AuthError) {
+        return new Response(JSON.stringify({ error: err.message }), { status: 401, headers: jsonHeaders });
       }
-      user.role = kvEntry.role;
-    } else {
-      // In DEV_MODE, grant admin role
-      user.role = 'admin';
+      if (err instanceof ForbiddenError) {
+        return new Response(JSON.stringify({ error: err.message }), { status: 403, headers: jsonHeaders });
+      }
+      throw err;
     }
 
-    const bucketName = getBucketName(user.email);
     const containerId = getContainerId(bucketName, baseSessionId);
 
     logger.info('User authenticated for WebSocket', { email: user.email, containerId, terminalId });

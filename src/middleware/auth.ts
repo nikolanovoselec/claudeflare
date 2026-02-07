@@ -1,5 +1,5 @@
 import { Context, Next } from 'hono';
-import { getUserFromRequest, getBucketName, resolveUserFromKV } from '../lib/access';
+import { authenticateRequest } from '../lib/access';
 import { ForbiddenError } from '../lib/error-types';
 import type { Env, AccessUser } from '../types';
 
@@ -16,31 +16,16 @@ export type AuthVariables = {
  * Auth middleware that validates user authentication via Cloudflare Access
  * Sets `user` and `bucketName` on the context for downstream handlers
  *
+ * Delegates to authenticateRequest() which throws AuthError/ForbiddenError
+ * on failure — caught by the global error handler in index.ts.
+ *
  * Usage:
  *   import { authMiddleware, AuthVariables } from '../middleware/auth';
  *   const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
  *   app.use('*', authMiddleware);
  */
 export async function authMiddleware(c: Context<{ Bindings: Env; Variables: AuthVariables }>, next: Next) {
-  const user = await getUserFromRequest(c.req.raw, c.env);
-
-  if (!user.authenticated) {
-    return c.json({ error: 'Not authenticated' }, 401);
-  }
-
-  // Check user allowlist in KV and resolve role (skip in DEV_MODE)
-  if (c.env.DEV_MODE !== 'true') {
-    const kvEntry = await resolveUserFromKV(c.env.KV, user.email);
-    if (!kvEntry) {
-      return c.json({ error: 'Forbidden: user not in allowlist' }, 403);
-    }
-    user.role = kvEntry.role;
-  } else {
-    // In DEV_MODE, grant admin role
-    user.role = 'admin';
-  }
-
-  const bucketName = getBucketName(user.email);
+  const { user, bucketName } = await authenticateRequest(c.req.raw, c.env);
   c.set('user', user);
   c.set('bucketName', bucketName);
   return next();

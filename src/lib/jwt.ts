@@ -36,7 +36,7 @@ interface JWK {
 
 // Module-level JWKS cache
 let cachedJWKS: JWKS | null = null;
-let cachedAuthDomain: string | null = null;
+let cachedJWKSAuthDomain: string | null = null;
 let cacheExpiry: number = 0;
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
@@ -73,7 +73,7 @@ async function getPublicKeys(authDomain: string): Promise<JWKS> {
   const now = Date.now();
 
   // Return cached keys if valid and same auth domain
-  if (cachedJWKS && cachedAuthDomain === authDomain && now < cacheExpiry) {
+  if (cachedJWKS && cachedJWKSAuthDomain === authDomain && now < cacheExpiry) {
     return cachedJWKS;
   }
 
@@ -88,7 +88,7 @@ async function getPublicKeys(authDomain: string): Promise<JWKS> {
 
   // Update cache
   cachedJWKS = jwks;
-  cachedAuthDomain = authDomain;
+  cachedJWKSAuthDomain = authDomain;
   cacheExpiry = now + CACHE_TTL;
 
   return jwks;
@@ -198,6 +198,6 @@ export async function verifyAccessJWT(
  */
 export function resetJWKSCache(): void {
   cachedJWKS = null;
-  cachedAuthDomain = null;
+  cachedJWKSAuthDomain = null;
   cacheExpiry = 0;
 }

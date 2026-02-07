@@ -6,6 +6,7 @@ import { RateLimitError } from '../lib/error-types';
 /**
  * Configuration for the rate limiter
  */
+/** @internal */
 export interface RateLimitConfig {
   /** Time window in milliseconds */
   windowMs: number;

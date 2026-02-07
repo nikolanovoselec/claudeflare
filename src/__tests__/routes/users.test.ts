@@ -43,6 +43,7 @@ vi.mock('../../lib/access', () => ({
 import usersRoutes from '../../routes/users';
 import { getAllUsers, syncAccessPolicy } from '../../lib/access-policy';
 import { authMiddleware, requireAdmin } from '../../middleware/auth';
+import { AppError } from '../../lib/error-types';
 
 import { createMockKV } from '../helpers/mock-kv';
 
@@ -95,6 +96,15 @@ describe('Users Routes', () => {
     });
 
     app.route('/users', usersRoutes);
+
+    // Error handler to match the global one in index.ts
+    app.onError((err, c) => {
+      if (err instanceof AppError) {
+        return c.json(err.toJSON(), err.statusCode as 400 | 401 | 403 | 404 | 409 | 500);
+      }
+      return c.json({ error: 'Unexpected error' }, 500);
+    });
+
     return app;
   }
 
@@ -200,9 +210,26 @@ describe('Users Routes', () => {
         body: JSON.stringify({ email: 'existing@example.com' }),
       });
 
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(409);
       const body = await res.json() as { error: string };
-      expect(body.error).toMatch(/already exists/i);
+      expect(body.error).toMatch(/already in allowlist/i);
+    });
+
+    it('returns 409 with USER_EXISTS code for duplicate user (AppError.toJSON contract)', async () => {
+      const app = createTestApp();
+
+      mockKV._set('user:dupe@example.com', { addedBy: 'admin@example.com', addedAt: '2024-01-01T00:00:00.000Z' });
+
+      const res = await app.request('/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'dupe@example.com' }),
+      });
+
+      expect(res.status).toBe(409);
+      const body = await res.json() as { error: string; code: string };
+      expect(body).toHaveProperty('error');
+      expect(body).toHaveProperty('code', 'USER_EXISTS');
     });
 
     it('attempts to sync CF Access policy after adding', async () => {
@@ -345,6 +372,15 @@ describe('Users Routes', () => {
         return next();
       });
       app.route('/users', usersRoutes);
+
+      // Error handler to match the global one in index.ts
+      app.onError((err, c) => {
+        if (err instanceof AppError) {
+          return c.json(err.toJSON(), err.statusCode as 400 | 401 | 403 | 404 | 409 | 500);
+        }
+        return c.json({ error: 'Unexpected error' }, 500);
+      });
+
       return app;
     }
 
@@ -390,6 +426,35 @@ describe('Users Routes', () => {
       expect(putCall).toBeDefined();
       const stored = JSON.parse(putCall![1]);
       expect(stored.role).toBe('admin');
+    });
+
+    it('error responses follow AppError.toJSON() shape', async () => {
+      const app = createTestAppWithRole('admin@example.com', 'admin');
+
+      // Validation error (missing email)
+      const res = await app.request('/users', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+
+      expect(res.status).toBe(400);
+      const body = await res.json() as { error: string; code: string };
+      expect(body).toHaveProperty('error');
+      expect(body).toHaveProperty('code', 'VALIDATION_ERROR');
+    });
+
+    it('not-found error follows AppError.toJSON() shape', async () => {
+      const app = createTestAppWithRole('admin@example.com', 'admin');
+
+      const res = await app.request('/users/ghost%40example.com', {
+        method: 'DELETE',
+      });
+
+      expect(res.status).toBe(404);
+      const body = await res.json() as { error: string; code: string };
+      expect(body).toHaveProperty('error');
+      expect(body).toHaveProperty('code', 'NOT_FOUND');
     });
 
     it('GET /users returns role field for each user', async () => {

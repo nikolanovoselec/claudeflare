@@ -1,3 +1,4 @@
+// users.ts = admin user management (GET/POST/DELETE /api/users). See user.ts for current user identity.
 import { Hono } from 'hono';
 import type { Env } from '../types';
 import { authMiddleware, requireAdmin, type AuthVariables } from '../middleware/auth';
@@ -5,7 +6,7 @@ import { createRateLimiter } from '../middleware/rate-limit';
 import { getAllUsers, syncAccessPolicy } from '../lib/access-policy';
 import { getBucketName } from '../lib/access';
 import { createLogger } from '../lib/logger';
-import { toError } from '../lib/error-types';
+import { AppError, ValidationError, NotFoundError, toError } from '../lib/error-types';
 
 const logger = createLogger('users');
 
@@ -34,13 +35,13 @@ app.post('/', requireAdmin, userMutationRateLimiter, async (c) => {
   const email = body.email?.trim().toLowerCase();
 
   if (!email || !email.includes('@')) {
-    return c.json({ error: 'Valid email is required' }, 400);
+    throw new ValidationError('Valid email is required');
   }
 
   // Check for duplicate
   const existing = await c.env.KV.get(`user:${email}`);
   if (existing) {
-    return c.json({ error: 'User already exists' }, 400);
+    throw new AppError('USER_EXISTS', 409, 'User already in allowlist');
   }
 
   const currentUser = c.get('user');
@@ -71,20 +72,25 @@ app.delete('/:email', requireAdmin, userMutationRateLimiter, async (c) => {
   const email = decodeURIComponent(c.req.param('email'));
   const currentUser = c.get('user');
 
+  if (!email) {
+    throw new ValidationError('Email parameter is required');
+  }
+
   if (email === currentUser.email) {
-    return c.json({ error: 'Cannot remove yourself' }, 400);
+    throw new ValidationError('Cannot remove yourself');
   }
 
   const existing = await c.env.KV.get(`user:${email}`);
   if (!existing) {
-    return c.json({ error: 'User not found' }, 404);
+    throw new NotFoundError('User', email);
   }
 
   await c.env.KV.delete(`user:${email}`);
 
+  const accountId = await c.env.KV.get('setup:account_id');
+
   // Try to delete R2 bucket
   try {
-    const accountId = await c.env.KV.get('setup:account_id');
     if (accountId && c.env.CLOUDFLARE_API_TOKEN) {
       const bucketName = getBucketName(email);
       await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/buckets/${bucketName}`, {
@@ -99,7 +105,6 @@ app.delete('/:email', requireAdmin, userMutationRateLimiter, async (c) => {
 
   // Sync Access policy
   try {
-    const accountId = await c.env.KV.get('setup:account_id');
     const domain = await c.env.KV.get('setup:custom_domain');
     if (accountId && domain && c.env.CLOUDFLARE_API_TOKEN) {
       await syncAccessPolicy(c.env.CLOUDFLARE_API_TOKEN, accountId, domain, c.env.KV);

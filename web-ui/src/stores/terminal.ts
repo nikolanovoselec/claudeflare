@@ -491,6 +491,20 @@ function disposeAll(): void {
     terminal.dispose();
   }
   terminals.clear();
+
+  // Clear auxiliary Maps that live outside the reactive store
+  for (const disposable of inputDisposables.values()) {
+    disposable.dispose();
+  }
+  inputDisposables.clear();
+
+  for (const timeout of retryTimeouts.values()) {
+    clearTimeout(timeout);
+  }
+  retryTimeouts.clear();
+
+  reconnectAttempts.clear();
+  fitAddons.clear();
 }
 
 // Reconnect to terminal WebSocket

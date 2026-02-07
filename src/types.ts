@@ -39,9 +39,6 @@ export interface Env {
   // Allowed CORS origins (comma-separated patterns, e.g., ".workers.dev,.example.com")
   ALLOWED_ORIGINS?: string;
 
-  // Encryption key for credentials at rest (base64-encoded AES-256 key)
-  // Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-  ENCRYPTION_KEY?: string;
 }
 
 /**

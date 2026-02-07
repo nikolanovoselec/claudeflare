@@ -1,3 +1,4 @@
+// user.ts = current user identity (GET /api/user). See users.ts for admin CRUD.
 import { Hono } from 'hono';
 import type { Env } from '../types';
 import { authMiddleware, AuthVariables } from '../middleware/auth';

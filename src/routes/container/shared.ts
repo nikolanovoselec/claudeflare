@@ -10,12 +10,18 @@ export { containerHealthCB, containerInternalCB, containerSessionsCB } from '../
 export const containerLogger = createLogger('container');
 
 /** Timeout for container fetch operations (5 seconds for cold start) */
-export const CONTAINER_FETCH_TIMEOUT = 5000;
+const CONTAINER_FETCH_TIMEOUT = 5000;
 
 /**
  * Fetch with timeout wrapper for container operations
  * Returns null if request times out instead of hanging indefinitely
  * Real (non-timeout) errors are re-thrown to the caller
+ */
+/**
+ * Races a fetch against a timeout. Note: this is a "soft timeout" — the underlying
+ * fetch continues in the background until the isolate terminates. The AbortSignal
+ * is not passed to the fetch function because the caller signature doesn't support it.
+ * In Cloudflare Workers, isolate termination handles cleanup.
  */
 export async function fetchWithTimeout(
   fetchFn: () => Promise<Response>,

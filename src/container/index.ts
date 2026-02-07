@@ -3,10 +3,12 @@ import type { DurableObjectState } from '@cloudflare/workers-types';
 import type { Env } from '../types';
 import { TERMINAL_SERVER_PORT, IDLE_TIMEOUT_MS } from '../lib/constants';
 import { getR2Config } from '../lib/r2-config';
+import { createLogger } from '../lib/logger';
 
 /**
  * Bug 3 fix: Smart hibernation configuration
  */
+// Also defined locally here because container DO can't import from src/lib/constants.ts
 const ACTIVITY_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
@@ -24,6 +26,8 @@ const DESTROYED_FLAG_KEY = '_destroyed';
 // and existing DO migrations. Renaming would require a destructive migration
 // that risks losing all existing Durable Objects. See wrangler.toml migrations.
 export class container extends Container<Env> {
+  private logger = createLogger('container');
+
   // Port where the container's HTTP server listens
   // Terminal server handles all endpoints: WebSocket, health check, metrics
   defaultPort = 8080;
@@ -46,7 +50,7 @@ export class container extends Container<Env> {
       // Check if this DO was already destroyed - if so, self-destruct immediately
       const wasDestroyed = await this.ctx.storage.get<boolean>(DESTROYED_FLAG_KEY);
       if (wasDestroyed) {
-        console.log(`[container] ZOMBIE DETECTED in constructor - clearing storage`);
+        this.logger.warn('Zombie detected in constructor, clearing storage');
         await this.ctx.storage.deleteAll();
         return; // Don't initialize anything else
       }
@@ -64,12 +68,12 @@ export class container extends Container<Env> {
 
       // If no bucket name stored, this is an orphan/zombie DO - self-destruct
       if (!this._bucketName) {
-        console.log(`[container] ORPHAN DO detected (no bucketName) - clearing storage`);
+        this.logger.warn('Orphan DO detected, no bucketName, clearing storage');
         await this.ctx.storage.deleteAll();
         return; // Don't initialize anything else
       }
 
-      console.log(`[container] Loaded bucket name from storage: ${this._bucketName}`);
+      this.logger.info('Loaded bucket name from storage', { bucketName: this._bucketName });
       this.updateEnvVars();
     });
   }
@@ -81,7 +85,7 @@ export class container extends Container<Env> {
     this._bucketName = name;
     await this.ctx.storage.put('bucketName', name);
     this.updateEnvVars();
-    console.log(`[container] Stored bucket name: ${name}`);
+    this.logger.info('Stored bucket name', { bucketName: name });
   }
 
   /**
@@ -102,13 +106,13 @@ export class container extends Container<Env> {
     const accountId = this._r2AccountId || this.env.R2_ACCOUNT_ID || '';
     const endpoint = this._r2Endpoint || this.env.R2_ENDPOINT || '';
 
-    // Debug logging for env var status
-    console.log(`[container] updateEnvVars called:`);
-    console.log(`  R2_BUCKET_NAME: ${bucketName}`);
-    console.log(`  R2_ACCESS_KEY_ID: ${accessKeyId ? accessKeyId.substring(0, 4) + '...' : 'NOT SET'}`);
-    console.log(`  R2_SECRET_ACCESS_KEY: ${secretAccessKey ? 'SET (hidden)' : 'NOT SET'}`);
-    console.log(`  R2_ACCOUNT_ID: ${accountId || 'NOT SET'}`);
-    console.log(`  R2_ENDPOINT: ${endpoint || 'NOT SET'}`);
+    this.logger.info('R2 credentials configured', {
+      bucketName,
+      hasAccessKey: !!accessKeyId,
+      hasSecretKey: !!secretAccessKey,
+      hasAccountId: !!accountId,
+      hasEndpoint: !!endpoint,
+    });
 
     this.envVars = {
       // R2 credentials - using AWS naming convention for s3fs compatibility
@@ -206,7 +210,7 @@ export class container extends Container<Env> {
    * Called when the container starts successfully
    */
   override onStart(): void {
-    console.log('[container] Container started successfully');
+    this.logger.info('Container started successfully');
 
     // Bug 3 fix: Start activity polling
     this.scheduleActivityPoll();
@@ -222,9 +226,9 @@ export class container extends Container<Env> {
       const nextPollTime = Date.now() + ACTIVITY_POLL_INTERVAL_MS;
       await this.ctx.storage.setAlarm(nextPollTime);
       this._activityPollAlarm = true;
-      console.log(`[container] Activity poll scheduled for ${new Date(nextPollTime).toISOString()}`);
+      this.logger.info('Activity poll scheduled', { nextPollTime: new Date(nextPollTime).toISOString() });
     } catch (e) {
-      console.error('[container] Failed to schedule activity poll:', e);
+      this.logger.error('Failed to schedule activity poll', e instanceof Error ? e : new Error(String(e)));
     }
   }
 
@@ -236,7 +240,7 @@ export class container extends Container<Env> {
   private async checkDestroyedState(): Promise<boolean> {
     const wasDestroyed = await this.ctx.storage.get<boolean>(DESTROYED_FLAG_KEY);
     if (wasDestroyed) {
-      console.log(`[container] ZOMBIE PREVENTED: DO was destroyed, clearing alarm and storage`);
+      this.logger.warn('Zombie prevented: DO was destroyed, clearing alarm and storage');
       await this.ctx.storage.deleteAlarm();
       await this.ctx.storage.deleteAll();
       return true;
@@ -250,12 +254,12 @@ export class container extends Container<Env> {
    */
   private async checkOrphanState(): Promise<boolean> {
     if (!this._bucketName) {
-      console.log(`[container] ZOMBIE DETECTED: no bucketName stored, doId=${this.ctx.id.toString()}`);
+      this.logger.warn('Zombie detected: no bucketName stored', { doId: this.ctx.id.toString() });
       try {
         await this.ctx.storage.deleteAlarm();
         await this.ctx.storage.deleteAll();
       } catch (e) {
-        console.error('[container] Failed to cleanup zombie:', e);
+        this.logger.error('Failed to cleanup zombie', e instanceof Error ? e : new Error(String(e)));
       }
       return true;
     }
@@ -270,13 +274,13 @@ export class container extends Container<Env> {
     try {
       const state = await this.getState();
       if (state.status === 'stopped' || state.status === 'stopped_with_code') {
-        console.log(`[container] Container is ${state.status}, DESTROYING to prevent zombie resurrection`);
+        this.logger.info('Container stopped, destroying to prevent zombie resurrection', { status: state.status });
         await this.cleanupAndDestroy();
         return true;
       }
       return false;
     } catch (e) {
-      console.log('[container] Could not get state in alarm, DESTROYING as zombie:', e);
+      this.logger.warn('Could not get state in alarm, destroying as zombie', { error: String(e) });
       await this.cleanupAndDestroy();
       return true;
     }
@@ -290,7 +294,7 @@ export class container extends Container<Env> {
     const activityInfo = await this.getActivityInfo();
 
     if (!activityInfo) {
-      console.log(`[container] Could not get activity info, DESTROYING as zombie`);
+      this.logger.warn('Could not get activity info, destroying as zombie');
       await this.cleanupAndDestroy();
       return true;
     }
@@ -298,11 +302,11 @@ export class container extends Container<Env> {
     const { hasActiveConnections, lastPtyOutputMs, lastWsActivityMs } = activityInfo;
     const longestIdleMs = Math.min(lastPtyOutputMs, lastWsActivityMs);
 
-    console.log(`[container] Activity check: connections=${hasActiveConnections}, ptyIdle=${lastPtyOutputMs}ms, wsIdle=${lastWsActivityMs}ms`);
+    this.logger.info('Activity check', { hasActiveConnections, lastPtyOutputMs, lastWsActivityMs });
 
     // Container can sleep when: no connections AND idle for IDLE_TIMEOUT_MS
     if (!hasActiveConnections && longestIdleMs > IDLE_TIMEOUT_MS) {
-      console.log(`[container] Container idle for ${longestIdleMs}ms with no connections, DESTROYING`);
+      this.logger.info('Container idle with no connections, destroying', { idleMs: longestIdleMs });
       await this.cleanupAndDestroy();
       return true;
     }
@@ -336,7 +340,7 @@ export class container extends Container<Env> {
    */
   async alarm(): Promise<void> {
     this._activityPollAlarm = false;
-    console.log('[container] Activity poll alarm triggered');
+    this.logger.info('Activity poll alarm triggered');
 
     // Step 1: Check if DO was explicitly destroyed (uses only storage, not Container methods)
     if (await this.checkDestroyedState()) {
@@ -362,12 +366,12 @@ export class container extends Container<Env> {
       // Schedule next poll
       await this.scheduleActivityPoll();
     } catch (e) {
-      console.error('[container] Error in activity poll:', e);
+      this.logger.error('Error in activity poll', e instanceof Error ? e : new Error(String(e)));
       // On error, destroy the container to prevent zombie
       try {
         await this.cleanupAndDestroy();
       } catch (destroyErr) {
-        console.error('[container] Failed to destroy zombie:', destroyErr);
+        this.logger.error('Failed to destroy zombie', destroyErr instanceof Error ? destroyErr : new Error(String(destroyErr)));
       }
     }
   }
@@ -420,7 +424,7 @@ export class container extends Container<Env> {
    * calling any Container methods that would resurrect it.
    */
   override async destroy(): Promise<void> {
-    console.log('[container] NUKING container - clearing ALL storage');
+    this.logger.info('Nuking container, clearing all storage');
     try {
       // Clear the alarm first
       await this.ctx.storage.deleteAlarm();
@@ -429,9 +433,9 @@ export class container extends Container<Env> {
       // NUKE: Delete ALL storage to make DO empty
       // Cloudflare garbage collects empty DOs
       await this.ctx.storage.deleteAll();
-      console.log('[container] Storage cleared - DO will be garbage collected');
+      this.logger.info('Storage cleared, DO will be garbage collected');
     } catch (e) {
-      console.error('[container] Failed to nuke storage:', e);
+      this.logger.error('Failed to nuke storage', e instanceof Error ? e : new Error(String(e)));
     }
     return super.destroy();
   }
@@ -440,14 +444,14 @@ export class container extends Container<Env> {
    * Called when the container stops
    */
   override onStop(): void {
-    console.log('[container] Container stopped');
+    this.logger.info('Container stopped');
   }
 
   /**
    * Called when the container encounters an error
    */
   override onError(error: unknown): void {
-    console.error('[container] Container error:', error);
+    this.logger.error('Container error', error instanceof Error ? error : new Error(String(error)));
   }
 
 }

@@ -19,7 +19,10 @@ import { parse as parseUrl } from 'url';
 import { parse as parseQuery } from 'querystring';
 import fs from 'fs';
 import os from 'os';
-import { execSync } from 'child_process';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 // Start time for uptime calculation
 const SERVER_START_TIME = Date.now();
@@ -43,8 +46,23 @@ function getClaudeAutostartStatus() {
   }
 }
 
+// Cached disk metrics to avoid shelling out on every health check
+let cachedDiskMetrics = { value: '...', lastUpdated: 0 };
+const DISK_CACHE_TTL = 30000; // 30 seconds
+
+async function getDiskMetrics() {
+  if (Date.now() - cachedDiskMetrics.lastUpdated < DISK_CACHE_TTL) {
+    return cachedDiskMetrics.value;
+  }
+  try {
+    const { stdout } = await execAsync("df -h /home/user 2>/dev/null | tail -1 | awk '{print $3\"/\"$2}'");
+    cachedDiskMetrics = { value: stdout.trim() || '...', lastUpdated: Date.now() };
+  } catch (e) { /* keep cached value */ }
+  return cachedDiskMetrics.value;
+}
+
 // Helper to get system metrics (CPU, MEM, HDD)
-function getSystemMetrics() {
+async function getSystemMetrics() {
   const metrics = { cpu: '...', mem: '...', hdd: '...' };
   try {
     const loadAvg = os.loadavg()[0];
@@ -59,10 +77,7 @@ function getSystemMetrics() {
     const totalGB = (totalMem / 1024 / 1024 / 1024).toFixed(1);
     metrics.mem = usedGB + '/' + totalGB + 'G';
   } catch (e) { /* ignore */ }
-  try {
-    const dfOutput = execSync("df -h /home/user 2>/dev/null | tail -1 | awk '{print $3\"/\"$2}'", { encoding: 'utf8' }).trim();
-    metrics.hdd = dfOutput || '...';
-  } catch (e) { /* ignore */ }
+  metrics.hdd = await getDiskMetrics();
   return metrics;
 }
 
@@ -453,7 +468,7 @@ class SessionManager {
 const sessionManager = new SessionManager();
 
 // Create HTTP server
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const { pathname } = parseUrl(req.url);
   const method = req.method;
 
@@ -472,7 +487,7 @@ const server = http.createServer((req, res) => {
   if (pathname === '/health' && method === 'GET') {
     const syncInfo = getSyncStatus();
     const claudeAutostart = getClaudeAutostartStatus();
-    const sysMetrics = getSystemMetrics();
+    const sysMetrics = await getSystemMetrics();
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
@@ -555,7 +570,7 @@ const server = http.createServer((req, res) => {
 });
 
 // Create WebSocket server
-const wss = new WebSocketServer({ server, path: '/terminal' });
+const wss = new WebSocketServer({ server, path: '/terminal', maxPayload: 64 * 1024 });
 
 wss.on('connection', (ws, req) => {
   const { query } = parseUrl(req.url, true);

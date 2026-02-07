@@ -1,6 +1,6 @@
 export function isAdminRequest(data: unknown): data is { doId: string } {
   return typeof data === 'object' && data !== null &&
-         'doId' in data && typeof (data as any).doId === 'string';
+         'doId' in data && typeof (data as Record<string, unknown>).doId === 'string';
 }
 
 export function isBucketNameResponse(data: unknown): data is { bucketName: string | null } {

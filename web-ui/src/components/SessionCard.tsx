@@ -162,14 +162,14 @@ const SessionCard: Component<SessionCardProps> = (props) => {
                   </span>
                 </div>
               </div>
-              {/* Row 4: Terminals + Uptime */}
+              {/* Row 4: Terminals + Age */}
               <div class="session-card-metrics-row">
                 <div class="session-card-metric" data-testid={`session-card-${props.session.id}-metric-terminals`}>
                   <span class="metric-label">Terminals</span>
                   <span class="metric-value">{getTabCount()}/{MAX_TERMINALS_PER_SESSION}</span>
                 </div>
                 <div class="session-card-metric" data-testid={`session-card-${props.session.id}-metric-uptime`}>
-                  <span class="metric-label">Uptime</span>
+                  <span class="metric-label">Age</span>
                   <span class="metric-value">{formatUptime(props.session.createdAt)}</span>
                 </div>
               </div>

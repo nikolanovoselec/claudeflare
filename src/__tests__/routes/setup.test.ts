@@ -1326,6 +1326,27 @@ describe('Setup Routes', () => {
       expect(mockKV.delete).toHaveBeenCalledWith('setup:custom_domain');
       expect(mockKV.delete).toHaveBeenCalledWith('setup:r2_endpoint');
     });
+
+    it('clears auth_domain and access_aud from KV (resetAuthConfigCache side-effect)', async () => {
+      const app = createTestApp();
+
+      // Pre-populate auth config in KV
+      mockKV._store.set('setup:auth_domain', 'myteam.cloudflareaccess.com');
+      mockKV._store.set('setup:access_aud', 'test-aud-tag');
+
+      const res = await app.request('/api/setup/reset', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer test-admin-secret',
+        },
+      });
+
+      expect(res.status).toBe(200);
+      // Verify auth-related KV keys were deleted
+      expect(mockKV.delete).toHaveBeenCalledWith('setup:auth_domain');
+      expect(mockKV.delete).toHaveBeenCalledWith('setup:access_aud');
+    });
   });
 
   describe('POST /api/setup/reset-for-tests', () => {

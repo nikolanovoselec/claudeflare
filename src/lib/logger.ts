@@ -1,11 +1,13 @@
 /**
  * Available log levels in order of severity
  */
+/** @internal */
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 /**
  * Structure of a log entry
  */
+/** @internal */
 export interface LogEntry {
   /** ISO 8601 timestamp */
   timestamp: string;

@@ -627,7 +627,7 @@ describe('SessionList Component', () => {
 
       const uptimeElement = screen.getByTestId('session-card-1-metric-uptime');
       expect(uptimeElement).toBeInTheDocument();
-      expect(uptimeElement.querySelector('.metric-label')?.textContent).toBe('Uptime');
+      expect(uptimeElement.querySelector('.metric-label')?.textContent).toBe('Age');
       // Should display "2h" for 2 hours
       expect(uptimeElement.querySelector('.metric-value')?.textContent).toMatch(/2h/);
     });

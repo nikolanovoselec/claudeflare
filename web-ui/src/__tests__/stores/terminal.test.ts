@@ -321,6 +321,51 @@ describe('Terminal Store', () => {
       expect(terminalStore.getConnectionState('session-1', '1')).toBe('disconnected');
       expect(terminalStore.getConnectionState('session-2', '1')).toBe('disconnected');
     });
+
+    it('should clear all auxiliary Maps (fitAddons, inputDisposables, reconnectAttempts, retryTimeouts)', async () => {
+      const terminal1 = createMockTerminal();
+      const terminal2 = createMockTerminal();
+      const mockFitAddon = { fit: vi.fn() };
+
+      // Set up connections and fitAddons
+      terminalStore.connect('session-a', '1', terminal1);
+      terminalStore.connect('session-b', '1', terminal2);
+      await vi.advanceTimersByTimeAsync(0);
+
+      terminalStore.registerFitAddon('session-a', '1', mockFitAddon as any);
+      terminalStore.registerFitAddon('session-b', '1', mockFitAddon as any);
+
+      // Now dispose all
+      terminalStore.disposeAll();
+
+      // Verify terminals are gone
+      expect(terminalStore.getTerminal('session-a', '1')).toBeUndefined();
+      expect(terminalStore.getTerminal('session-b', '1')).toBeUndefined();
+
+      // Verify connections are disconnected
+      expect(terminalStore.getConnectionState('session-a', '1')).toBe('disconnected');
+      expect(terminalStore.getConnectionState('session-b', '1')).toBe('disconnected');
+
+      // Verify reconnect returns null (no stored terminal means Maps are cleared)
+      expect(terminalStore.reconnect('session-a', '1')).toBeNull();
+      expect(terminalStore.reconnect('session-b', '1')).toBeNull();
+    });
+
+    it('should call dispose on all terminal instances', async () => {
+      const terminal1 = createMockTerminal();
+      const terminal2 = createMockTerminal();
+
+      terminalStore.setTerminal('session-x', '1', terminal1);
+      terminalStore.setTerminal('session-y', '2', terminal2);
+      terminalStore.connect('session-x', '1', terminal1);
+      terminalStore.connect('session-y', '2', terminal2);
+      await vi.advanceTimersByTimeAsync(0);
+
+      terminalStore.disposeAll();
+
+      expect(terminal1.dispose).toHaveBeenCalled();
+      expect(terminal2.dispose).toHaveBeenCalled();
+    });
   });
 
   describe('reconnect', () => {

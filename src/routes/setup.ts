@@ -54,7 +54,7 @@ async function handleGetAccount(
     if (!accountsData.success || !accountsData.result?.length) {
       steps[stepIndex].status = 'error';
       steps[stepIndex].error = 'Failed to get account';
-      throw new SetupError('get_account', 'Failed to get account', steps);
+      throw new SetupError('Failed to get account', steps);
     }
 
     steps[stepIndex].status = 'success';
@@ -66,7 +66,7 @@ async function handleGetAccount(
     logger.error('Failed to get account', toError(error));
     steps[stepIndex].status = 'error';
     steps[stepIndex].error = 'Failed to connect to Cloudflare API';
-    throw new SetupError('get_account', 'Failed to connect to Cloudflare API', steps);
+    throw new SetupError('Failed to connect to Cloudflare API', steps);
   }
 }
 
@@ -101,7 +101,7 @@ async function handleDeriveR2Credentials(
       const errorMsg = verifyData.errors?.map(e => e.message).join(', ') || 'Token verification failed';
       steps[stepIndex].status = 'error';
       steps[stepIndex].error = `Failed to derive R2 credentials: ${errorMsg}`;
-      throw new SetupError('derive_r2_credentials', `Failed to derive R2 credentials: ${errorMsg}`, steps);
+      throw new SetupError(`Failed to derive R2 credentials: ${errorMsg}`, steps);
     }
 
     const tokenId = verifyData.result.id;
@@ -125,7 +125,7 @@ async function handleDeriveR2Credentials(
     logger.error('Failed to derive R2 credentials', toError(error));
     steps[stepIndex].status = 'error';
     steps[stepIndex].error = 'Failed to derive R2 credentials';
-    throw new SetupError('derive_r2_credentials', 'Failed to derive R2 credentials', steps);
+    throw new SetupError('Failed to derive R2 credentials', steps);
   }
 }
 
@@ -301,7 +301,7 @@ async function handleSetSecrets(
         logger.error(`Failed to set secret ${name} on ${workerName}`, new Error(`status: ${result.status}, errorCode: ${result.errorCode}`));
         steps[stepIndex].status = 'error';
         steps[stepIndex].error = `Failed to set secret ${name}: ${result.status}`;
-        throw new SetupError('set_secrets', `Failed to set secret ${name} on worker "${workerName}": ${result.status}`, steps);
+        throw new SetupError(`Failed to set secret ${name} on worker "${workerName}": ${result.status}`, steps);
       }
     }
     steps[stepIndex].status = 'success';
@@ -313,7 +313,7 @@ async function handleSetSecrets(
     logger.error('Failed to set secrets', toError(error));
     steps[stepIndex].status = 'error';
     steps[stepIndex].error = 'Failed to configure worker secrets';
-    throw new SetupError('set_secrets', 'Failed to configure worker secrets', steps);
+    throw new SetupError('Failed to configure worker secrets', steps);
   }
 }
 
@@ -364,7 +364,7 @@ async function resolveZone(
     logger.error('Failed to fetch zones API', toError(error));
     steps[stepIndex].status = 'error';
     steps[stepIndex].error = 'Failed to connect to Cloudflare Zones API';
-    throw new SetupError('configure_custom_domain', 'Failed to connect to Cloudflare Zones API', steps);
+    throw new SetupError('Failed to connect to Cloudflare Zones API', steps);
   }
 
   const zonesData = await zonesRes.json() as {
@@ -389,18 +389,18 @@ async function resolveZone(
         + 'or skip custom domain setup.';
       steps[stepIndex].status = 'error';
       steps[stepIndex].error = permError;
-      throw new SetupError('configure_custom_domain', permError, steps);
+      throw new SetupError(permError, steps);
     }
 
     steps[stepIndex].status = 'error';
     steps[stepIndex].error = `Zones API error: ${errorMessages || 'Unknown error'}`;
-    throw new SetupError('configure_custom_domain', `Zones API error for ${zoneName}: ${errorMessages || 'Unknown error'}`, steps);
+    throw new SetupError(`Zones API error for ${zoneName}: ${errorMessages || 'Unknown error'}`, steps);
   }
 
   if (!zonesData.result?.length) {
     steps[stepIndex].status = 'error';
     steps[stepIndex].error = `Zone not found for domain: ${zoneName}`;
-    throw new SetupError('configure_custom_domain', `Zone not found for domain: ${zoneName}`, steps);
+    throw new SetupError(`Zone not found for domain: ${zoneName}`, steps);
   }
 
   return zonesData.result[0].id;
@@ -452,7 +452,7 @@ async function upsertDnsRecord(
     logger.error('Failed to get account subdomain', toError(error));
     steps[stepIndex].status = 'error';
     steps[stepIndex].error = 'Failed to determine workers.dev subdomain for DNS record';
-    throw new SetupError('configure_custom_domain', 'Failed to determine workers.dev subdomain for DNS record', steps);
+    throw new SetupError('Failed to determine workers.dev subdomain for DNS record', steps);
   }
 
   const workersDevTarget = `${workerName}.${accountSubdomain}.workers.dev`;
@@ -530,12 +530,12 @@ async function upsertDnsRecord(
           + 'Add "Zone > DNS > Edit" permission to your token, or skip custom domain setup.';
         steps[stepIndex].status = 'error';
         steps[stepIndex].error = permError;
-        throw new SetupError('configure_custom_domain', permError, steps);
+        throw new SetupError(permError, steps);
       }
 
       steps[stepIndex].status = 'error';
       steps[stepIndex].error = dnsErrMsg;
-      throw new SetupError('configure_custom_domain', dnsErrMsg, steps);
+      throw new SetupError(dnsErrMsg, steps);
     }
   } else {
     logger.info(`DNS record ${existingDnsRecordId ? 'updated' : 'created'}`, { domain, subdomain, target: workersDevTarget });
@@ -587,12 +587,12 @@ async function createWorkerRoute(
           + 'Add "Zone > Workers Routes > Edit" permission to your token, or skip custom domain setup.';
         steps[stepIndex].status = 'error';
         steps[stepIndex].error = permError;
-        throw new SetupError('configure_custom_domain', permError, steps);
+        throw new SetupError(permError, steps);
       }
 
       steps[stepIndex].status = 'error';
       steps[stepIndex].error = routeErrMsg;
-      throw new SetupError('configure_custom_domain', routeErrMsg, steps);
+      throw new SetupError(routeErrMsg, steps);
     }
   }
 }
@@ -610,6 +610,14 @@ async function handleConfigureCustomDomain(
 ): Promise<string> {
   steps.push({ step: 'configure_custom_domain', status: 'pending' });
   const stepIndex = steps.length - 1;
+
+  // Validate domain format before making any API calls
+  const domainRegex = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
+  if (!domainRegex.test(customDomain)) {
+    steps[stepIndex].status = 'error';
+    steps[stepIndex].error = 'Invalid domain format';
+    throw new ValidationError('Invalid domain format');
+  }
 
   // Resolve zone ID for the custom domain
   const zoneId = await resolveZone(token, customDomain, steps, stepIndex);
@@ -716,7 +724,7 @@ async function handleCreateAccessApp(
 
     steps[stepIndex].status = 'error';
     steps[stepIndex].error = accessAppData.errors?.[0]?.message || `Failed to ${existingAppId ? 'update' : 'create'} Access app`;
-    throw new SetupError('create_access_app', accessAppData.errors?.[0]?.message || `Failed to ${existingAppId ? 'update' : 'create'} Access app`, steps);
+    throw new SetupError(accessAppData.errors?.[0]?.message || `Failed to ${existingAppId ? 'update' : 'create'} Access app`, steps);
   }
 
   logger.info(`Access app ${existingAppId ? 'updated' : 'created'}`, { domain: customDomain, appId: accessAppData.result.id });
@@ -1012,7 +1020,7 @@ app.post('/configure', async (c) => {
       throw error;
     }
     logger.error('Configuration error', toError(error));
-    throw new SetupError('unknown', 'Configuration failed', steps);
+    throw new SetupError('Configuration failed', steps);
   }
 });
 
@@ -1031,6 +1039,8 @@ app.post('/reset', async (c) => {
   await c.env.KV.delete('setup:r2_endpoint');
   await c.env.KV.delete('setup:auth_domain');
   await c.env.KV.delete('setup:access_aud');
+
+  resetAuthConfigCache();
 
   return c.json({ success: true, message: 'Setup state reset' });
 });

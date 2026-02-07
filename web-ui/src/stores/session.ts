@@ -71,6 +71,9 @@ function getActiveSession(): SessionWithStatus | undefined {
   return state.sessions.find((s) => s.id === state.activeSessionId);
 }
 
+// Track startup polling cleanup functions per session
+const startupCleanups = new Map<string, () => void>();
+
 // Track if loadSessions is in progress to prevent concurrent calls
 let loadSessionsInProgress = false;
 
@@ -183,6 +186,12 @@ async function createSession(name: string): Promise<SessionWithStatus | null> {
 // Delete session
 async function deleteSession(id: string): Promise<void> {
   try {
+    // Cancel startup polling if in progress
+    const startupCleanup = startupCleanups.get(id);
+    if (startupCleanup) {
+      startupCleanup();
+      startupCleanups.delete(id);
+    }
     // Clean up metrics polling and terminal state before deleting
     stopMetricsPolling(id);
     cleanupTerminalsForSession(id);
@@ -228,6 +237,7 @@ function startSession(id: string): Promise<void> {
       () => {
         // Don't clear initializingSessionId or initProgress here
         // User will dismiss via dismissInitProgress()
+        startupCleanups.delete(id);
         updateSessionStatus(id, 'running');
         // Initialize terminals for this session (creates first terminal tab)
         initializeTerminalsForSession(id);
@@ -235,6 +245,7 @@ function startSession(id: string): Promise<void> {
       },
       // onError
       (error) => {
+        startupCleanups.delete(id);
         // Clear per-session state on error
         setState(
           produce((s) => {
@@ -248,14 +259,20 @@ function startSession(id: string): Promise<void> {
       }
     );
 
-    // Store cleanup function in case we need to cancel
-    // For now, we don't expose cancel functionality
+    // Store cleanup function so we can cancel polling on stop/delete
+    startupCleanups.set(id, cleanup);
   });
 }
 
 // Stop session
 async function stopSession(id: string): Promise<void> {
   try {
+    // Cancel startup polling if in progress
+    const startupCleanup = startupCleanups.get(id);
+    if (startupCleanup) {
+      startupCleanup();
+      startupCleanups.delete(id);
+    }
     // Clear initialization state if in progress (allows stopping stuck sessions)
     setState(
       produce((s) => {
@@ -377,13 +394,19 @@ function stopMetricsPolling(sessionId: string): void {
   }
 }
 
-// Stop all metrics polling (useful for cleanup)
+// Stop all metrics polling and startup polling (useful for cleanup)
 function stopAllMetricsPolling(): void {
   Object.entries(metricsPollingIntervals).forEach(([sessionId, interval]) => {
     clearInterval(interval);
     console.log(`[SessionStore] Stopped metrics polling for session ${sessionId}`);
   });
   metricsPollingIntervals = {};
+
+  for (const [sessionId, cleanup] of startupCleanups) {
+    cleanup();
+    console.log(`[SessionStore] Stopped startup polling for session ${sessionId}`);
+  }
+  startupCleanups.clear();
 }
 
 // Get metrics for a specific session

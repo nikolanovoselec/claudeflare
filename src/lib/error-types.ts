@@ -71,7 +71,7 @@ export class CredentialsError extends AppError {
 export class SetupError extends AppError {
   public steps: Array<{ step: string; status: string; error?: string }>;
 
-  constructor(step: string, message: string, steps: Array<{ step: string; status: string; error?: string }>) {
+  constructor(message: string, steps: Array<{ step: string; status: string; error?: string }>) {
     super('SETUP_ERROR', 400, message, 'Setup configuration failed');
     this.steps = steps;
   }

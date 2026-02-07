@@ -9,9 +9,10 @@ import usersRoutes from './routes/users';
 import setupRoutes from './routes/setup';
 import adminRoutes from './routes/admin';
 import { DEFAULT_ALLOWED_ORIGINS, REQUEST_ID_LENGTH, CORS_MAX_AGE_SECONDS } from './lib/constants';
-import { AppError, ForbiddenError } from './lib/error-types';
+import { AppError } from './lib/error-types';
 import { getCachedKvOrigins, setCachedKvOrigins, resetCorsOriginsCache } from './lib/cors-cache';
 import { resetAuthConfigCache } from './lib/access';
+import { createLogger } from './lib/logger';
 
 /**
  * Load allowed origin patterns from KV (setup:custom_domain + setup:allowed_origins).
@@ -89,6 +90,8 @@ type AppVariables = {
 
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
+const requestLogger = createLogger('request');
+
 // ============================================================================
 // Request Tracing Middleware
 // ============================================================================
@@ -101,7 +104,13 @@ app.use('*', async (c, next) => {
   await next();
   const duration = Date.now() - start;
 
-  console.log(`[${requestId}] ${c.req.method} ${c.req.path} - ${c.res.status} (${duration}ms)`);
+  requestLogger.info('Request completed', {
+    requestId,
+    method: c.req.method,
+    path: c.req.path,
+    status: c.res.status,
+    durationMs: duration,
+  });
 });
 
 // CORS middleware - restrict to trusted origins (configurable via ALLOWED_ORIGINS env var)
@@ -194,24 +203,23 @@ export function resetSetupCache() {
 // Convention: Routes should throw AppError subclasses for error handling.
 // Exception: Routes with domain-specific error response shapes (e.g., startup-status)
 // may catch and return directly when the shape differs from AppError.toJSON().
+type AppStatusCode = 400 | 401 | 403 | 404 | 409 | 429 | 500 | 503;
+
+const errorLogger = createLogger('error');
+
 app.onError((err, c) => {
   const requestId = c.get('requestId') || 'unknown';
 
-  if (err instanceof ForbiddenError) {
-    console.error(`[${requestId}] ForbiddenError:`, { message: err.message });
-    return c.json(err.toJSON(), 403);
-  }
-
   if (err instanceof AppError) {
-    console.error(`[${requestId}] AppError:`, {
+    errorLogger.warn(err.message, {
+      requestId,
       code: err.code,
-      message: err.message,
-      statusCode: err.statusCode
+      statusCode: err.statusCode,
     });
-    return c.json(err.toJSON(), err.statusCode as 400 | 401 | 403 | 404 | 500);
+    return c.json(err.toJSON(), err.statusCode as AppStatusCode);
   }
 
-  console.error(`[${requestId}] Unexpected error:`, err);
+  errorLogger.error('Unexpected error', err instanceof Error ? err : new Error(String(err)), { requestId });
   return c.json({ error: 'An unexpected error occurred' }, 500);
 });
 

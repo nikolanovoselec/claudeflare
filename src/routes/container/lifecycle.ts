@@ -69,7 +69,8 @@ app.post('/start', containerStartRateLimiter, async (c) => {
         storedBucketName = data.bucketName;
       }
     } catch (error) {
-      // DO might not exist yet, that's ok
+      // Expected: DO might not exist yet
+      reqLogger.debug('Could not get stored bucket name, DO may not exist yet');
     }
 
     // If bucket name is different or not set, update it
@@ -98,6 +99,8 @@ app.post('/start', containerStartRateLimiter, async (c) => {
     try {
       currentState = await container.getState();
     } catch (error) {
+      // Expected: container may not exist yet, treat as needing start
+      reqLogger.debug('Could not get container state, treating as unknown');
       currentState = { status: 'unknown' };
     }
 
@@ -175,7 +178,12 @@ app.post('/destroy', async (c) => {
     // Don't call getState() after destroy() — it resurrects the DO (gotcha #6)
     return c.json({ success: true, message: 'Container destroyed' });
   } catch (error) {
-    reqLogger.error('Container destroy error', toError(error));
+    const err = toError(error);
+    if (err.message.includes('not found') || err.message.includes('does not exist')) {
+      reqLogger.debug('Container not found during destroy', { error: err.message });
+    } else {
+      reqLogger.error('Container destroy error', err);
+    }
     throw new ContainerError('destroy', toErrorMessage(error));
   }
 });

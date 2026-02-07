@@ -16,7 +16,7 @@ interface CfAccessPoliciesResponse {
   result?: Array<{ id: string; include: unknown[] }>;
 }
 
-export interface UserEntry {
+interface UserEntry {
   email: string;
   addedBy: string;
   addedAt: string;

@@ -6,12 +6,13 @@ import { CircuitBreakerOpenError } from './error-types';
  * - OPEN: Circuit is tripped, requests are rejected immediately
  * - HALF_OPEN: Testing if the service has recovered
  */
+/** @internal */
 export type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
 
 /**
  * Configuration options for the circuit breaker
  */
-export interface CircuitBreakerOptions {
+interface CircuitBreakerOptions {
   /** Number of failures before opening the circuit */
   failureThreshold: number;
   /** Time in milliseconds to wait before transitioning from OPEN to HALF_OPEN */

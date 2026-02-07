@@ -1,5 +1,6 @@
 import type { AccessUser, Env, UserRole } from '../types';
 import { verifyAccessJWT } from './jwt';
+import { AuthError, ForbiddenError } from './error-types';
 
 // Module-level cache for auth config (avoids KV reads on every request)
 let cachedAuthDomain: string | null | undefined = undefined;
@@ -123,10 +124,38 @@ export async function resolveUserFromKV(
 ): Promise<{ addedBy: string; addedAt: string; role: UserRole } | null> {
   const raw = await kv.get(`user:${email}`);
   if (!raw) return null;
-  const entry = JSON.parse(raw);
+  const parsed = JSON.parse(raw);
+  if (typeof parsed !== 'object' || parsed === null) return null;
   return {
-    addedBy: entry.addedBy,
-    addedAt: entry.addedAt,
-    role: entry.role || 'user',  // Default missing role to 'user' for migration
+    addedBy: typeof parsed.addedBy === 'string' ? parsed.addedBy : 'unknown',
+    addedAt: typeof parsed.addedAt === 'string' ? parsed.addedAt : '',
+    role: parsed.role === 'admin' ? 'admin' : 'user',
   };
+}
+
+/**
+ * Authenticate a request and resolve user identity + bucket name.
+ * Shared between authMiddleware (Hono routes) and handleWebSocketUpgrade (raw handler).
+ *
+ * Throws AuthError if not authenticated, ForbiddenError if user not in allowlist.
+ */
+export async function authenticateRequest(
+  request: Request,
+  env: Env
+): Promise<{ user: AccessUser; bucketName: string }> {
+  const user = await getUserFromRequest(request, env);
+  if (!user.authenticated) {
+    throw new AuthError('Not authenticated');
+  }
+  if (env.DEV_MODE !== 'true') {
+    const kvEntry = await resolveUserFromKV(env.KV, user.email);
+    if (!kvEntry) {
+      throw new ForbiddenError('User not in allowlist');
+    }
+    user.role = kvEntry.role;
+  } else {
+    user.role = 'admin';
+  }
+  const bucketName = getBucketName(user.email);
+  return { user, bucketName };
 }

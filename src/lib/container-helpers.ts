@@ -5,6 +5,7 @@ import { getContainer } from '@cloudflare/containers';
 import { SESSION_ID_PATTERN, MAX_HEALTH_CHECK_ATTEMPTS, HEALTH_CHECK_INTERVAL_MS } from './constants';
 import { containerHealthCB } from './circuit-breakers';
 import { toErrorMessage } from './error-types';
+import { createLogger } from './logger';
 
 // Type for context variables set by container middleware
 type ContainerVariables = {
@@ -58,6 +59,8 @@ export interface HealthData {
  * Wait for a container to become healthy by polling the health endpoint.
  * Returns ok:true with health data on success, ok:false on failure after all attempts.
  */
+const healthLogger = createLogger('container-health');
+
 export async function waitForContainerHealth(
   container: DurableObjectStub,
   options?: HealthCheckOptions
@@ -75,7 +78,7 @@ export async function waitForContainerHealth(
         return { ok: true, data };
       }
     } catch (error) {
-      console.log(`Health check attempt ${attempt}/${maxAttempts} failed:`, error);
+      healthLogger.info('Health check attempt failed', { attempt, maxAttempts });
     }
 
     if (attempt < maxAttempts) {

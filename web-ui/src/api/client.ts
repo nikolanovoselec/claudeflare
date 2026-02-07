@@ -1,7 +1,13 @@
 import type { Session, UserInfo, InitProgress, StartupStatusResponse } from '../types';
 import { STARTUP_POLL_INTERVAL_MS, SESSION_ID_DISPLAY_LENGTH } from '../lib/constants';
 import { z } from 'zod';
-import { SessionSchema, StartupStatusSchema, UserSchema } from '../lib/schemas';
+import {
+  UserResponseSchema,
+  SessionsResponseSchema,
+  CreateSessionResponseSchema,
+  StartupStatusResponseSchema,
+  SessionStatusResponseSchema,
+} from '../lib/schemas';
 
 const BASE_URL = '/api';
 
@@ -55,47 +61,15 @@ async function fetchApi<T>(
   return data;
 }
 
-// Response schemas for API endpoints (exported for contract tests)
-export const UserResponseSchema = z.object({
-  email: z.string(),
-  authenticated: z.boolean(),
-  bucketName: z.string(),
-  bucketCreated: z.boolean().optional(),
-  role: z.enum(['admin', 'user']).optional(),
-});
-
-export const SessionsResponseSchema = z.object({
-  sessions: z.array(SessionSchema),
-});
-
-export const CreateSessionResponseSchema = z.object({
-  session: SessionSchema,
-});
-
-// InitStage enum values from types.ts
-export const InitStageSchema = z.enum(['creating', 'starting', 'syncing', 'mounting', 'verifying', 'ready', 'error', 'stopped']);
-
-export const StartupStatusResponseSchema = z.object({
-  stage: InitStageSchema,
-  progress: z.number(),
-  message: z.string(),
-  details: z.object({
-    bucketName: z.string(),
-    container: z.string(),
-    path: z.string(),
-    email: z.string().optional(),
-    containerStatus: z.string().optional(),
-    syncStatus: z.string().optional(),
-    syncError: z.string().nullable().optional(),
-    terminalPid: z.number().optional(),
-    healthServerOk: z.boolean().optional(),
-    terminalServerOk: z.boolean().optional(),
-    cpu: z.string().optional(),
-    mem: z.string().optional(),
-    hdd: z.string().optional(),
-  }),
-  error: z.string().optional(),
-});
+// Re-export schemas for backward compatibility (contract tests import from here)
+export {
+  UserResponseSchema,
+  SessionsResponseSchema,
+  CreateSessionResponseSchema,
+  InitStageSchema,
+  StartupStatusResponseSchema,
+  SessionStatusResponseSchema,
+} from '../lib/schemas';
 
 // User API
 export async function getUser(): Promise<UserInfo> {
@@ -124,12 +98,6 @@ export async function deleteSession(id: string): Promise<void> {
     method: 'DELETE',
   });
 }
-
-// Session status response schema
-export const SessionStatusResponseSchema = z.object({
-  status: z.string(),
-  ptyActive: z.boolean().optional(),
-});
 
 /**
  * Get session and container status

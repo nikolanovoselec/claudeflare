@@ -15,19 +15,6 @@ export function createMockSession(overrides: Partial<Session> = {}): Session {
 }
 
 /**
- * Create multiple mock sessions
- */
-export function createMockSessions(count: number, overrides: Partial<Session> = {}): Session[] {
-  return Array.from({ length: count }, (_, i) =>
-    createMockSession({
-      id: `mock-session-${i + 1}`,
-      name: `Test Session ${i + 1}`,
-      ...overrides,
-    })
-  );
-}
-
-/**
  * Create a mock TerminalConnection object
  */
 export function createMockTerminalConnection(
@@ -43,22 +30,6 @@ export function createMockTerminalConnection(
 }
 
 /**
- * Create a connected terminal connection with a mock WebSocket
- */
-export function createMockConnectedTerminalConnection(
-  overrides: Partial<Omit<TerminalConnection, 'ws'>> = {}
-): TerminalConnection {
-  const mockWs = new WebSocket('ws://localhost/test') as WebSocket;
-  return {
-    sessionId: 'mock-session-1',
-    terminalId: '1',
-    state: 'connected' as TerminalConnectionState,
-    ws: mockWs,
-    ...overrides,
-  };
-}
-
-/**
  * Create a mock UserInfo object
  */
 export function createMockUserInfo(overrides: Partial<UserInfo> = {}): UserInfo {
@@ -68,26 +39,6 @@ export function createMockUserInfo(overrides: Partial<UserInfo> = {}): UserInfo 
     bucketName: 'claudeflare-test-example-com',
     ...overrides,
   };
-}
-
-/**
- * Create a mock fetch response
- */
-export function createMockFetchResponse<T>(data: T, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
-}
-
-/**
- * Create a mock API error response
- */
-export function createMockErrorResponse(message: string, status = 500): Response {
-  return new Response(JSON.stringify({ error: message }), {
-    status,
-    headers: { 'Content-Type': 'application/json' },
-  });
 }
 
 /**

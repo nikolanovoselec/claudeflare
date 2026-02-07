@@ -1,8 +1,10 @@
-import { Component, onMount, createSignal, Show, type JSX } from 'solid-js';
+import { Component, onMount, onCleanup, createSignal, Show, type JSX } from 'solid-js';
 import { Router, Route, Navigate, useNavigate } from '@solidjs/router';
 import Layout from './components/Layout';
 import SetupWizard from './components/setup/SetupWizard';
 import { getUser } from './api/client';
+import { sessionStore } from './stores/session';
+import { terminalStore } from './stores/terminal';
 
 // Check setup status from API
 async function checkSetupStatus(): Promise<boolean> {
@@ -40,6 +42,11 @@ const AppContent: Component = () => {
     } finally {
       setLoading(false);
     }
+  });
+
+  onCleanup(() => {
+    sessionStore.stopAllMetricsPolling();
+    terminalStore.disposeAll();
   });
 
   return (
