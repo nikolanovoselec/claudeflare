@@ -82,6 +82,22 @@ export class container extends Container<Env> {
   async setBucketName(name: string): Promise<void> {
     this._bucketName = name;
     await this.ctx.storage.put('bucketName', name);
+
+    // On first container creation, the constructor's orphan check returns early
+    // before getR2Config() runs (no bucketName in storage yet → detected as orphan).
+    // Resolve R2 config now so updateEnvVars() has account ID and endpoint.
+    if (!this._r2AccountId) {
+      try {
+        const r2Config = await getR2Config(this.env);
+        this._r2AccountId = r2Config.accountId;
+        this._r2Endpoint = r2Config.endpoint;
+      } catch (err) {
+        this.logger.warn('R2 config not available in setBucketName', {
+          error: toErrorMessage(err),
+        });
+      }
+    }
+
     this.updateEnvVars();
     this.logger.info('Stored bucket name', { bucketName: name });
   }
