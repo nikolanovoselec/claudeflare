@@ -124,12 +124,18 @@ export async function resolveUserFromKV(
 ): Promise<{ addedBy: string; addedAt: string; role: UserRole } | null> {
   const raw = await kv.get(`user:${email}`);
   if (!raw) return null;
-  const parsed = JSON.parse(raw);
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
   if (typeof parsed !== 'object' || parsed === null) return null;
+  const obj = parsed as Record<string, unknown>;
   return {
-    addedBy: typeof parsed.addedBy === 'string' ? parsed.addedBy : 'unknown',
-    addedAt: typeof parsed.addedAt === 'string' ? parsed.addedAt : '',
-    role: parsed.role === 'admin' ? 'admin' : 'user',
+    addedBy: typeof obj.addedBy === 'string' ? obj.addedBy : 'unknown',
+    addedAt: typeof obj.addedAt === 'string' ? obj.addedAt : '',
+    role: obj.role === 'admin' ? 'admin' : 'user',
   };
 }
 

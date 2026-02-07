@@ -198,6 +198,22 @@ describe('Users Routes', () => {
       expect(body.error).toMatch(/email/i);
     });
 
+    it('returns 400 for email with double @@ (regex validation)', async () => {
+      const app = createTestApp();
+
+      for (const badEmail of ['@@', '@b', 'a@', 'a @b.com', ' @b.c']) {
+        const res = await app.request('/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: badEmail }),
+        });
+
+        expect(res.status).toBe(400);
+        const body = await res.json() as { error: string };
+        expect(body.error).toMatch(/email/i);
+      }
+    });
+
     it('returns 400 for duplicate email', async () => {
       const app = createTestApp();
 

@@ -51,14 +51,19 @@ async function fetchApi<T>(
     return {} as T;
   }
 
-  const data = JSON.parse(text);
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new ApiError(response.status, 'Invalid JSON response from server');
+  }
 
   // Validate against schema if provided
   if (schema) {
     return schema.parse(data);
   }
 
-  return data;
+  return data as T;
 }
 
 // Re-export schemas for backward compatibility (contract tests import from here)

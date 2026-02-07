@@ -19,9 +19,22 @@ describe('access.ts', () => {
     it('returns null for malformed JSON string', async () => {
       mockKV._store.set('user:bad@example.com', 'not-valid-json{{{');
 
-      await expect(
-        resolveUserFromKV(mockKV as unknown as KVNamespace, 'bad@example.com')
-      ).rejects.toThrow(); // JSON.parse will throw
+      const result = await resolveUserFromKV(mockKV as unknown as KVNamespace, 'bad@example.com');
+      expect(result).toBeNull();
+    });
+
+    it('returns null for truncated JSON object', async () => {
+      mockKV._store.set('user:trunc@example.com', '{invalid');
+
+      const result = await resolveUserFromKV(mockKV as unknown as KVNamespace, 'trunc@example.com');
+      expect(result).toBeNull();
+    });
+
+    it('returns null for plain text "not-json"', async () => {
+      mockKV._store.set('user:text@example.com', 'not-json');
+
+      const result = await resolveUserFromKV(mockKV as unknown as KVNamespace, 'text@example.com');
+      expect(result).toBeNull();
     });
 
     it('returns null when parsed value is not an object (e.g., number)', async () => {

@@ -61,16 +61,22 @@ app.post('/start', containerStartRateLimiter, async (c) => {
     // If container is running with wrong bucket name, we need to restart it
     let storedBucketName: string | null = null;
     try {
-      const getBucketResp = await container.fetch(
-        new Request('http://container/_internal/getBucketName', { method: 'GET' })
+      const getBucketResp = await containerInternalCB.execute(() =>
+        container.fetch(
+          new Request('http://container/_internal/getBucketName', { method: 'GET' })
+        )
       );
       const data = await getBucketResp.json();
       if (isBucketNameResponse(data)) {
         storedBucketName = data.bucketName;
       }
     } catch (error) {
-      // Expected: DO might not exist yet
-      reqLogger.debug('Could not get stored bucket name, DO may not exist yet');
+      const errMsg = toErrorMessage(error);
+      if (errMsg.includes('not found') || errMsg.includes('does not exist') || errMsg.includes('Network')) {
+        reqLogger.debug('Could not get stored bucket name, DO may not exist yet');
+      } else {
+        reqLogger.warn('Unexpected error getting stored bucket name', { error: errMsg });
+      }
     }
 
     // If bucket name is different or not set, update it

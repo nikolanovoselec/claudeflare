@@ -63,6 +63,28 @@ describe('API Client', () => {
     });
   });
 
+  describe('non-JSON response handling', () => {
+    it('should throw ApiError with descriptive message for non-JSON response body', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve('Internal Server Error'),
+      });
+
+      await expect(getUser()).rejects.toThrow('Invalid JSON response from server');
+    });
+
+    it('should throw ApiError for HTML response body', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve('<html><body>Error</body></html>'),
+      });
+
+      await expect(getUser()).rejects.toThrow('Invalid JSON response from server');
+    });
+  });
+
   describe('empty response handling', () => {
     it('should handle empty response body for DELETE requests', async () => {
       mockFetch.mockResolvedValueOnce({

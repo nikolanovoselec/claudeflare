@@ -1,15 +1,9 @@
 import { Container } from '@cloudflare/containers';
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import type { Env } from '../types';
-import { TERMINAL_SERVER_PORT, IDLE_TIMEOUT_MS } from '../lib/constants';
+import { TERMINAL_SERVER_PORT, IDLE_TIMEOUT_MS, ACTIVITY_POLL_INTERVAL_MS } from '../lib/constants';
 import { getR2Config } from '../lib/r2-config';
 import { createLogger } from '../lib/logger';
-
-/**
- * Bug 3 fix: Smart hibernation configuration
- */
-// Also defined locally here because container DO can't import from src/lib/constants.ts
-const ACTIVITY_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * Storage key to mark a DO as destroyed - prevents zombie resurrection
@@ -424,18 +418,18 @@ export class container extends Container<Env> {
    * calling any Container methods that would resurrect it.
    */
   override async destroy(): Promise<void> {
-    this.logger.info('Nuking container, clearing all storage');
+    this.logger.info('Destroying container, clearing operational storage');
     try {
       // Clear the alarm first
       await this.ctx.storage.deleteAlarm();
       this._activityPollAlarm = false;
 
-      // NUKE: Delete ALL storage to make DO empty
-      // Cloudflare garbage collects empty DOs
-      await this.ctx.storage.deleteAll();
-      this.logger.info('Storage cleared, DO will be garbage collected');
+      // Delete operational data but KEEP _destroyed flag
+      // If cleanupAndDestroy() set it, a stale alarm can still detect zombie state
+      await this.ctx.storage.delete('bucketName');
+      this.logger.info('Operational storage cleared');
     } catch (e) {
-      this.logger.error('Failed to nuke storage', e instanceof Error ? e : new Error(String(e)));
+      this.logger.error('Failed to clear storage', e instanceof Error ? e : new Error(String(e)));
     }
     return super.destroy();
   }

@@ -4,7 +4,7 @@ import type { DurableObjectStub } from '@cloudflare/workers-types';
 import { getContainer } from '@cloudflare/containers';
 import { SESSION_ID_PATTERN, MAX_HEALTH_CHECK_ATTEMPTS, HEALTH_CHECK_INTERVAL_MS } from './constants';
 import { containerHealthCB } from './circuit-breakers';
-import { toErrorMessage } from './error-types';
+import { toErrorMessage, ValidationError } from './error-types';
 import { createLogger } from './logger';
 
 // Type for context variables set by container middleware
@@ -14,13 +14,16 @@ type ContainerVariables = {
 
 export function getSessionIdFromRequest(c: Context): string {
   const sessionId = c.req.query('sessionId') || c.req.header('X-Browser-Session');
-  if (!sessionId) throw new Error('Missing sessionId parameter');
+  if (!sessionId) throw new ValidationError('Missing sessionId parameter');
+  if (!SESSION_ID_PATTERN.test(sessionId)) {
+    throw new ValidationError('Invalid sessionId format');
+  }
   return sessionId;
 }
 
 export function getContainerId(bucketName: string, sessionId: string): string {
   if (!sessionId || !SESSION_ID_PATTERN.test(sessionId)) {
-    throw new Error(`Invalid sessionId: ${sessionId}`);
+    throw new ValidationError('Invalid sessionId format');
   }
   return `${bucketName}-${sessionId}`;
 }

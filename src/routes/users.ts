@@ -34,7 +34,7 @@ app.post('/', requireAdmin, userMutationRateLimiter, async (c) => {
   const body = await c.req.json();
   const email = body.email?.trim().toLowerCase();
 
-  if (!email || !email.includes('@')) {
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     throw new ValidationError('Valid email is required');
   }
 

@@ -41,30 +41,3 @@ export function createMockUserInfo(overrides: Partial<UserInfo> = {}): UserInfo 
   };
 }
 
-/**
- * Mock the global fetch for testing API calls
- */
-export function mockFetch(responses: Map<string, Response | (() => Response)>): () => void {
-  const originalFetch = globalThis.fetch;
-
-  globalThis.fetch = async (input: RequestInfo | URL, _init?: RequestInit): Promise<Response> => {
-    const url = typeof input === 'string' ? input : input.toString();
-
-    for (const [pattern, response] of responses) {
-      if (url.includes(pattern)) {
-        return typeof response === 'function' ? response() : response.clone();
-      }
-    }
-
-    // Default: return 404
-    return new Response(JSON.stringify({ error: 'Not found' }), {
-      status: 404,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  };
-
-  // Return cleanup function
-  return () => {
-    globalThis.fetch = originalFetch;
-  };
-}

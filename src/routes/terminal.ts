@@ -43,7 +43,7 @@ export function validateWebSocketRoute(request: Request, env: Env): WebSocketRou
   const upgradeHeader = request.headers.get('Upgrade');
 
   // Not a WebSocket terminal route
-  if (!wsMatch || (upgradeHeader?.toLowerCase() !== 'websocket' && !url.pathname.endsWith('/ws'))) {
+  if (!wsMatch || upgradeHeader?.toLowerCase() !== 'websocket') {
     return { isWebSocketRoute: false };
   }
 

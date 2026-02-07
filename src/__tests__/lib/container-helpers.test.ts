@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getContainerId, waitForContainerHealth, ensureBucketName } from '../../lib/container-helpers';
+import { getContainerId, getSessionIdFromRequest, waitForContainerHealth, ensureBucketName } from '../../lib/container-helpers';
 import type { HealthCheckOptions, HealthData } from '../../lib/container-helpers';
+import { ValidationError } from '../../lib/error-types';
 
 describe('getContainerId', () => {
   it('creates valid container ID from bucket and session', () => {
@@ -21,6 +22,67 @@ describe('getContainerId', () => {
     expect(() => getContainerId('bucket', 'validid1')).not.toThrow();
     expect(() => getContainerId('bucket', 'abcdefgh')).not.toThrow();
     expect(() => getContainerId('bucket', '12345678')).not.toThrow();
+  });
+
+  it('throws ValidationError (not generic Error) on invalid input', () => {
+    expect(() => getContainerId('bucket', '../etc/passwd')).toThrow(ValidationError);
+    expect(() => getContainerId('bucket', '')).toThrow(ValidationError);
+  });
+
+  it('error message does not contain attacker input', () => {
+    const maliciousInput = '../../etc/passwd';
+    try {
+      getContainerId('bucket', maliciousInput);
+      expect.fail('should have thrown');
+    } catch (e) {
+      expect((e as Error).message).not.toContain(maliciousInput);
+    }
+  });
+});
+
+describe('getSessionIdFromRequest', () => {
+  function createMockContext(query?: string, header?: string) {
+    return {
+      req: {
+        query: (name: string) => (name === 'sessionId' ? query : undefined),
+        header: (name: string) => (name === 'X-Browser-Session' ? header : undefined),
+      },
+    } as any;
+  }
+
+  it('throws ValidationError for path traversal attempt', () => {
+    const c = createMockContext('../../etc/passwd');
+    expect(() => getSessionIdFromRequest(c)).toThrow(ValidationError);
+  });
+
+  it('throws ValidationError for empty string', () => {
+    const c = createMockContext('');
+    expect(() => getSessionIdFromRequest(c)).toThrow(ValidationError);
+  });
+
+  it('throws ValidationError for string with spaces', () => {
+    const c = createMockContext('abc 12345');
+    expect(() => getSessionIdFromRequest(c)).toThrow(ValidationError);
+  });
+
+  it('throws ValidationError for string with special characters', () => {
+    const c = createMockContext('abc!@#$%');
+    expect(() => getSessionIdFromRequest(c)).toThrow(ValidationError);
+  });
+
+  it('throws ValidationError when sessionId is missing entirely', () => {
+    const c = createMockContext(undefined, undefined);
+    expect(() => getSessionIdFromRequest(c)).toThrow(ValidationError);
+  });
+
+  it('returns valid sessionId from query parameter', () => {
+    const c = createMockContext('abc12345');
+    expect(getSessionIdFromRequest(c)).toBe('abc12345');
+  });
+
+  it('falls back to X-Browser-Session header', () => {
+    const c = createMockContext(undefined, 'xyz98765');
+    expect(getSessionIdFromRequest(c)).toBe('xyz98765');
   });
 });
 

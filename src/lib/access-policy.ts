@@ -43,18 +43,18 @@ export async function listAllKvKeys(kv: KVNamespace, prefix: string): Promise<KV
  */
 export async function getAllUsers(kv: KVNamespace): Promise<UserEntry[]> {
   const keys = await listAllKvKeys(kv, 'user:');
-  const users: UserEntry[] = [];
-  for (const key of keys) {
-    const data = await kv.get(key.name, 'json') as Omit<UserEntry, 'email'> | null;
-    if (data) {
-      users.push({
+  const results = await Promise.all(
+    keys.map(async (key) => {
+      const data = await kv.get(key.name, 'json') as Omit<UserEntry, 'email'> | null;
+      if (!data) return null;
+      return {
         ...data,
         email: key.name.replace('user:', ''),
         role: data.role ?? 'user',
-      });
-    }
-  }
-  return users;
+      } as UserEntry;
+    })
+  );
+  return results.filter((u): u is UserEntry => u !== null);
 }
 
 /**

@@ -59,11 +59,4 @@ export const SessionStatusResponseSchema = z.object({
   ptyActive: z.boolean().optional(),
 });
 
-// Derived TypeScript types
-export type UserResponse = z.infer<typeof UserResponseSchema>;
-export type SessionsResponse = z.infer<typeof SessionsResponseSchema>;
-export type CreateSessionResponse = z.infer<typeof CreateSessionResponseSchema>;
-export type StartupStatusResponse = z.infer<typeof StartupStatusResponseSchema>;
-export type SessionStatusResponse = z.infer<typeof SessionStatusResponseSchema>;
-export type Session = z.infer<typeof SessionSchema>;
 

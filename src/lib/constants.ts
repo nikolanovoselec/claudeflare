@@ -33,3 +33,6 @@ export const MAX_SESSION_NAME_LENGTH = 100;
 
 /** Container ID display truncation length */
 export const CONTAINER_ID_DISPLAY_LENGTH = 24;
+
+/** Activity poll interval for container idle detection (5 minutes) */
+export const ACTIVITY_POLL_INTERVAL_MS = 5 * 60 * 1000;

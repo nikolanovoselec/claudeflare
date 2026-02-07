@@ -43,12 +43,12 @@ export function createMockKV(): MockKV {
     delete: vi.fn(async (key: string) => {
       store.delete(key);
     }),
-    list: vi.fn(async (opts?: { prefix?: string }) => {
+    list: vi.fn(async (opts?: { prefix?: string; cursor?: string }) => {
       const prefix = opts?.prefix ?? '';
       const keys = Array.from(store.keys())
         .filter((k) => k.startsWith(prefix))
         .map((name) => ({ name }));
-      return { keys };
+      return { keys, list_complete: true };
     }),
     _store: store,
     _set: (key: string, value: unknown) => store.set(key, JSON.stringify(value)),

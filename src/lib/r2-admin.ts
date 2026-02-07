@@ -51,12 +51,12 @@ export async function createBucketIfNotExists(
   // Check if bucket already exists
   const exists = await bucketExists(accountId, apiToken, bucketName);
   if (exists) {
-    logger.info(`Bucket ${bucketName} already exists`);
+    logger.info('Bucket already exists', { bucketName });
     return { success: true, created: false };
   }
 
   // Create the bucket
-  logger.info(`Creating bucket ${bucketName}...`);
+  logger.info('Creating bucket', { bucketName });
 
   const response = await fetch(
     `https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/buckets`,
@@ -74,10 +74,10 @@ export async function createBucketIfNotExists(
 
   if (!response.ok || !data.success) {
     const errorMsg = data.errors?.[0]?.message || `HTTP ${response.status}`;
-    logger.error(`Failed to create bucket: ${errorMsg}`);
+    logger.error('Failed to create bucket', undefined, { bucketName, errorMsg });
     return { success: false, error: errorMsg };
   }
 
-  logger.info(`Bucket ${bucketName} created successfully`);
+  logger.info('Bucket created successfully', { bucketName });
   return { success: true, created: true };
 }

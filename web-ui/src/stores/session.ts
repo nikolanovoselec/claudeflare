@@ -370,37 +370,37 @@ async function fetchMetricsForSession(sessionId: string): Promise<void> {
 }
 
 // Auto-fetch metrics for running sessions (called after session becomes running)
-let metricsPollingIntervals: Record<string, ReturnType<typeof setInterval>> = {};
+let metricsPollingIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
 function startMetricsPolling(sessionId: string): void {
   // Don't start if already polling
-  if (metricsPollingIntervals[sessionId]) return;
+  if (metricsPollingIntervals.has(sessionId)) return;
 
   // Fetch immediately
   fetchMetricsForSession(sessionId);
 
   // Poll at regular intervals
-  metricsPollingIntervals[sessionId] = setInterval(() => {
+  metricsPollingIntervals.set(sessionId, setInterval(() => {
     fetchMetricsForSession(sessionId);
-  }, METRICS_POLL_INTERVAL_MS);
+  }, METRICS_POLL_INTERVAL_MS));
 }
 
 function stopMetricsPolling(sessionId: string): void {
-  const interval = metricsPollingIntervals[sessionId];
+  const interval = metricsPollingIntervals.get(sessionId);
   if (interval) {
     clearInterval(interval);
-    delete metricsPollingIntervals[sessionId];
+    metricsPollingIntervals.delete(sessionId);
     console.log(`[SessionStore] Stopped metrics polling for session ${sessionId}`);
   }
 }
 
 // Stop all metrics polling and startup polling (useful for cleanup)
 function stopAllMetricsPolling(): void {
-  Object.entries(metricsPollingIntervals).forEach(([sessionId, interval]) => {
+  metricsPollingIntervals.forEach((interval, sessionId) => {
     clearInterval(interval);
     console.log(`[SessionStore] Stopped metrics polling for session ${sessionId}`);
   });
-  metricsPollingIntervals = {};
+  metricsPollingIntervals.clear();
 
   for (const [sessionId, cleanup] of startupCleanups) {
     cleanup();

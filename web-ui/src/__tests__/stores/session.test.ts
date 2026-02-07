@@ -533,6 +533,40 @@ describe('Session Store', () => {
       expect(metrics!.cpu).toBe('5%');
       expect(metrics!.mem).toBe('256MB');
     });
+
+    it('should not start duplicate polling for same session', async () => {
+      await sessionStore.loadSessions();
+
+      // Clear mock to count only new calls
+      mockGetStartupStatus.mockClear();
+
+      // Advance one polling interval - should get exactly 1 poll
+      await vi.advanceTimersByTimeAsync(1000);
+      const callCount = mockGetStartupStatus.mock.calls.length;
+
+      // Should be 1 poll, not 2 (no duplicate interval)
+      expect(callCount).toBe(1);
+    });
+
+    it('stopAllMetricsPolling should stop all active polling intervals', async () => {
+      await sessionStore.loadSessions();
+      mockGetStartupStatus.mockClear();
+
+      sessionStore.stopAllMetricsPolling();
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      // No new polls should have happened
+      expect(mockGetStartupStatus.mock.calls.length).toBe(0);
+    });
+
+    it('stopMetricsPolling is idempotent (no error on double-stop)', async () => {
+      await sessionStore.loadSessions();
+
+      // Stop twice - should not throw
+      sessionStore.stopMetricsPolling('session-1');
+      sessionStore.stopMetricsPolling('session-1');
+    });
   });
 
   describe('localStorage persistence', () => {
