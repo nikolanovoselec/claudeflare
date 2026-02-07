@@ -50,8 +50,9 @@ app.post('/start', containerStartRateLimiter, async (c) => {
 
     // CRITICAL: Create R2 bucket BEFORE starting container
     // Container sync will fail if bucket doesn't exist
+    const r2Config = await getR2Config(c.env);
     const bucketResult = await createBucketIfNotExists(
-      (await getR2Config(c.env)).accountId,
+      r2Config.accountId,
       c.env.CLOUDFLARE_API_TOKEN,
       bucketName
     );
@@ -78,7 +79,13 @@ app.post('/start', containerStartRateLimiter, async (c) => {
             new Request('http://container/_internal/setBucketName', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ bucketName }),
+              body: JSON.stringify({
+                bucketName,
+                r2AccessKeyId: c.env.R2_ACCESS_KEY_ID,
+                r2SecretAccessKey: c.env.R2_SECRET_ACCESS_KEY,
+                r2AccountId: r2Config.accountId,
+                r2Endpoint: r2Config.endpoint,
+              }),
             })
           )
         );

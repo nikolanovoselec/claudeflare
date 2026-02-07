@@ -34,6 +34,8 @@ export class container extends Container<Env> {
   private _bucketName: string | null = null;
   private _r2AccountId: string | null = null;
   private _r2Endpoint: string | null = null;
+  private _r2AccessKeyId: string | null = null;
+  private _r2SecretAccessKey: string | null = null;
 
   // Bug 3 fix: Activity polling timer
   private _activityPollAlarm: boolean = false;
@@ -79,13 +81,22 @@ export class container extends Container<Env> {
   /**
    * Set the bucket name for this container (called by worker on first access)
    */
-  async setBucketName(name: string): Promise<void> {
+  async setBucketName(name: string, r2Creds?: {
+    r2AccessKeyId?: string;
+    r2SecretAccessKey?: string;
+    r2AccountId?: string;
+    r2Endpoint?: string;
+  }): Promise<void> {
     this._bucketName = name;
     await this.ctx.storage.put('bucketName', name);
 
-    // On first container creation, the constructor's orphan check returns early
-    // before getR2Config() runs (no bucketName in storage yet → detected as orphan).
-    // Resolve R2 config now so updateEnvVars() has account ID and endpoint.
+    // Use Worker-provided R2 credentials (most reliable — Worker definitely has secrets)
+    if (r2Creds?.r2AccessKeyId) this._r2AccessKeyId = r2Creds.r2AccessKeyId;
+    if (r2Creds?.r2SecretAccessKey) this._r2SecretAccessKey = r2Creds.r2SecretAccessKey;
+    if (r2Creds?.r2AccountId) this._r2AccountId = r2Creds.r2AccountId;
+    if (r2Creds?.r2Endpoint) this._r2Endpoint = r2Creds.r2Endpoint;
+
+    // Fall back to getR2Config only if Worker didn't provide account ID
     if (!this._r2AccountId) {
       try {
         const r2Config = await getR2Config(this.env);
@@ -115,8 +126,8 @@ export class container extends Container<Env> {
    */
   private updateEnvVars(): void {
     const bucketName = this._bucketName || 'unknown-bucket';
-    const accessKeyId = this.env.R2_ACCESS_KEY_ID || '';
-    const secretAccessKey = this.env.R2_SECRET_ACCESS_KEY || '';
+    const accessKeyId = this._r2AccessKeyId || this.env.R2_ACCESS_KEY_ID || '';
+    const secretAccessKey = this._r2SecretAccessKey || this.env.R2_SECRET_ACCESS_KEY || '';
     const accountId = this._r2AccountId || this.env.R2_ACCOUNT_ID || '';
     const endpoint = this._r2Endpoint || this.env.R2_ENDPOINT || '';
 
@@ -152,9 +163,16 @@ export class container extends Container<Env> {
     // Handle internal bucket name setting endpoint
     if (url.pathname === '/_internal/setBucketName' && request.method === 'POST') {
       try {
-        const { bucketName } = await request.json() as { bucketName: string };
+        const { bucketName, r2AccessKeyId, r2SecretAccessKey, r2AccountId, r2Endpoint } =
+          await request.json() as {
+            bucketName: string;
+            r2AccessKeyId?: string;
+            r2SecretAccessKey?: string;
+            r2AccountId?: string;
+            r2Endpoint?: string;
+          };
         if (bucketName) {
-          await this.setBucketName(bucketName);
+          await this.setBucketName(bucketName, { r2AccessKeyId, r2SecretAccessKey, r2AccountId, r2Endpoint });
           return new Response(JSON.stringify({ success: true, bucketName }), {
             headers: { 'Content-Type': 'application/json' },
           });

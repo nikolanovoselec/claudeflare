@@ -232,7 +232,9 @@ app.get('/startup-status', async (c) => {
     if (syncStatus === 'success') {
       response.message = 'Container ready (workspace synced)';
     } else if (syncStatus === 'skipped') {
-      response.message = 'Container ready (sync skipped - no R2 config)';
+      const syncError = healthData.syncError || 'R2 credentials not configured';
+      response.message = `Container ready (sync skipped: ${syncError})`;
+      response.details.syncError = syncError;
     } else {
       response.message = 'Container ready';
     }

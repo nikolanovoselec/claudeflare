@@ -290,7 +290,7 @@ describe('Container Status Routes', () => {
       expect(res.status).toBe(200);
       const body = await res.json() as { stage: string; message: string };
       expect(body.stage).toBe('ready');
-      expect(body.message).toBe('Container ready (sync skipped - no R2 config)');
+      expect(body.message).toBe('Container ready (sync skipped: R2 credentials not configured)');
     });
 
     it('skips mounting stage when health server is ok after sync (single port architecture)', async () => {

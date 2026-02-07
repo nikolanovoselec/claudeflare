@@ -531,7 +531,19 @@ override async destroy(): Promise<void> {
 ```
 
 **Environment Variables Injection:**
+
+R2 credentials flow from the Worker to the container process through two paths:
+
+1. **setBucketName path** (new containers, bucket updates): The Worker passes R2 credentials explicitly via `_internal/setBucketName` request body (`r2AccessKeyId`, `r2SecretAccessKey`, `r2AccountId`, `r2Endpoint`). This is the primary path and most reliable because the Worker definitely has the secrets.
+2. **Constructor path** (container restart): The DO reads from `this.env` (Worker secrets) + `getR2Config()` (account ID/endpoint from KV or API). This is a fallback for when the DO is reactivated without going through `setBucketName`.
+
 ```typescript
+// updateEnvVars() resolves with fallback chain:
+const accessKeyId = this._r2AccessKeyId || this.env.R2_ACCESS_KEY_ID || '';
+const secretAccessKey = this._r2SecretAccessKey || this.env.R2_SECRET_ACCESS_KEY || '';
+const accountId = this._r2AccountId || this.env.R2_ACCOUNT_ID || '';
+const endpoint = this._r2Endpoint || this.env.R2_ENDPOINT || '';
+
 this.envVars = {
   AWS_ACCESS_KEY_ID: accessKeyId,      // For rclone S3 compatibility
   AWS_SECRET_ACCESS_KEY: secretAccessKey,
@@ -544,10 +556,10 @@ this.envVars = {
 };
 ```
 
-**Critical: envVars must be set in constructor**, not as a getter. Cloudflare Containers doesn't invoke property getters correctly.
+**Critical: envVars must be set as a property assignment**, not as a getter. Cloudflare Containers reads `this.envVars` as a plain property at `start()` time.
 
 **Internal Endpoints:**
-- `/_internal/setBucketName` - Set user's bucket name
+- `/_internal/setBucketName` - Set user's bucket name + R2 credentials (passed from Worker)
 - `/_internal/getBucketName` - Get stored bucket name
 - `/_internal/debugEnvVars` - Debug environment (masked secrets)
 
@@ -1152,16 +1164,16 @@ curl https://claudeflare.your-subdomain.workers.dev/api/container/startup-status
 
 ### Container Environment
 
-| Variable | Purpose |
-|----------|---------|
-| `R2_BUCKET_NAME` | User's personal bucket |
-| `R2_ACCESS_KEY_ID` | rclone auth |
-| `R2_SECRET_ACCESS_KEY` | rclone auth |
-| `R2_ACCOUNT_ID` | rclone endpoint |
-| `R2_ENDPOINT` | rclone endpoint |
-| `AWS_ACCESS_KEY_ID` | S3 compatibility |
-| `AWS_SECRET_ACCESS_KEY` | S3 compatibility |
-| `TERMINAL_PORT` | Always 8080 |
+| Variable | Purpose | Source |
+|----------|---------|--------|
+| `R2_BUCKET_NAME` | User's personal bucket | Worker → DO via `setBucketName` |
+| `R2_ACCESS_KEY_ID` | rclone auth | Worker → DO via `setBucketName` (preferred) or DO `this.env` fallback |
+| `R2_SECRET_ACCESS_KEY` | rclone auth | Worker → DO via `setBucketName` (preferred) or DO `this.env` fallback |
+| `R2_ACCOUNT_ID` | rclone endpoint | Worker → DO via `setBucketName` or `getR2Config()` fallback |
+| `R2_ENDPOINT` | rclone endpoint | Worker → DO via `setBucketName` or `getR2Config()` fallback |
+| `AWS_ACCESS_KEY_ID` | S3 compatibility | Mirrors `R2_ACCESS_KEY_ID` |
+| `AWS_SECRET_ACCESS_KEY` | S3 compatibility | Mirrors `R2_SECRET_ACCESS_KEY` |
+| `TERMINAL_PORT` | Always 8080 | Hardcoded in DO class |
 
 ---
 
@@ -1914,6 +1926,16 @@ constructor(ctx, env) {
 }
 ```
 
+### R2 Sync Skipped — DO Missing Worker Secrets
+
+**Symptom:** Container starts but shows "sync skipped: R2_ACCESS_KEY_ID not set" (or similar).
+
+**Cause:** The DO's `this.env` may not reliably have Worker secrets (`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`). This can happen if secrets aren't set or if the DO env doesn't include all Worker bindings.
+
+**Fix (implemented):** The Worker now passes R2 credentials to the DO via the `_internal/setBucketName` request body. The DO uses Worker-provided credentials first, falling back to `this.env` only if not provided. The startup-status endpoint now includes the specific `syncError` for 'skipped' status so you can see which env var is missing.
+
+**Diagnosis:** Check the startup-status response `details.syncError` field — it names the exact missing variable.
+
 ### Container Stuck at "Waiting for Services"
 
 **Symptom:** Startup progress stuck at 20%.
@@ -1926,7 +1948,7 @@ curl /api/container/sync-log?sessionId=xxx
 ```
 
 **Common Issues:**
-- Missing R2 credentials
+- Missing R2 credentials (check startup-status `details.syncError`)
 - Bucket doesn't exist
 - Network timeout to R2
 
