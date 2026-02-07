@@ -371,9 +371,9 @@ if [ -t 1 ] && [ -z "$TERMINAL_APP_STARTED" ]; then
     case "${TERMINAL_ID:-1}" in
         1)
             # Tab 1: Claude Code (via claude-unleashed)
-            export IS_SANDBOX=1
-            export DISABLE_INSTALLATION_CHECKS=1
-            cu --silent --no-consent --disable-installation-checks
+            # Env vars set in Dockerfile: CLAUDE_UNLEASHED_SILENT, CLAUDE_UNLEASHED_SKIP_CONSENT,
+            # DISABLE_INSTALLATION_CHECKS, IS_SANDBOX. Auto-updates to latest on first run.
+            cu
             # If claude exits, drop to bash (don't use exec so PTY survives)
             ;;
         2)

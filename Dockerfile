@@ -13,9 +13,12 @@ RUN npm install --production
 # ---- Stage 2: Runtime ----
 FROM node:22-alpine
 
-# Suppress npm update nag and claude-unleashed auto-updates in container
+# Suppress npm update nag; configure claude-unleashed for non-interactive container use
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false
-ENV CLAUDE_UNLEASHED_NO_UPDATE=1
+ENV CLAUDE_UNLEASHED_SILENT=1
+ENV CLAUDE_UNLEASHED_SKIP_CONSENT=1
+ENV DISABLE_INSTALLATION_CHECKS=1
+ENV IS_SANDBOX=1
 
 # Install runtime packages (no build tools needed - native addons pre-compiled)
 RUN apk add --no-cache \
@@ -53,15 +56,13 @@ RUN apk add --no-cache \
     && apk add --no-cache lazygit --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community
 
 # Install claude-unleashed globally (wraps Claude Code with permission bypass)
-# Provides 'cu' command with --silent --no-consent --disable-installation-checks for non-interactive use
+# Ships with Claude Code 2.1.25 baseline; auto-updates to latest on first container start
 RUN npm install -g github:nikolanovoselec/claude-unleashed
 
 # Create 'claude' wrapper that uses claude-unleashed transparently
 # Users type 'claude' as usual, gets unleashed mode under the hood
-RUN echo '#!/bin/bash' > /usr/local/bin/claude && \
-    echo 'export IS_SANDBOX=1' >> /usr/local/bin/claude && \
-    echo 'export DISABLE_INSTALLATION_CHECKS=1' >> /usr/local/bin/claude && \
-    echo 'exec cu --silent --no-consent --disable-installation-checks "$@"' >> /usr/local/bin/claude && \
+# All flags are set via env vars above (CLAUDE_UNLEASHED_SILENT, CLAUDE_UNLEASHED_SKIP_CONSENT, etc.)
+RUN printf '#!/bin/bash\nexec cu "$@"\n' > /usr/local/bin/claude && \
     chmod +x /usr/local/bin/claude
 
 # Create workspace directory structure
