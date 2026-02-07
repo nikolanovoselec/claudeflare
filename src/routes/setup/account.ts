@@ -29,11 +29,11 @@ export async function handleGetAccount(
 
     steps[stepIndex].status = 'success';
     return accountsData.result[0].id;
-  } catch (error) {
-    if (error instanceof SetupError) {
-      throw error;
+  } catch (err) {
+    if (err instanceof SetupError) {
+      throw err;
     }
-    logger.error('Failed to get account', toError(error));
+    logger.error('Failed to get account', toError(err));
     steps[stepIndex].status = 'error';
     steps[stepIndex].error = 'Failed to connect to Cloudflare API';
     throw new SetupError('Failed to connect to Cloudflare API', steps);

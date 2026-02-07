@@ -29,8 +29,8 @@ async function trySyncAccessPolicy(env: Env): Promise<void> {
     if (accountId && domain && env.CLOUDFLARE_API_TOKEN) {
       await syncAccessPolicy(env.CLOUDFLARE_API_TOKEN, accountId, domain, env.KV);
     }
-  } catch (e) {
-    logger.error('Failed to sync Access policy', toError(e));
+  } catch (err) {
+    logger.error('Failed to sync Access policy', toError(err));
   }
 }
 
@@ -114,9 +114,9 @@ app.delete('/:email', requireAdmin, userMutationRateLimiter, async (c) => {
         })
       );
     }
-  } catch (e) {
+  } catch (err) {
     // Non-fatal
-    logger.error('Failed to delete R2 bucket', toError(e));
+    logger.error('Failed to delete R2 bucket', toError(err));
   }
 
   await trySyncAccessPolicy(c.env);

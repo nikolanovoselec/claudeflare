@@ -1,11 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, cleanup } from '@solidjs/testing-library';
-import SettingsPanel, {
-  loadSettings,
-  saveSettings,
-  defaultSettings,
-  type Settings,
-} from '../../components/SettingsPanel';
+import SettingsPanel from '../../components/SettingsPanel';
+import { loadSettings, saveSettings, defaultSettings } from '../../lib/settings';
+import type { Settings } from '../../lib/settings';
 
 // Mock localStorage
 const localStorageMock = (() => {

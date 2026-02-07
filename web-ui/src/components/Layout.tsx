@@ -115,8 +115,8 @@ const Layout: Component<LayoutProps> = (props) => {
     try {
       await sessionStore.startSession(id);
       setLastSyncTime(new Date());
-    } catch (e) {
-      console.error('Failed to start session:', e);
+    } catch (err) {
+      console.error('Failed to start session:', err);
     }
   };
 
@@ -134,6 +134,17 @@ const Layout: Component<LayoutProps> = (props) => {
       sessionStore.setActiveSession(session.id);
       await sessionStore.startSession(session.id);
       setLastSyncTime(new Date());
+    }
+  };
+
+  const handleStartMostRecentSession = () => {
+    const sessions = sessionStore.sessions;
+    if (sessions.length === 0) return;
+    const mostRecent = [...sessions].sort((a, b) =>
+      new Date(b.lastAccessedAt).getTime() - new Date(a.lastAccessedAt).getTime()
+    )[0];
+    if (mostRecent) {
+      handleStartSession(mostRecent.id);
     }
   };
 
@@ -207,9 +218,11 @@ const Layout: Component<LayoutProps> = (props) => {
         {/* Main content */}
         <TerminalArea
           activeSession={activeSession() ?? null}
+          activeSessionId={sessionStore.activeSessionId}
           runningSessions={runningSessions()}
           showTerminal={showTerminal() ?? false}
           hasInitializingSession={hasInitializingSession()}
+          hasNoSessions={sessionStore.sessions.length === 0}
           allSessionsStopped={allSessionsStopped()}
           activeTiling={activeTiling()}
           activeTabOrder={activeTabOrder()}
@@ -221,7 +234,9 @@ const Layout: Component<LayoutProps> = (props) => {
           onTileClick={handleTileClick}
           onOpenSessionById={handleOpenSessionById}
           onStartSession={handleStartSession}
+          onStartMostRecentSession={handleStartMostRecentSession}
           onTerminalError={setTerminalError}
+          getTerminalsForSession={sessionStore.getTerminalsForSession}
           error={sessionStore.error || terminalError()}
           onDismissError={handleDismissError}
         />

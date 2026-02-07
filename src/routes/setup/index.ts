@@ -25,9 +25,10 @@ const ConfigureBodySchema = z.object({
   adminUsers: z
     .array(z.string().email('Each adminUsers entry must be a valid email'))
     .min(1, 'At least one admin user is required'),
-  allowedOrigins: z
-    .array(z.string().min(1))
-    .optional(),
+  allowedOrigins: z.array(
+    z.string().min(1).regex(/^\.[a-zA-Z0-9]([a-zA-Z0-9.-]*[a-zA-Z0-9])?$/,
+      'Origin patterns must start with . and contain valid domain segments (e.g., .workers.dev)')
+  ).optional(),
 }).refine(
   (data) => data.adminUsers.every((admin) => data.allowedUsers.includes(admin)),
   { message: 'All adminUsers must also be in allowedUsers', path: ['adminUsers'] }
@@ -35,7 +36,20 @@ const ConfigureBodySchema = z.object({
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
-// Register simple endpoint handlers
+/**
+ * Conditional auth middleware for /detect-token:
+ * - First-time setup (setup:complete not set): public access (bootstrap)
+ * - After setup complete: require admin auth via CF Access
+ */
+app.use('/detect-token', async (c, next) => {
+  const isComplete = await c.env.KV.get('setup:complete');
+  if (isComplete === 'true') {
+    return authMiddleware(c, async () => requireAdmin(c, next));
+  }
+  return next();
+});
+
+// Register simple endpoint handlers (status, detect-token, reset-for-tests, restore-for-tests)
 app.route('/', handlers);
 
 /**

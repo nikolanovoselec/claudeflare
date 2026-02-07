@@ -199,8 +199,8 @@ export async function handleWebSocketUpgrade(
 
     logger.info('Container WebSocket response', { status: response.status });
     return response;
-  } catch (error) {
-    logger.error('WebSocket upgrade error', toError(error));
+  } catch (err) {
+    logger.error('WebSocket upgrade error', toError(err));
     // Don't expose internal error details to client
     return new Response(JSON.stringify({
       error: 'WebSocket connection failed'
@@ -271,7 +271,7 @@ app.get('/:sessionId/status', async (c) => {
       ptyActive,
       wsUrl: `/api/terminal/${sessionId}/ws`,
     });
-  } catch (error) {
+  } catch (err) {
     // Container not running
     return c.json({
       session,

@@ -2,6 +2,7 @@ import { Component, For, createSignal } from 'solid-js';
 import { setupStore } from '../../stores/setup';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
+import '../../styles/configure-step.css';
 
 const ConfigureStep: Component = () => {
   const [adminEmailInput, setAdminEmailInput] = createSignal('');
@@ -139,99 +140,6 @@ const ConfigureStep: Component = () => {
         </Button>
       </div>
 
-      <style>{`
-        .configure-step {
-          display: flex;
-          flex-direction: column;
-          gap: 24px;
-        }
-
-        .configure-title {
-          margin: 0;
-          font-size: 24px;
-          font-weight: 600;
-          color: var(--color-text-primary);
-          text-align: center;
-        }
-
-        .setup-field {
-          display: flex;
-          flex-direction: column;
-          gap: 8px;
-        }
-
-        .setup-field-label {
-          font-size: 14px;
-          font-weight: 500;
-          color: var(--color-text-primary);
-        }
-
-        .setup-field-description {
-          margin: 0;
-          font-size: 13px;
-          color: var(--color-text-secondary);
-          line-height: 1.4;
-        }
-
-        .email-input-row {
-          display: flex;
-          gap: 8px;
-          align-items: flex-start;
-        }
-
-        .email-input-row .input-container {
-          flex: 1;
-        }
-
-        .email-tags {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 8px;
-        }
-
-        .email-tag {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          padding: 6px 10px;
-          background: var(--color-bg-tertiary);
-          border: 1px solid var(--color-border);
-          border-radius: 20px;
-          font-size: 13px;
-          color: var(--color-text-primary);
-        }
-
-        .email-tag--admin {
-          border-color: var(--color-accent);
-          background: color-mix(in srgb, var(--color-accent) 10%, var(--color-bg-tertiary));
-        }
-
-        .email-tag-remove {
-          width: 18px;
-          height: 18px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background: var(--color-bg-primary);
-          border: none;
-          border-radius: 50%;
-          font-size: 14px;
-          color: var(--color-text-secondary);
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-
-        .email-tag-remove:hover {
-          background: var(--color-error);
-          color: white;
-        }
-
-        .setup-actions {
-          display: flex;
-          justify-content: space-between;
-          gap: 12px;
-        }
-      `}</style>
     </div>
   );
 };

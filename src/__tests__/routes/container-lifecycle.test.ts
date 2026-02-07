@@ -348,14 +348,14 @@ describe('Container Lifecycle Routes', () => {
       expect(body.code).toBe('CONTAINER_ERROR');
     });
 
-    it('returns 500 when missing sessionId', async () => {
+    it('returns 400 when missing sessionId', async () => {
       const fetch = createTestApp();
 
       const res = await fetch('/container/destroy', {
         method: 'POST',
       });
 
-      expect(res.status).toBe(500);
+      expect(res.status).toBe(400);
     });
   });
 

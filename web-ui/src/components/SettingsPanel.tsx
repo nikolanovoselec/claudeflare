@@ -11,44 +11,9 @@ import Button from './ui/Button';
 import Input from './ui/Input';
 import { getUsers, addUser, removeUser } from '../api/client';
 import type { UserEntry } from '../api/client';
+import { loadSettings, saveSettings, defaultSettings } from '../lib/settings';
+import type { Settings } from '../lib/settings';
 import '../styles/settings-panel.css';
-
-export interface Settings {
-  theme: 'dark' | 'light';
-  fontSize: number;
-  terminalFont: string;
-  cursorStyle: 'block' | 'underline' | 'bar';
-  cursorBlink: boolean;
-  scrollback: number;
-}
-
-export const defaultSettings: Settings = {
-  theme: 'dark',
-  fontSize: 14,
-  terminalFont: 'JetBrains Mono',
-  cursorStyle: 'block',
-  cursorBlink: true,
-  scrollback: 10000,
-};
-
-const STORAGE_KEY = 'claudeflare-settings';
-
-export const loadSettings = (): Settings => {
-  try {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? { ...defaultSettings, ...JSON.parse(saved) } : defaultSettings;
-  } catch {
-    return defaultSettings;
-  }
-};
-
-export const saveSettings = (settings: Settings): void => {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-  } catch {
-    // Silently fail if localStorage is not available
-  }
-};
 
 export interface SettingsPanelProps {
   isOpen: boolean;
@@ -121,7 +86,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
     try {
       const result = await getUsers();
       setUsers(result);
-    } catch (e) {
+    } catch (err) {
       setUserError('Failed to load users');
     } finally {
       setUsersLoading(false);
@@ -144,8 +109,8 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
       setUserEmail('');
       setNewUserRole('user');
       await loadUsers();
-    } catch (e) {
-      setUserError(e instanceof Error ? e.message : 'Failed to add user');
+    } catch (err) {
+      setUserError(err instanceof Error ? err.message : 'Failed to add user');
     }
   };
 
@@ -154,8 +119,8 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
       setUserError('');
       await removeUser(email);
       await loadUsers();
-    } catch (e) {
-      setUserError(e instanceof Error ? e.message : 'Failed to remove user');
+    } catch (err) {
+      setUserError(err instanceof Error ? err.message : 'Failed to remove user');
     }
   };
 
@@ -284,7 +249,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
             </div>
 
             {/* Cursor Blink */}
-            <div class="form-row">
+            <div class="setting-row">
               <label for="settings-cursor-blink">Cursor Blink</label>
               <button
                 id="settings-cursor-blink"

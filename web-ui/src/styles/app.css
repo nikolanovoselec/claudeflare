@@ -18,12 +18,6 @@
   animation: spin 1s linear infinite;
 }
 
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .app-auth-error {
   height: 100vh;
   display: flex;

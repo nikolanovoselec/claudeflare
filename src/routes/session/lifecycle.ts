@@ -90,11 +90,11 @@ app.get('/batch-status', async (c) => {
           entry.startupStage = result.ptyActive ? 'ready' : 'verifying';
         }
         statuses[session.id] = entry;
-      } catch (error) {
+      } catch (err) {
         // Container check failed entirely - mark as stopped
         reqLogger.warn('Batch status check failed for session', {
           sessionId: session.id,
-          error: String(error),
+          error: String(err),
         });
         statuses[session.id] = { status: 'stopped', ptyActive: false };
       }
@@ -133,9 +133,9 @@ app.post('/:id/stop', async (c) => {
       )
     );
     reqLogger.info('Killed PTY session in container', { containerId });
-  } catch (error) {
+  } catch (err) {
     // Container might not be running, that's okay
-    reqLogger.warn('Could not stop PTY session in container', { error: String(error) });
+    reqLogger.warn('Could not stop PTY session in container', { error: String(err) });
   }
 
   // Note: We intentionally do NOT call container.destroy() here

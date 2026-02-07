@@ -27,8 +27,8 @@ function loadTerminalsFromStorage(): Record<string, SessionTerminals> {
     if (stored) {
       return JSON.parse(stored);
     }
-  } catch (e) {
-    console.warn('[SessionStore] Failed to load terminals from storage:', e);
+  } catch (err) {
+    console.warn('[SessionStore] Failed to load terminals from storage:', err);
   }
   return {};
 }
@@ -36,8 +36,8 @@ function loadTerminalsFromStorage(): Record<string, SessionTerminals> {
 function saveTerminalsToStorage(terminalsPerSession: Record<string, SessionTerminals>): void {
   try {
     localStorage.setItem(TERMINALS_STORAGE_KEY, JSON.stringify(terminalsPerSession));
-  } catch (e) {
-    console.warn('[SessionStore] Failed to save terminals to storage:', e);
+  } catch (err) {
+    console.warn('[SessionStore] Failed to save terminals to storage:', err);
   }
 }
 
@@ -161,9 +161,9 @@ async function loadSessions(): Promise<void> {
         }
       })
     );
-  } catch (e) {
+  } catch (err) {
     if (thisGen !== loadSessionsGeneration) return;
-    setState('error', e instanceof Error ? e.message : 'Failed to load sessions');
+    setState('error', err instanceof Error ? err.message : 'Failed to load sessions');
   } finally {
     if (thisGen === loadSessionsGeneration) {
       setState('loading', false);
@@ -185,8 +185,8 @@ async function createSession(name: string): Promise<SessionWithStatus | null> {
       })
     );
     return sessionWithStatus;
-  } catch (e) {
-    setState('error', e instanceof Error ? e.message : 'Failed to create session');
+  } catch (err) {
+    setState('error', err instanceof Error ? err.message : 'Failed to create session');
     return null;
   }
 }
@@ -214,8 +214,8 @@ async function deleteSession(id: string): Promise<void> {
         delete s.sessionMetrics[id];
       })
     );
-  } catch (e) {
-    setState('error', e instanceof Error ? e.message : 'Failed to delete session');
+  } catch (err) {
+    setState('error', err instanceof Error ? err.message : 'Failed to delete session');
   }
 }
 
@@ -294,8 +294,8 @@ async function stopSession(id: string): Promise<void> {
     updateSessionStatus(id, 'stopped');
     // Disconnect terminals but preserve tab layout for restart
     terminalStore.disposeSession(id);
-  } catch (e) {
-    setState('error', e instanceof Error ? e.message : 'Failed to stop session');
+  } catch (err) {
+    setState('error', err instanceof Error ? err.message : 'Failed to stop session');
   }
 }
 
@@ -372,8 +372,8 @@ async function fetchMetricsForSession(sessionId: string): Promise<void> {
         };
       }));
     }
-  } catch (e) {
-    console.warn('[SessionStore] Failed to fetch metrics:', e);
+  } catch (err) {
+    console.warn('[SessionStore] Failed to fetch metrics:', err);
   }
 }
 

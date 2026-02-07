@@ -11,7 +11,9 @@ import {
   mdiInformationOutline,
 } from '@mdi/js';
 import Icon from '../Icon';
+import Button from '../ui/Button';
 import { setupStore } from '../../stores/setup';
+import '../../styles/progress-step.css';
 
 const ProgressStep: Component = () => {
   const [configStarted, setConfigStarted] = createSignal(false);
@@ -116,15 +118,15 @@ const ProgressStep: Component = () => {
                 <strong>Error:</strong> {setupStore.configureError}
               </div>
               <div class="progress-actions">
-                <button
-                  class="progress-button secondary"
+                <Button
+                  variant="secondary"
                   onClick={() => setupStore.prevStep()}
                 >
                   Back
-                </button>
-                <button class="progress-button primary" onClick={handleRetry}>
+                </Button>
+                <Button onClick={handleRetry}>
                   Retry
-                </button>
+                </Button>
               </div>
             </Show>
           </>
@@ -160,10 +162,9 @@ const ProgressStep: Component = () => {
             </span>
           </div>
 
-          <button class="launch-button" onClick={handleLaunch}>
-            <Icon path={mdiRocketLaunchOutline} size={20} />
+          <Button onClick={handleLaunch} icon={mdiRocketLaunchOutline} size="lg">
             Launch Claudeflare
-          </button>
+          </Button>
 
           <Show when={setupStore.customDomainUrl}>
             <p class="launch-note">
@@ -174,268 +175,6 @@ const ProgressStep: Component = () => {
         </div>
       </Show>
 
-      <style>{`
-        .progress-step {
-          display: flex;
-          flex-direction: column;
-          gap: 24px;
-        }
-
-        .progress-title {
-          margin: 0;
-          font-size: 24px;
-          font-weight: 600;
-          color: var(--color-text-primary);
-          text-align: center;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 8px;
-        }
-
-        .title-icon {
-          flex-shrink: 0;
-        }
-
-        .title-icon--spin {
-          animation: spin 2s linear infinite;
-          color: var(--color-accent);
-        }
-
-        .title-icon--error {
-          color: var(--color-error);
-        }
-
-        .title-icon--success {
-          color: var(--color-success);
-        }
-
-        @keyframes spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-
-        .progress-steps {
-          display: flex;
-          flex-direction: column;
-          gap: 12px;
-        }
-
-        .progress-step-item {
-          display: flex;
-          align-items: center;
-          gap: 12px;
-          padding: 12px 16px;
-          background: var(--color-bg-tertiary);
-          border-radius: 8px;
-          transition: all 0.3s ease;
-        }
-
-        .progress-step-item.success {
-          background: rgba(34, 197, 94, 0.1);
-        }
-
-        .progress-step-item.error {
-          background: rgba(239, 68, 68, 0.1);
-        }
-
-        .step-icon {
-          width: 24px;
-          height: 24px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .step-icon--spin {
-          animation: spin 1s linear infinite;
-        }
-
-        .progress-step-item.success .step-icon {
-          color: var(--color-success);
-        }
-
-        .progress-step-item.error .step-icon {
-          color: var(--color-error);
-        }
-
-        .progress-step-item.pending .step-icon {
-          color: var(--color-text-tertiary);
-        }
-
-        .step-label {
-          flex: 1;
-          font-size: 14px;
-          color: var(--color-text-primary);
-        }
-
-        .step-error {
-          font-size: 12px;
-          color: var(--color-error);
-        }
-
-        .progress-bar-container {
-          height: 8px;
-          background: var(--color-bg-tertiary);
-          border-radius: 4px;
-          overflow: hidden;
-        }
-
-        .progress-bar {
-          height: 100%;
-          background: var(--color-accent);
-          transition: width 0.5s ease;
-        }
-
-        .error-message {
-          padding: 12px 16px;
-          background: rgba(239, 68, 68, 0.1);
-          border: 1px solid rgba(239, 68, 68, 0.2);
-          border-radius: 8px;
-          font-size: 14px;
-          color: var(--color-error);
-        }
-
-        .progress-actions {
-          display: flex;
-          justify-content: space-between;
-          gap: 12px;
-        }
-
-        .progress-button {
-          flex: 1;
-          padding: 14px 24px;
-          font-size: 14px;
-          font-weight: 500;
-          border-radius: 8px;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-
-        .progress-button.primary {
-          background: var(--color-accent);
-          color: white;
-        }
-
-        .progress-button.primary:hover {
-          background: var(--color-accent-hover);
-        }
-
-        .progress-button.secondary {
-          background: var(--color-bg-tertiary);
-          color: var(--color-text-primary);
-          border: 1px solid var(--color-border);
-        }
-
-        .progress-button.secondary:hover {
-          background: var(--color-bg-primary);
-        }
-
-        .success-section {
-          display: flex;
-          flex-direction: column;
-          gap: 20px;
-        }
-
-        .success-message {
-          margin: 0;
-          font-size: 16px;
-          color: var(--color-text-secondary);
-          text-align: center;
-        }
-
-        .url-item {
-          display: flex;
-          gap: 12px;
-          padding: 16px;
-          background: var(--color-bg-tertiary);
-          border-radius: 8px;
-        }
-
-        .url-icon {
-          display: flex;
-          align-items: center;
-          color: var(--color-text-secondary);
-        }
-
-        .url-content {
-          display: flex;
-          flex-direction: column;
-          gap: 4px;
-        }
-
-        .url-label {
-          font-size: 13px;
-          color: var(--color-text-secondary);
-        }
-
-        .url-value {
-          font-size: 14px;
-          color: var(--color-accent);
-          text-decoration: none;
-          word-break: break-all;
-        }
-
-        .url-value:hover {
-          text-decoration: underline;
-        }
-
-        .url-note {
-          font-size: 12px;
-          color: var(--color-success);
-        }
-
-        .access-note {
-          display: flex;
-          align-items: flex-start;
-          gap: 8px;
-          padding: 12px;
-          background: rgba(124, 58, 237, 0.1);
-          border-radius: 8px;
-          font-size: 13px;
-          color: var(--color-text-secondary);
-        }
-
-        .access-note .note-icon {
-          flex-shrink: 0;
-          color: var(--color-accent);
-        }
-
-        .launch-button {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 8px;
-          padding: 16px 32px;
-          font-size: 16px;
-          font-weight: 600;
-          color: white;
-          background: var(--color-accent);
-          border-radius: 8px;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-
-        .launch-button:hover {
-          background: var(--color-accent-hover);
-          transform: translateY(-1px);
-        }
-
-        .launch-note {
-          margin: 0;
-          font-size: 13px;
-          color: var(--color-text-secondary);
-          text-align: center;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 4px;
-        }
-
-        .note-icon {
-          flex-shrink: 0;
-        }
-      `}</style>
     </div>
   );
 };

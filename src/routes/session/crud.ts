@@ -156,9 +156,9 @@ app.delete('/:id', async (c) => {
         })
       )
     );
-  } catch (error) {
+  } catch (err) {
     // Container might not be running, that's okay
-    reqLogger.warn('Could not notify container about session deletion', { sessionId, error: String(error) });
+    reqLogger.warn('Could not notify container about session deletion', { sessionId, error: String(err) });
   }
 
   // Delete from KV
@@ -168,8 +168,8 @@ app.delete('/:id', async (c) => {
   try {
     await container.destroy();
     reqLogger.info('Destroyed container', { containerId });
-  } catch (error) {
-    reqLogger.warn('Could not destroy container', { containerId, error: String(error) });
+  } catch (err) {
+    reqLogger.warn('Could not destroy container', { containerId, error: String(err) });
   }
 
   return c.json({ deleted: true, id: sessionId });

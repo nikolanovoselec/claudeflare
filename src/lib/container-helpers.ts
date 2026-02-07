@@ -12,7 +12,8 @@ type ContainerVariables = {
   bucketName: string;
 };
 
-export function getSessionIdFromRequest(c: Context): string {
+/** Extracts sessionId from query param (?sessionId=) or X-Session-Id header. Used by container routes. Session CRUD routes use Hono path params (c.req.param('id')) instead. */
+export function getSessionIdFromQueryOrHeader(c: Context): string {
   const sessionId = c.req.query('sessionId') || c.req.header('X-Browser-Session');
   if (!sessionId) throw new ValidationError('Missing sessionId parameter');
   if (!SESSION_ID_PATTERN.test(sessionId)) {
@@ -32,7 +33,7 @@ export function getContainerContext<V extends ContainerVariables>(
   c: Context<{ Bindings: Env; Variables: V }>
 ) {
   const bucketName = c.get('bucketName');
-  const sessionId = getSessionIdFromRequest(c);
+  const sessionId = getSessionIdFromQueryOrHeader(c);
   const containerId = getContainerId(bucketName, sessionId);
   const container = getContainer(c.env.CONTAINER, containerId);
   return { bucketName, sessionId, containerId, container };

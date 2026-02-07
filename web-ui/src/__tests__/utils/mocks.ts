@@ -10,6 +10,7 @@ export function createMockSession(overrides: Partial<Session> = {}): Session {
     name: 'Test Session',
     createdAt: now,
     lastAccessedAt: now,
+    status: 'stopped' as const,
     ...overrides,
   };
 }

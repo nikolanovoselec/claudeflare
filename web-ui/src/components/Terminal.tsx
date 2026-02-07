@@ -6,8 +6,9 @@ import '@xterm/xterm/css/xterm.css';
 import { terminalStore } from '../stores/terminal';
 import { sessionStore } from '../stores/session';
 import { CSS_TRANSITION_DELAY_MS } from '../lib/constants';
-import { loadSettings, defaultSettings } from './SettingsPanel';
+import { loadSettings, defaultSettings } from '../lib/settings';
 import InitProgress from './InitProgress';
+import '../styles/terminal.css';
 
 interface TerminalProps {
   sessionId: string;
@@ -281,54 +282,6 @@ const Terminal: Component<TerminalProps> = (props) => {
         }}
       />
 
-      <style>{`
-        .terminal-init-overlay {
-          position: absolute;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          display: flex;
-          align-items: flex-start;
-          justify-content: center;
-          background: var(--color-bg-primary);
-          z-index: 15;
-          overflow-y: auto;
-          padding: 40px 20px;
-        }
-
-        .terminal-connection-status {
-          position: absolute;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          gap: 16px;
-          background: rgba(26, 26, 46, 0.98);
-          color: var(--color-text-secondary);
-          font-size: 14px;
-          z-index: 10;
-        }
-
-        .terminal-connection-spinner {
-          width: 24px;
-          height: 24px;
-          border: 2px solid var(--color-border);
-          border-top-color: var(--color-accent);
-          border-radius: 50%;
-          animation: terminal-spin 1s linear infinite;
-        }
-
-        @keyframes terminal-spin {
-          to {
-            transform: rotate(360deg);
-          }
-        }
-      `}</style>
     </div>
   );
 };

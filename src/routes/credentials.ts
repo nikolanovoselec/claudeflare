@@ -64,8 +64,8 @@ app.get('/', async (c) => {
       scopes: [],
       updatedAt: null,
     });
-  } catch (error) {
-    logger.error('Check error', toError(error));
+  } catch (err) {
+    logger.error('Check error', toError(err));
     throw new CredentialsError('check');
   }
 });
@@ -88,8 +88,8 @@ app.delete('/', async (c) => {
       success: true,
       message: 'Credentials deleted',
     });
-  } catch (error) {
-    logger.error('Delete error', toError(error));
+  } catch (err) {
+    logger.error('Delete error', toError(err));
     throw new CredentialsError('delete');
   }
 });

@@ -27,8 +27,8 @@ async function resolveZone(
         `${CF_API_BASE}/zones?name=${zoneName}`,
         { headers: { 'Authorization': `Bearer ${token}` } }
       );
-    } catch (error) {
-      logger.error('Failed to fetch zones API', toError(error));
+    } catch (err) {
+      logger.error('Failed to fetch zones API', toError(err));
       steps[stepIndex].status = 'error';
       steps[stepIndex].error = 'Failed to connect to Cloudflare Zones API';
       throw new SetupError('Failed to connect to Cloudflare Zones API', steps);
@@ -131,8 +131,8 @@ async function upsertDnsRecord(
   let accountSubdomain: string;
   try {
     accountSubdomain = await resolveAccountSubdomain(token, accountId, requestUrl);
-  } catch (error) {
-    logger.error('Failed to get account subdomain', toError(error));
+  } catch (err) {
+    logger.error('Failed to get account subdomain', toError(err));
     steps[stepIndex].status = 'error';
     steps[stepIndex].error = 'Failed to determine workers.dev subdomain for DNS record';
     throw new SetupError('Failed to determine workers.dev subdomain for DNS record', steps);

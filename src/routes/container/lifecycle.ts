@@ -7,10 +7,10 @@ import { getContainer } from '@cloudflare/containers';
 import type { Env, Session } from '../../types';
 import { createBucketIfNotExists } from '../../lib/r2-admin';
 import { getR2Config } from '../../lib/r2-config';
-import { getContainerContext, getSessionIdFromRequest, getContainerId } from '../../lib/container-helpers';
+import { getContainerContext, getSessionIdFromQueryOrHeader, getContainerId } from '../../lib/container-helpers';
 import { AuthVariables } from '../../middleware/auth';
 import { createRateLimiter } from '../../middleware/rate-limit';
-import { AppError, ContainerError, NotFoundError, toError, toErrorMessage } from '../../lib/error-types';
+import { AppError, ContainerError, NotFoundError, ValidationError, toError, toErrorMessage } from '../../lib/error-types';
 import { BUCKET_NAME_SETTLE_DELAY_MS, CONTAINER_ID_DISPLAY_LENGTH } from '../../lib/constants';
 import { getSessionKey } from '../../lib/kv-keys';
 import { containerLogger, containerInternalCB, getStoredBucketName } from './shared';
@@ -36,7 +36,7 @@ app.post('/start', containerStartRateLimiter, async (c) => {
   const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
   try {
     const bucketName = c.get('bucketName');
-    const sessionId = getSessionIdFromRequest(c);
+    const sessionId = getSessionIdFromQueryOrHeader(c);
 
     // Verify session exists in KV before creating a container DO
     const sessionKey = getSessionKey(bucketName, sessionId);
@@ -167,6 +167,10 @@ app.post('/destroy', async (c) => {
   const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
 
   try {
+    const sessionId = getSessionIdFromQueryOrHeader(c);
+    if (!sessionId) {
+      throw new ValidationError('sessionId is required');
+    }
     const { containerId, container } = getContainerContext(c);
 
     // Get state before destroy
@@ -180,6 +184,9 @@ app.post('/destroy', async (c) => {
     // Don't call getState() after destroy() — it resurrects the DO (gotcha #6)
     return c.json({ success: true, message: 'Container destroyed' });
   } catch (error) {
+    if (error instanceof AppError) {
+      throw error;
+    }
     const err = toError(error);
     if (err.message.includes('not found') || err.message.includes('does not exist')) {
       reqLogger.debug('Container not found during destroy', { error: err.message });

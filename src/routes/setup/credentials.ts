@@ -50,11 +50,11 @@ export async function handleDeriveR2Credentials(
       accessKeyId: tokenId,
       secretAccessKey
     };
-  } catch (error) {
-    if (error instanceof SetupError) {
-      throw error;
+  } catch (err) {
+    if (err instanceof SetupError) {
+      throw err;
     }
-    logger.error('Failed to derive R2 credentials', toError(error));
+    logger.error('Failed to derive R2 credentials', toError(err));
     steps[stepIndex].status = 'error';
     steps[stepIndex].error = 'Failed to derive R2 credentials';
     throw new SetupError('Failed to derive R2 credentials', steps);

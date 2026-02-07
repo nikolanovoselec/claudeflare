@@ -64,9 +64,9 @@ export class container extends Container<Env> {
         const r2Config = await getR2Config(this.env);
         this._r2AccountId = r2Config.accountId;
         this._r2Endpoint = r2Config.endpoint;
-      } catch (e) {
+      } catch (err) {
         this.logger.warn('R2 config not available, will use empty values in envVars', {
-          error: e instanceof Error ? e.message : String(e),
+          error: err instanceof Error ? err.message : String(err),
         });
       }
 
@@ -146,8 +146,8 @@ export class container extends Container<Env> {
           status: 400,
           headers: { 'Content-Type': 'application/json' },
         });
-      } catch (e) {
-        return new Response(JSON.stringify({ error: String(e) }), {
+      } catch (err) {
+        return new Response(JSON.stringify({ error: String(err) }), {
           status: 500,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -224,8 +224,8 @@ export class container extends Container<Env> {
       await this.ctx.storage.setAlarm(nextPollTime);
       this._activityPollAlarm = true;
       this.logger.info('Activity poll scheduled', { nextPollTime: new Date(nextPollTime).toISOString() });
-    } catch (e) {
-      this.logger.error('Failed to schedule activity poll', e instanceof Error ? e : new Error(String(e)));
+    } catch (err) {
+      this.logger.error('Failed to schedule activity poll', err instanceof Error ? err : new Error(String(err)));
     }
   }
 
@@ -255,8 +255,8 @@ export class container extends Container<Env> {
       try {
         await this.ctx.storage.deleteAlarm();
         await this.ctx.storage.deleteAll();
-      } catch (e) {
-        this.logger.error('Failed to cleanup zombie', e instanceof Error ? e : new Error(String(e)));
+      } catch (err) {
+        this.logger.error('Failed to cleanup zombie', err instanceof Error ? err : new Error(String(err)));
       }
       return true;
     }
@@ -276,8 +276,8 @@ export class container extends Container<Env> {
         return true;
       }
       return false;
-    } catch (e) {
-      this.logger.warn('Could not get state in alarm, destroying as zombie', { error: String(e) });
+    } catch (err) {
+      this.logger.warn('Could not get state in alarm, destroying as zombie', { error: String(err) });
       await this.cleanupAndDestroy();
       return true;
     }
@@ -362,8 +362,8 @@ export class container extends Container<Env> {
 
       // Schedule next poll
       await this.scheduleActivityPoll();
-    } catch (e) {
-      this.logger.error('Error in activity poll', e instanceof Error ? e : new Error(String(e)));
+    } catch (err) {
+      this.logger.error('Error in activity poll', err instanceof Error ? err : new Error(String(err)));
       // On error, destroy the container to prevent zombie
       try {
         await this.cleanupAndDestroy();
@@ -431,8 +431,8 @@ export class container extends Container<Env> {
       // If cleanupAndDestroy() set it, a stale alarm can still detect zombie state
       await this.ctx.storage.delete('bucketName');
       this.logger.info('Operational storage cleared');
-    } catch (e) {
-      this.logger.error('Failed to clear storage', e instanceof Error ? e : new Error(String(e)));
+    } catch (err) {
+      this.logger.error('Failed to clear storage', err instanceof Error ? err : new Error(String(err)));
     }
     return super.destroy();
   }

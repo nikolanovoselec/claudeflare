@@ -72,8 +72,8 @@ function triggerLayoutResize(): void {
             terminal.scrollToBottom();
             terminal.refresh(0, terminal.rows - 1);
           }
-        } catch (e) {
-          console.warn(`[Terminal ${key}] Failed to refit on layout change:`, e);
+        } catch (err) {
+          console.warn(`[Terminal ${key}] Failed to refit on layout change:`, err);
         }
       }
     });

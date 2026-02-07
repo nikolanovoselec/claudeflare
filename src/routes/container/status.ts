@@ -52,8 +52,8 @@ app.get('/health', async (c) => {
       containerId,
       container: healthResult.data,
     });
-  } catch (error) {
-    throw new ContainerError('health', toErrorMessage(error));
+  } catch (err) {
+    throw new ContainerError('health', toErrorMessage(err));
   }
 });
 
@@ -122,7 +122,7 @@ app.get('/startup-status', async (c) => {
     let containerState;
     try {
       containerState = await container.getState();
-    } catch (error) {
+    } catch (err) {
       // Container not available - stopped state
       return c.json(response);
     }
@@ -156,7 +156,7 @@ app.get('/startup-status', async (c) => {
       try {
         healthData = await healthRes.json() as typeof healthData;
         healthServerOk = true;
-      } catch (error) {
+      } catch (err) {
         // Failed to parse - continue without health data
       }
     }
@@ -241,8 +241,8 @@ app.get('/startup-status', async (c) => {
     response.details.terminalPid = healthData.terminalPid;
     populateMetrics(response.details, healthData);
     return c.json(response);
-  } catch (error) {
-    reqLogger.error('Startup status error', toError(error));
+  } catch (err) {
+    reqLogger.error('Startup status error', toError(err));
     return c.json({
       ...response,
       stage: 'error',

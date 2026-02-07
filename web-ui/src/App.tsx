@@ -12,8 +12,8 @@ async function checkSetupStatus(): Promise<boolean> {
   try {
     const status = await getSetupStatus();
     return status.configured;
-  } catch (e) {
-    console.error('Failed to check setup status:', e);
+  } catch (err) {
+    console.error('Failed to check setup status:', err);
     // If status check fails, assume setup is needed
     return false;
   }
@@ -31,8 +31,8 @@ const AppContent: Component = () => {
       const user = await getUser();
       setUserName(user.email);
       setUserRole(user.role);
-    } catch (e) {
-      console.warn('Failed to get user info:', e);
+    } catch (err) {
+      console.warn('Failed to get user info:', err);
       if (import.meta.env.DEV) {
         setUserName('dev@localhost');
         setUserRole('admin');

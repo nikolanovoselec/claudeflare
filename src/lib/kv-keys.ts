@@ -8,11 +8,13 @@ import { NotFoundError } from './error-types';
 const MAX_KV_LIST_ITERATIONS = 100;
 
 /**
- * Sanitize a session name by stripping non-printable ASCII
- * and HTML-dangerous characters.
+ * Sanitize a session name to a strict allowlist.
+ * Allows only alphanumeric characters, spaces, hyphens, and underscores.
+ * Rejects shell metacharacters like $(), |, ;, etc.
  */
 export function sanitizeSessionName(name: string): string {
-  return name.replace(/[^\x20-\x7e]/g, '').replace(/[<>&"'`]/g, '');
+  // Allow only alphanumeric, spaces, hyphens, underscores
+  return name.replace(/[^a-zA-Z0-9 _-]/g, '').trim() || 'Untitled';
 }
 
 /**

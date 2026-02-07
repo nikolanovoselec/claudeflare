@@ -4,6 +4,7 @@ import { getSetupStatus, getUser } from '../../api/client';
 import WelcomeStep from './WelcomeStep';
 import ConfigureStep from './ConfigureStep';
 import ProgressStep from './ProgressStep';
+import '../../styles/setup-wizard.css';
 
 type AuthState = 'loading' | 'authorized' | 'denied';
 
@@ -126,86 +127,6 @@ const SetupWizard: Component = () => {
       </div>
       </Show>
 
-      <style>{`
-        .setup-wizard {
-          min-height: 100vh;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 24px;
-          background: var(--color-bg-primary);
-        }
-
-        .setup-container {
-          width: 100%;
-          max-width: 600px;
-          background: var(--color-bg-secondary);
-          border-radius: 16px;
-          border: 1px solid var(--color-border);
-          overflow: hidden;
-        }
-
-        .setup-header {
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          gap: 16px;
-          padding: 32px;
-          background: linear-gradient(
-            135deg,
-            rgba(124, 58, 237, 0.1) 0%,
-            rgba(124, 58, 237, 0.05) 100%
-          );
-          border-bottom: 1px solid var(--color-border);
-        }
-
-        .setup-logo {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .setup-title {
-          margin: 0;
-          font-size: 24px;
-          font-weight: 600;
-          color: var(--color-text-primary);
-        }
-
-        /* Override progress bar border-radius for wizard */
-        .setup-progress {
-          border-radius: 0;
-        }
-
-        .setup-content {
-          padding: 32px;
-        }
-
-        .denied-message {
-          margin: 0 0 24px;
-          font-size: 16px;
-          color: var(--color-text-secondary);
-          text-align: center;
-        }
-
-        .denied-button {
-          display: block;
-          width: 100%;
-          padding: 14px 24px;
-          font-size: 14px;
-          font-weight: 500;
-          color: white;
-          background: var(--color-accent);
-          border: none;
-          border-radius: 8px;
-          cursor: pointer;
-          transition: background 0.2s ease;
-        }
-
-        .denied-button:hover {
-          background: var(--color-accent-hover);
-        }
-      `}</style>
     </div>
   );
 };

@@ -97,12 +97,12 @@ export function createRateLimiter(config: RateLimitConfig): MiddlewareHandler<{ 
 
       c.header('X-RateLimit-Limit', config.maxRequests.toString());
       c.header('X-RateLimit-Remaining', Math.max(0, config.maxRequests - count).toString());
-    } catch (error) {
-      if (error instanceof RateLimitError) {
-        throw error;
+    } catch (err) {
+      if (err instanceof RateLimitError) {
+        throw err;
       }
       // KV operation failed — let the request through rather than crashing
-      logger.warn('Rate limit KV operation failed', { key, error: String(error) });
+      logger.warn('Rate limit KV operation failed', { key, error: String(err) });
     }
 
     return next();

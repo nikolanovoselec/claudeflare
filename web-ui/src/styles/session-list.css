@@ -399,7 +399,7 @@
 
 .session-action-btn--stop {
   background: rgba(59, 130, 246, 0.15);
-  color: #3b82f6;
+  color: var(--color-info);
 }
 
 .session-action-btn--stop:hover {
@@ -409,7 +409,7 @@
 
 .session-action-btn--delete {
   background: rgba(239, 68, 68, 0.15);
-  color: #ef4444;
+  color: var(--color-error);
 }
 
 .session-action-btn--delete:hover {
@@ -431,7 +431,7 @@
   padding: 12px;
   font-size: 14px;
   font-weight: 500;
-  color: #ffffff;
+  color: var(--color-text-primary);
   background: var(--color-accent);
   border: none;
   border-radius: 8px;

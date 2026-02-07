@@ -1,7 +1,6 @@
 import { Component, Show, Accessor, createMemo } from 'solid-js';
 import {
   mdiStop,
-  mdiLoading,
   mdiTrashCanOutline,
 } from '@mdi/js';
 import Icon from './Icon';
@@ -36,12 +35,12 @@ const wsStatusConfig: Record<TerminalConnectionState, { color: string; title: st
   error: { color: 'var(--color-error)', title: 'WebSocket error - click to reconnect' },
 };
 
-// Status indicator icons and colors
-const statusConfig: Record<SessionStatus, { icon: string; color: string; spinning?: boolean }> = {
-  running: { icon: '', color: 'var(--color-success)' },
-  stopped: { icon: '', color: 'var(--color-text-muted)' },
-  initializing: { icon: mdiLoading, color: 'var(--color-accent)', spinning: true },
-  error: { icon: '', color: 'var(--color-error)' },
+// Which statuses show a spinning indicator
+const statusSpinning: Record<SessionStatus, boolean> = {
+  running: false,
+  stopped: false,
+  initializing: true,
+  error: false,
 };
 
 // Status dot variant mapping
@@ -53,7 +52,7 @@ const statusDotVariant: Record<SessionStatus, 'success' | 'warning' | 'error' | 
 };
 
 const SessionCard: Component<SessionCardProps> = (props) => {
-  const config = () => statusConfig[props.session.status];
+  const isSpinning = () => statusSpinning[props.session.status];
   const canStop = () => props.session.status === 'running' || props.session.status === 'initializing';
   const canDelete = () => true;
   const wsState = () => terminalStore.getConnectionState(props.session.id, '1');
@@ -72,7 +71,7 @@ const SessionCard: Component<SessionCardProps> = (props) => {
   };
 
   const isPulsing = () => {
-    return config().spinning || (props.session.status === 'running' && wsState() === 'connecting');
+    return isSpinning() || (props.session.status === 'running' && wsState() === 'connecting');
   };
 
   const statusVariant = () => {

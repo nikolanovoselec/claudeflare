@@ -41,6 +41,8 @@ app.use('*', async (c, next) => {
 
   c.header('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
   c.header('X-Content-Type-Options', 'nosniff');
+  c.header('X-Frame-Options', 'DENY');
+  c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
 
   logger.info('Request completed', {
     requestId,

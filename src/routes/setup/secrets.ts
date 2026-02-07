@@ -54,8 +54,8 @@ async function deployLatestVersion(
     }
 
     return true;
-  } catch (error) {
-    logger.error('Error deploying latest version', toError(error));
+  } catch (err) {
+    logger.error('Error deploying latest version', toError(err));
     return false;
   }
 }
@@ -155,11 +155,11 @@ export async function handleSetSecrets(
       }
     }
     steps[stepIndex].status = 'success';
-  } catch (error) {
-    if (error instanceof SetupError) {
-      throw error;
+  } catch (err) {
+    if (err instanceof SetupError) {
+      throw err;
     }
-    logger.error('Failed to set secrets', toError(error));
+    logger.error('Failed to set secrets', toError(err));
     steps[stepIndex].status = 'error';
     steps[stepIndex].error = 'Failed to configure worker secrets';
     throw new SetupError('Failed to configure worker secrets', steps);

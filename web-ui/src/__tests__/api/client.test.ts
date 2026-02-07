@@ -10,7 +10,6 @@ import {
   getSessions,
   createSession,
   deleteSession,
-  getSessionStatus,
   getStartupStatus,
   startSession,
   stopSession,
@@ -406,23 +405,6 @@ describe('API Client', () => {
           method: 'DELETE',
         })
       );
-    });
-  });
-
-  describe('getSessionStatus', () => {
-    it('should return session status', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        text: () => Promise.resolve(JSON.stringify({
-          status: 'running',
-          ptyActive: true,
-        })),
-      });
-
-      const status = await getSessionStatus('session-123');
-      expect(status.status).toBe('running');
-      expect(status.ptyActive).toBe(true);
     });
   });
 

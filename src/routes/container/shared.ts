@@ -51,8 +51,8 @@ export async function getStoredBucketName(
       return data.bucketName;
     }
     return null;
-  } catch (error) {
-    const errMsg = toErrorMessage(error);
+  } catch (err) {
+    const errMsg = toErrorMessage(err);
     if (errMsg.includes('not found') || errMsg.includes('does not exist') || errMsg.includes('Network')) {
       logger.debug('Could not get stored bucket name, DO may not exist yet');
     } else {

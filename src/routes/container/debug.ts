@@ -45,16 +45,16 @@ app.get('/debug', async (c) => {
         )
       );
       envVarsDebug = await envVarsResp.json() as Record<string, unknown>;
-    } catch (error) {
-      envVarsDebug = { error: String(error) };
+    } catch (err) {
+      envVarsDebug = { error: String(err) };
     }
 
     // Get container state
     let containerState;
     try {
       containerState = await container.getState();
-    } catch (error) {
-      containerState = { status: 'unknown', error: String(error) };
+    } catch (err) {
+      containerState = { status: 'unknown', error: String(err) };
     }
 
     // Get health status
@@ -73,8 +73,8 @@ app.get('/debug', async (c) => {
           body: text.substring(0, 500)
         };
       }
-    } catch (error) {
-      healthData = { error: String(error) };
+    } catch (err) {
+      healthData = { error: String(err) };
     }
 
     reqLogger.info('Debug endpoint called', { containerId, bucketName });
@@ -88,8 +88,8 @@ app.get('/debug', async (c) => {
       containerState,
       healthData,
     });
-  } catch (error) {
-    throw new ContainerError('debug', toErrorMessage(error));
+  } catch (err) {
+    throw new ContainerError('debug', toErrorMessage(err));
   }
 });
 
@@ -120,9 +120,9 @@ app.get('/mount-test', async (c) => {
       containerId,
       mountTest: result,
     });
-  } catch (error) {
-    reqLogger.error('Mount test error', toError(error));
-    throw new ContainerError('mount-test', toErrorMessage(error));
+  } catch (err) {
+    reqLogger.error('Mount test error', toError(err));
+    throw new ContainerError('mount-test', toErrorMessage(err));
   }
 });
 
@@ -154,9 +154,9 @@ app.get('/sync-log', async (c) => {
       containerId,
       log: logData.log,
     });
-  } catch (error) {
-    reqLogger.error('Sync log error', toError(error));
-    throw new ContainerError('sync-log', toErrorMessage(error));
+  } catch (err) {
+    reqLogger.error('Sync log error', toError(err));
+    throw new ContainerError('sync-log', toErrorMessage(err));
   }
 });
 
@@ -176,8 +176,8 @@ app.get('/state', async (c) => {
       containerId,
       state,
     });
-  } catch (error) {
-    throw new ContainerError('state', toErrorMessage(error));
+  } catch (err) {
+    throw new ContainerError('state', toErrorMessage(err));
   }
 });
 

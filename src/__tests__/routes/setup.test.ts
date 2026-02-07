@@ -1141,7 +1141,7 @@ describe('Setup Routes', () => {
           customDomain: 'claude.example.com',
           allowedUsers: ['user@example.com'],
           adminUsers: ['user@example.com'],
-          allowedOrigins: ['https://app.example.com', 'https://dev.example.com'],
+          allowedOrigins: ['.app.example.com', '.dev.example.com'],
         }),
       });
 
@@ -1151,8 +1151,8 @@ describe('Setup Routes', () => {
       );
       expect(putCall).toBeDefined();
       const storedOrigins = JSON.parse(putCall![1]) as string[];
-      expect(storedOrigins).toContain('https://app.example.com');
-      expect(storedOrigins).toContain('https://dev.example.com');
+      expect(storedOrigins).toContain('.app.example.com');
+      expect(storedOrigins).toContain('.dev.example.com');
       expect(storedOrigins).toContain('claude.example.com');
       expect(storedOrigins).toContain('.workers.dev');
     });

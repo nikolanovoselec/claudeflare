@@ -6,7 +6,6 @@ import {
   SessionsResponseSchema,
   CreateSessionResponseSchema,
   StartupStatusResponseSchema,
-  SessionStatusResponseSchema,
   BatchSessionStatusResponseSchema,
 } from '../lib/schemas';
 import { mapStartupDetailsToProgress } from '../lib/status-mapper';
@@ -104,16 +103,6 @@ export async function deleteSession(id: string): Promise<void> {
 }
 
 /**
- * Get session and container status
- * @see src/routes/session.ts GET /:id/status for backend implementation
- */
-export async function getSessionStatus(
-  id: string
-): Promise<{ status: string; ptyActive?: boolean }> {
-  return fetchApi(`/sessions/${id}/status`, {}, SessionStatusResponseSchema);
-}
-
-/**
  * Get status for all sessions in a single batch call
  * Returns a map of sessionId -> { status, ptyActive, startupStage? }
  */
@@ -150,15 +139,15 @@ export function startSession(
 
       // Trigger container start with the actual session ID
       await fetchApi(`/container/start?sessionId=${id}`, { method: 'POST' });
-    } catch (e) {
+    } catch (err) {
       // If it's a server error (5xx), report it rather than silently continuing
-      if (e instanceof ApiError && e.status >= 500) {
-        console.error('Container start failed:', e.status, e.message);
-        onError(`Container start failed: ${e.message}`);
+      if (err instanceof ApiError && err.status >= 500) {
+        console.error('Container start failed:', err.status, err.message);
+        onError(`Container start failed: ${err.message}`);
         return;
       }
       // For other errors (409 conflict, network issues), the container might already be starting
-      console.log('Container start request (non-fatal):', e);
+      console.log('Container start request (non-fatal):', err);
     }
 
     // Start polling for status
@@ -181,9 +170,9 @@ export function startSession(
           if (pollInterval) clearInterval(pollInterval);
           onError(status.error || 'Container startup failed');
         }
-      } catch (e) {
+      } catch (err) {
         consecutiveErrors++;
-        console.error('Polling error:', e);
+        console.error('Polling error:', err);
         if (consecutiveErrors >= MAX_STARTUP_POLL_ERRORS) {
           if (pollInterval) clearInterval(pollInterval);
           onError('Polling failed after too many consecutive errors');

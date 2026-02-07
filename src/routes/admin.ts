@@ -66,14 +66,14 @@ app.post('/destroy-by-id', requireAdmin, adminRateLimiter, async (c) => {
       doId,
       message: 'Container destroyed via raw DO ID',
     });
-  } catch (error) {
-    reqLogger.error('Admin destroy-by-id error', toError(error));
+  } catch (err) {
+    reqLogger.error('Admin destroy-by-id error', toError(err));
 
-    if (error instanceof AuthError || error instanceof ValidationError) {
-      throw error;
+    if (err instanceof AuthError || err instanceof ValidationError) {
+      throw err;
     }
 
-    throw new AppError('ADMIN_ERROR', 500, toErrorMessage(error), 'Admin operation failed. Please try again.');
+    throw new AppError('ADMIN_ERROR', 500, toErrorMessage(err), 'Admin operation failed. Please try again.');
   }
 });
 

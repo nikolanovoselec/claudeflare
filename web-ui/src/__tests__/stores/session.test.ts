@@ -20,7 +20,6 @@ vi.mock('../../api/client', () => ({
   getSessions: vi.fn().mockResolvedValue([]),
   createSession: vi.fn(),
   deleteSession: vi.fn(),
-  getSessionStatus: vi.fn(),
   getBatchSessionStatus: vi.fn().mockResolvedValue({}),
   getStartupStatus: vi.fn(),
   startSession: vi.fn(),
