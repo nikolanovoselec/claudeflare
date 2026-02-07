@@ -1,9 +1,23 @@
 # Claudeflare Container - Multi-session terminal server with rclone sync
 # Uses node-pty for PTY management and rclone for R2 storage sync
 
+# ---- Stage 1: Builder (compile native addons) ----
+FROM node:22-alpine AS builder
+
+RUN apk add --no-cache make gcc g++ python3
+
+COPY host/package.json /app/host/
+WORKDIR /app/host
+RUN npm install --production
+
+# ---- Stage 2: Runtime ----
 FROM node:22-alpine
 
-# Install rclone, build tools for node-pty, and development tools
+# Suppress npm update nag and claude-unleashed auto-updates in container
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
+ENV CLAUDE_UNLEASHED_NO_UPDATE=1
+
+# Install runtime packages (no build tools needed - native addons pre-compiled)
 RUN apk add --no-cache \
     # System essentials
     rclone \
@@ -21,37 +35,25 @@ RUN apk add --no-cache \
     ncurses-terminfo \
     # Network tools
     curl \
-    wget \
     openssh-client \
-    # Build tools
-    make \
-    gcc \
-    g++ \
-    python3 \
-    nodejs \
-    npm \
     # Utilities
     jq \
     ripgrep \
     fd \
     tree \
-    btop \
     htop \
     tmux \
     fzf \
     zoxide \
     # Yazi preview dependencies
     file \
-    ffmpeg \
     p7zip \
-    poppler-utils \
-    imagemagick \
     bat \
     && apk add --no-cache yazi --repository=http://dl-cdn.alpinelinux.org/alpine/edge/testing \
     && apk add --no-cache lazygit --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community
 
 # Install claude-unleashed globally (wraps Claude Code with permission bypass)
-# Provides 'cu' command with --silent --no-consent for non-interactive use
+# Provides 'cu' command with --silent --no-consent --disable-installation-checks for non-interactive use
 RUN npm install -g github:nikolanovoselec/claude-unleashed
 
 # Create 'claude' wrapper that uses claude-unleashed transparently
@@ -59,19 +61,16 @@ RUN npm install -g github:nikolanovoselec/claude-unleashed
 RUN echo '#!/bin/bash' > /usr/local/bin/claude && \
     echo 'export IS_SANDBOX=1' >> /usr/local/bin/claude && \
     echo 'export DISABLE_INSTALLATION_CHECKS=1' >> /usr/local/bin/claude && \
-    echo 'exec cu --silent --no-consent "$@"' >> /usr/local/bin/claude && \
+    echo 'exec cu --silent --no-consent --disable-installation-checks "$@"' >> /usr/local/bin/claude && \
     chmod +x /usr/local/bin/claude
 
 # Create workspace directory structure
 RUN mkdir -p /app/host
 
-# Copy host server files
+# Copy pre-compiled host server from builder stage
+COPY --from=builder /app/host/node_modules /app/host/node_modules
 COPY host/package.json /app/host/
 COPY host/server.js /app/host/
-
-# Install host dependencies
-WORKDIR /app/host
-RUN npm install --production
 
 # Copy entrypoint script
 COPY entrypoint.sh /entrypoint.sh
@@ -88,5 +87,3 @@ STOPSIGNAL SIGINT
 
 # Run as root to allow fuse mount
 ENTRYPOINT ["/entrypoint.sh"]
-
-# Force rebuild: consent-fix-restore-1770350000

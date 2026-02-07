@@ -373,7 +373,7 @@ if [ -t 1 ] && [ -z "$TERMINAL_APP_STARTED" ]; then
             # Tab 1: Claude Code (via claude-unleashed)
             export IS_SANDBOX=1
             export DISABLE_INSTALLATION_CHECKS=1
-            cu --silent --no-consent
+            cu --silent --no-consent --disable-installation-checks
             # If claude exits, drop to bash (don't use exec so PTY survives)
             ;;
         2)
