@@ -49,12 +49,13 @@ async function fetchApi<T>(
   }
 
   // Handle empty responses (e.g., 204 No Content or empty 200).
-  // Return undefined rather than {} — callers expecting void get a valid
-  // value, and callers expecting real data should guard against it.
+  // When a schema is provided, the caller expects structured data — throw
+  // so the error is surfaced rather than silently returning garbage.
+  // When no schema is provided, callers expect void so `undefined` is fine.
   const text = await response.text();
   if (!text) {
     if (schema) {
-      return schema.parse({});
+      throw new ApiError(response.status, 'Expected response body but received empty response');
     }
     return undefined as unknown as T;
   }
@@ -148,6 +149,8 @@ export function startSession(
       }
       // For other errors (409 conflict, network issues), the container might already be starting
       console.log('Container start request (non-fatal):', err);
+      onError(`Container start failed: ${err instanceof Error ? err.message : String(err)}`);
+      return;
     }
 
     // Start polling for status
@@ -188,7 +191,7 @@ export function startSession(
     pollInterval = setInterval(poll, STARTUP_POLL_INTERVAL_MS);
   };
 
-  startPolling();
+  startPolling().catch((err) => onError(err instanceof Error ? err.message : String(err)));
 
   // Return cleanup function
   return () => {
@@ -292,8 +295,14 @@ export async function configure(body: {
   }, ConfigureResponseSchema);
 }
 
+// Session ID format: 8-24 lowercase alphanumeric characters (matches backend SESSION_ID_PATTERN)
+const SESSION_ID_RE = /^[a-z0-9]{8,24}$/;
+
 // WebSocket URL helper - uses compound session ID for multiple terminals per session
 export function getTerminalWebSocketUrl(sessionId: string, terminalId: string = '1'): string {
+  if (!SESSION_ID_RE.test(sessionId)) {
+    throw new Error(`Invalid sessionId "${sessionId}": must be 8-24 lowercase alphanumeric characters`);
+  }
   const id = parseInt(terminalId, 10);
   if (isNaN(id) || id < 1 || id > MAX_TERMINALS_PER_SESSION) {
     throw new Error(`Invalid terminalId "${terminalId}": must be between 1 and ${MAX_TERMINALS_PER_SESSION}`);

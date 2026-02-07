@@ -3,6 +3,7 @@ import type { DurableObjectState } from '@cloudflare/workers-types';
 import type { Env } from '../types';
 import { TERMINAL_SERVER_PORT, IDLE_TIMEOUT_MS, ACTIVITY_POLL_INTERVAL_MS } from '../lib/constants';
 import { getR2Config } from '../lib/r2-config';
+import { toErrorMessage } from '../lib/error-types';
 import { createLogger } from '../lib/logger';
 
 /**
@@ -66,7 +67,7 @@ export class container extends Container<Env> {
         this._r2Endpoint = r2Config.endpoint;
       } catch (err) {
         this.logger.warn('R2 config not available, will use empty values in envVars', {
-          error: err instanceof Error ? err.message : String(err),
+          error: toErrorMessage(err),
         });
       }
 
@@ -297,13 +298,13 @@ export class container extends Container<Env> {
     }
 
     const { hasActiveConnections, lastPtyOutputMs, lastWsActivityMs } = activityInfo;
-    const longestIdleMs = Math.min(lastPtyOutputMs, lastWsActivityMs);
+    const shortestIdleMs = Math.min(lastPtyOutputMs, lastWsActivityMs);
 
     this.logger.info('Activity check', { hasActiveConnections, lastPtyOutputMs, lastWsActivityMs });
 
     // Container can sleep when: no connections AND idle for IDLE_TIMEOUT_MS
-    if (!hasActiveConnections && longestIdleMs > IDLE_TIMEOUT_MS) {
-      this.logger.info('Container idle with no connections, destroying', { idleMs: longestIdleMs });
+    if (!hasActiveConnections && shortestIdleMs > IDLE_TIMEOUT_MS) {
+      this.logger.info('Container idle with no connections, destroying', { idleMs: shortestIdleMs });
       await this.cleanupAndDestroy();
       return true;
     }

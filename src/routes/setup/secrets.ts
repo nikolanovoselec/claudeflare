@@ -148,10 +148,15 @@ export async function handleSetSecrets(
       }
 
       if (!result.ok) {
-        logger.error(`Failed to set secret ${name} on ${workerName}`, new Error(`status: ${result.status}, errorCode: ${result.errorCode}`));
+        logger.error('Failed to set worker secret', new Error(`status: ${result.status}, errorCode: ${result.errorCode}`), {
+          secretName: name,
+          workerName,
+          status: result.status,
+          errorCode: result.errorCode,
+        });
         steps[stepIndex].status = 'error';
-        steps[stepIndex].error = `Failed to set secret ${name}: ${result.status}`;
-        throw new SetupError(`Failed to set secret ${name} on worker "${workerName}": ${result.status}`, steps);
+        steps[stepIndex].error = 'Failed to configure worker secrets';
+        throw new SetupError('Failed to configure worker secrets', steps);
       }
     }
     steps[stepIndex].status = 'success';

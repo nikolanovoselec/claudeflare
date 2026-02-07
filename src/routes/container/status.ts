@@ -73,7 +73,22 @@ app.get('/health', async (c) => {
 app.get('/startup-status', async (c) => {
   const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
 
-  // Default response structure — declared outside try so catch can spread it
+  /** Default response values — used to initialize `response` and as a clean base in catch */
+  const DEFAULTS = {
+    stage: 'stopped' as const,
+    progress: 0,
+    message: 'Container not running',
+    details: {
+      bucketName: '',
+      container: '',
+      path: '/home/user/workspace',
+      containerStatus: 'stopped',
+      syncStatus: 'pending',
+      healthServerOk: false,
+      terminalServerOk: false,
+    },
+  };
+
   const response: {
     stage: 'stopped' | 'starting' | 'syncing' | 'mounting' | 'verifying' | 'ready' | 'error';
     progress: number;
@@ -86,7 +101,6 @@ app.get('/startup-status', async (c) => {
       containerStatus?: string;
       syncStatus?: string;
       syncError?: string | null;
-      terminalPid?: number;
       healthServerOk?: boolean;
       terminalServerOk?: boolean;
       cpu?: string;
@@ -95,18 +109,8 @@ app.get('/startup-status', async (c) => {
     };
     error?: string;
   } = {
-    stage: 'stopped',
-    progress: 0,
-    message: 'Container not running',
-    details: {
-      bucketName: '',
-      container: '',
-      path: '/home/user/workspace',
-      containerStatus: 'stopped',
-      syncStatus: 'pending',
-      healthServerOk: false,
-      terminalServerOk: false,
-    },
+    ...DEFAULTS,
+    details: { ...DEFAULTS.details },
   };
 
   try {
@@ -183,7 +187,6 @@ app.get('/startup-status', async (c) => {
       response.details.containerStatus = containerState?.status || 'running';
       response.details.syncStatus = syncStatus;
       response.details.healthServerOk = true;
-      response.details.terminalPid = healthData.terminalPid;
       populateMetrics(response.details, healthData);
       return c.json(response);
     }
@@ -219,7 +222,6 @@ app.get('/startup-status', async (c) => {
       response.details.syncStatus = syncStatus;
       response.details.healthServerOk = true;
       response.details.terminalServerOk = true;
-      response.details.terminalPid = healthData.terminalPid;
       populateMetrics(response.details, healthData);
       return c.json(response);
     }
@@ -238,14 +240,14 @@ app.get('/startup-status', async (c) => {
     response.details.syncStatus = syncStatus;
     response.details.healthServerOk = true;
     response.details.terminalServerOk = true;
-    response.details.terminalPid = healthData.terminalPid;
     populateMetrics(response.details, healthData);
     return c.json(response);
   } catch (err) {
     reqLogger.error('Startup status error', toError(err));
     return c.json({
-      ...response,
-      stage: 'error',
+      ...DEFAULTS,
+      details: { ...DEFAULTS.details },
+      stage: 'error' as const,
       progress: 0,
       message: 'Container startup check failed',
       error: 'Container startup check failed',

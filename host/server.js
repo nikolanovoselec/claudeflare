@@ -19,10 +19,10 @@ import { parse as parseUrl } from 'url';
 import { parse as parseQuery } from 'querystring';
 import fs from 'fs';
 import os from 'os';
-import { exec } from 'child_process';
+import { execFile } from 'child_process';
 import { promisify } from 'util';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // Start time for uptime calculation
 const SERVER_START_TIME = Date.now();
@@ -37,15 +37,6 @@ function getSyncStatus() {
   }
 }
 
-// Helper to get Claude autostart status
-function getClaudeAutostartStatus() {
-  try {
-    return fs.readFileSync('/tmp/claude-autostart-status.txt', 'utf8').trim();
-  } catch (e) {
-    return 'not_configured';
-  }
-}
-
 // Cached disk metrics to avoid shelling out on every health check
 let cachedDiskMetrics = { value: '...', lastUpdated: 0 };
 const DISK_CACHE_TTL = 30000; // 30 seconds
@@ -55,8 +46,12 @@ async function getDiskMetrics() {
     return cachedDiskMetrics.value;
   }
   try {
-    const { stdout } = await execAsync("df -h /home/user 2>/dev/null | tail -1 | awk '{print $3\"/\"$2}'");
-    cachedDiskMetrics = { value: stdout.trim() || '...', lastUpdated: Date.now() };
+    const { stdout } = await execFileAsync('df', ['-h', '/home/user']);
+    const lines = stdout.trim().split('\n');
+    if (lines.length >= 2) {
+      const fields = lines[1].split(/\s+/);
+      cachedDiskMetrics = { value: `${fields[2]}/${fields[1]}`, lastUpdated: Date.now() };
+    }
   } catch (e) { /* keep cached value */ }
   return cachedDiskMetrics.value;
 }
@@ -486,7 +481,6 @@ const server = http.createServer(async (req, res) => {
   // Health check with full metrics (consolidates separate health server)
   if (pathname === '/health' && method === 'GET') {
     const syncInfo = getSyncStatus();
-    const claudeAutostart = getClaudeAutostartStatus();
     const sysMetrics = await getSystemMetrics();
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -501,7 +495,6 @@ const server = http.createServer(async (req, res) => {
         cpu: sysMetrics.cpu,
         mem: sysMetrics.mem,
         hdd: sysMetrics.hdd,
-        claudeAutostart: claudeAutostart,
         timestamp: new Date().toISOString(),
       })
     );
@@ -605,8 +598,9 @@ wss.on('connection', (ws, req) => {
 
     const str = message.toString();
 
-    // Try to parse as JSON for control messages
-    if (str.startsWith('{')) {
+    // Try to parse as JSON for known control messages only
+    // Use specific prefixes to avoid intercepting terminal input that starts with '{'
+    if (str.startsWith('{"type":"resize"') || str.startsWith('{"type":"ping"') || str.startsWith('{"type":"data"')) {
       try {
         const msg = JSON.parse(str);
 
@@ -627,13 +621,9 @@ wss.on('connection', (ws, req) => {
             // Legacy JSON-wrapped data - unwrap and write
             session.write(msg.data);
             return;
-
-          default:
-            console.log(`[Session ${sessionId}] Unknown message type: ${msg.type}`);
-            return;
         }
       } catch (e) {
-        // Not valid JSON starting with { - treat as raw input
+        // Not valid JSON - treat as raw terminal input
       }
     }
 

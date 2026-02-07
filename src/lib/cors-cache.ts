@@ -6,6 +6,7 @@
 
 import type { Env } from '../types';
 import { DEFAULT_ALLOWED_ORIGINS } from './constants';
+import { toErrorMessage } from './error-types';
 import { createLogger } from './logger';
 
 const logger = createLogger('cors-cache');
@@ -75,7 +76,7 @@ async function getKvOrigins(env: Env): Promise<string[]> {
     }
   } catch (err) {
     logger.warn('Failed to load KV origins, falling back to env/defaults', {
-      error: err instanceof Error ? err.message : String(err),
+      error: toErrorMessage(err),
     });
   }
 

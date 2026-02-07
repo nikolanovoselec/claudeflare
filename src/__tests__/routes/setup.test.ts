@@ -1153,7 +1153,7 @@ describe('Setup Routes', () => {
       const storedOrigins = JSON.parse(putCall![1]) as string[];
       expect(storedOrigins).toContain('.app.example.com');
       expect(storedOrigins).toContain('.dev.example.com');
-      expect(storedOrigins).toContain('claude.example.com');
+      expect(storedOrigins).toContain('.claude.example.com');
       expect(storedOrigins).toContain('.workers.dev');
     });
 
@@ -1176,7 +1176,7 @@ describe('Setup Routes', () => {
       );
       expect(putCall).toBeDefined();
       const storedOrigins = JSON.parse(putCall![1]) as string[];
-      expect(storedOrigins).toContain('claude.example.com');
+      expect(storedOrigins).toContain('.claude.example.com');
       expect(storedOrigins).toContain('.workers.dev');
     });
 

@@ -79,6 +79,15 @@ export async function createBucketIfNotExists(
   const data = await response.json() as CreateBucketResponse;
 
   if (!response.ok || !data.success) {
+    // Treat "already exists" as success (race between bucketExists check and creation)
+    const alreadyExists = data.errors?.some(
+      e => e.message?.toLowerCase().includes('already exists')
+    );
+    if (alreadyExists) {
+      logger.info('Bucket already exists (detected via create error)', { bucketName });
+      return { success: true, created: false };
+    }
+
     const errorMsg = data.errors?.[0]?.message || `HTTP ${response.status}`;
     logger.error('Failed to create bucket', new Error(errorMsg), { bucketName });
     return { success: false, error: errorMsg };

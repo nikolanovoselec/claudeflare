@@ -10,7 +10,6 @@ import { METRICS_POLL_INTERVAL_MS, MAX_TERMINALS_PER_SESSION } from '../lib/cons
 interface SessionMetrics {
   bucketName: string;
   syncStatus: 'pending' | 'syncing' | 'success' | 'failed' | 'skipped';
-  terminalPid?: number;
   cpu?: string;
   mem?: string;
   hdd?: string;
@@ -365,7 +364,6 @@ async function fetchMetricsForSession(sessionId: string): Promise<void> {
         s.sessionMetrics[sessionId] = {
           bucketName: status.details?.bucketName || '...',
           syncStatus: (status.details?.syncStatus as 'pending' | 'syncing' | 'success' | 'failed' | 'skipped') || 'pending',
-          terminalPid: status.details?.terminalPid,
           cpu: status.details?.cpu || '...',
           mem: status.details?.mem || '...',
           hdd: status.details?.hdd || '...',

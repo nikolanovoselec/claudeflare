@@ -55,7 +55,6 @@ export interface HealthData {
   syncStatus?: string;
   syncError?: string | null;
   userPath?: string;
-  terminalPid?: number;
   cpu?: string;
   mem?: string;
   hdd?: string;

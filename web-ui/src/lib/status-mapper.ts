@@ -40,11 +40,10 @@ export function mapStartupDetailsToProgress(status: StartupStatusResponse): Init
 
     // Terminal status - dynamic
     const terminalServerOk = status.details.terminalServerOk;
-    const terminalPid = status.details.terminalPid;
     let terminalValue = 'Starting';
     let terminalStatus: 'ok' | 'error' | 'pending' = 'pending';
     if (terminalServerOk) {
-      terminalValue = terminalPid ? `Ready (PID ${terminalPid})` : 'Ready';
+      terminalValue = 'Ready';
       terminalStatus = 'ok';
     } else if (status.details.healthServerOk) {
       terminalValue = 'Starting...';

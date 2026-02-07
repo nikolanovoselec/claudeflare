@@ -20,6 +20,14 @@ type AppVariables = {
   requestId: string;
 };
 
+/** Security headers applied to every response (middleware + SPA handler) */
+const SECURITY_HEADERS: Record<string, string> = {
+  'Strict-Transport-Security': 'max-age=63072000; includeSubDomains; preload',
+  'X-Content-Type-Options': 'nosniff',
+  'X-Frame-Options': 'DENY',
+  'Referrer-Policy': 'strict-origin-when-cross-origin',
+};
+
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
 const logger = createLogger('index');
@@ -39,10 +47,9 @@ app.use('*', async (c, next) => {
   await next();
   const duration = Date.now() - start;
 
-  c.header('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
-  c.header('X-Content-Type-Options', 'nosniff');
-  c.header('X-Frame-Options', 'DENY');
-  c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
+  for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
+    c.header(key, value);
+  }
 
   logger.info('Request completed', {
     requestId,
@@ -216,10 +223,9 @@ export default {
     // With not_found_handling = "single-page-application", missing routes get index.html
     const assetResponse = await env.ASSETS.fetch(request);
     const secureResponse = new Response(assetResponse.body, assetResponse);
-    secureResponse.headers.set('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
-    secureResponse.headers.set('X-Frame-Options', 'DENY');
-    secureResponse.headers.set('X-Content-Type-Options', 'nosniff');
-    secureResponse.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    for (const [key, value] of Object.entries(SECURITY_HEADERS)) {
+      secureResponse.headers.set(key, value);
+    }
     secureResponse.headers.set('Content-Security-Policy',
       "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' wss:; img-src 'self' data:; script-src 'self'"
     );

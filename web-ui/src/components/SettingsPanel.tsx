@@ -288,9 +288,9 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
 
             {/* Admin-only: Add user form */}
             <Show when={isAdmin()}>
-              <div class="setting-row" style="flex-direction: column; align-items: stretch">
-                <div style="display: flex; gap: 8px; width: 100%; align-items: flex-start">
-                  <div style="flex: 1" onKeyDown={handleUserEmailKeyDown}>
+              <div class="setting-row setting-row--column">
+                <div class="setting-row__actions">
+                  <div class="setting-row__input-wrapper" onKeyDown={handleUserEmailKeyDown}>
                     <Input
                       value={userEmail()}
                       onInput={(value) => { setUserEmail(value); setUserError(''); }}
@@ -325,23 +325,23 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
 
             {/* User list */}
             <Show when={usersLoading()}>
-              <div class="setting-row" style="justify-content: center">
+              <div class="setting-row setting-row--centered">
                 <span class="settings-hint">Loading users...</span>
               </div>
             </Show>
             <Show when={!usersLoading()}>
               <For each={users()}>
                 {(user) => (
-                  <div class="setting-row" style="display: flex; justify-content: space-between; align-items: center" data-testid="settings-user-row">
-                    <div style="min-width: 0; flex: 1; display: flex; align-items: center; gap: 8px; flex-wrap: wrap">
-                      <span style="font-size: var(--text-sm); color: var(--color-text-primary)">{user.email}</span>
+                  <div class="setting-row setting-row--user" data-testid="settings-user-row">
+                    <div class="setting-row__user-info">
+                      <span class="setting-row__user-email">{user.email}</span>
                       <span
                         class={`settings-role-badge ${user.role === 'admin' ? 'settings-role-badge--admin' : 'settings-role-badge--user'}`}
                         data-testid="settings-user-role-badge"
                       >
                         {user.role === 'admin' ? 'Admin' : 'User'}
                       </span>
-                      <span class="settings-hint" style="font-size: var(--text-xs)">
+                      <span class="settings-hint setting-row__added-by">
                         added by {user.addedBy}
                       </span>
                     </div>
@@ -360,7 +360,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
               </For>
             </Show>
             <Show when={!usersLoading() && users().length === 0 && !userError()}>
-              <div class="setting-row" style="justify-content: center">
+              <div class="setting-row setting-row--centered">
                 <span class="settings-hint">No users added yet</span>
               </div>
             </Show>
@@ -373,7 +373,7 @@ const SettingsPanel: Component<SettingsPanelProps> = (props) => {
                 <Icon path={mdiCogOutline} size={16} />
                 <h3 class="settings-section-title">Administration</h3>
               </div>
-              <div class="setting-row" style="flex-direction: column; align-items: stretch; gap: 8px">
+              <div class="setting-row setting-row--column-gap">
                 <span class="settings-hint">
                   Re-run the setup wizard to reconfigure domain, users, or secrets
                 </span>

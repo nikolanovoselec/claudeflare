@@ -196,8 +196,8 @@ async function upsertDnsRecord(
     if (dnsMethod === 'POST' && dnsError.errors?.some(e => e.code === 81057)) {
       logger.info('DNS record already exists (detected via create error)', { domain, subdomain, target: workersDevTarget });
     } else {
-      const dnsErrMsg = dnsError.errors?.[0]?.message || `Failed to ${existingDnsRecordId ? 'update' : 'create'} DNS record`;
-      logger.error(`DNS record ${existingDnsRecordId ? 'update' : 'creation'} failed`, new Error(dnsErrMsg), {
+      const dnsErrMsg = dnsError.errors?.[0]?.message || 'unknown';
+      logger.error('DNS record configuration failed', new Error(dnsErrMsg), {
         domain,
         subdomain,
         target: workersDevTarget,
@@ -217,8 +217,8 @@ async function upsertDnsRecord(
       }
 
       steps[stepIndex].status = 'error';
-      steps[stepIndex].error = dnsErrMsg;
-      throw new SetupError(dnsErrMsg, steps);
+      steps[stepIndex].error = 'Failed to configure DNS record';
+      throw new SetupError('Failed to configure DNS record', steps);
     }
   } else {
     logger.info(`DNS record ${existingDnsRecordId ? 'updated' : 'created'}`, { domain, subdomain, target: workersDevTarget });
@@ -256,7 +256,7 @@ async function createWorkerRoute(
     const routeError = await routeRes.json() as { errors?: Array<{ code: number; message: string }> };
     // Route might already exist - that's OK (code 10020)
     if (!routeError.errors?.some(e => e.code === 10020)) {
-      const routeErrMsg = routeError.errors?.[0]?.message || 'Failed to add worker route';
+      const routeErrMsg = routeError.errors?.[0]?.message || 'unknown';
       logger.error('Worker route creation failed', new Error(routeErrMsg), {
         domain,
         zoneId,
@@ -274,8 +274,8 @@ async function createWorkerRoute(
       }
 
       steps[stepIndex].status = 'error';
-      steps[stepIndex].error = routeErrMsg;
-      throw new SetupError(routeErrMsg, steps);
+      steps[stepIndex].error = 'Failed to configure worker route';
+      throw new SetupError('Failed to configure worker route', steps);
     }
   }
 }

@@ -706,7 +706,6 @@ describe('API Client', () => {
             email: 'user@example.com',
             containerStatus: 'running',
             syncStatus: 'success',
-            terminalPid: 12345,
             healthServerOk: true,
             terminalServerOk: true,
           },
@@ -752,7 +751,7 @@ describe('API Client', () => {
       );
       expect(terminalDetail).toEqual({
         key: 'Terminal',
-        value: 'Ready (PID 12345)',
+        value: 'Ready',
         status: 'ok',
       });
 
@@ -1060,9 +1059,9 @@ describe('API Client', () => {
         writable: true,
       });
 
-      const url = getTerminalWebSocketUrl('session-123', '2');
+      const url = getTerminalWebSocketUrl('session123abc', '2');
 
-      expect(url).toBe('wss://claudeflare.workers.dev/api/terminal/session-123-2/ws');
+      expect(url).toBe('wss://claudeflare.workers.dev/api/terminal/session123abc-2/ws');
     });
 
     it('should use ws: protocol for http:', () => {
@@ -1077,9 +1076,9 @@ describe('API Client', () => {
         writable: true,
       });
 
-      const url = getTerminalWebSocketUrl('session-123', '1');
+      const url = getTerminalWebSocketUrl('session123abc', '1');
 
-      expect(url).toBe('ws://localhost:3000/api/terminal/session-123-1/ws');
+      expect(url).toBe('ws://localhost:3000/api/terminal/session123abc-1/ws');
     });
 
     it('should default to terminal ID 1', () => {
@@ -1094,9 +1093,9 @@ describe('API Client', () => {
         writable: true,
       });
 
-      const url = getTerminalWebSocketUrl('session-123');
+      const url = getTerminalWebSocketUrl('session123abc');
 
-      expect(url).toMatch(/\/api\/terminal\/session-123-1\/ws/);
+      expect(url).toMatch(/\/api\/terminal\/session123abc-1\/ws/);
     });
   });
 });

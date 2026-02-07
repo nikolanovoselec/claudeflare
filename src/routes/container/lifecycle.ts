@@ -167,19 +167,13 @@ app.post('/destroy', async (c) => {
   const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
 
   try {
-    const sessionId = getSessionIdFromQueryOrHeader(c);
-    if (!sessionId) {
-      throw new ValidationError('sessionId is required');
-    }
     const { containerId, container } = getContainerContext(c);
 
-    // Get state before destroy
-    const stateBefore = await container.getState();
-
     // Destroy the container
+    // Note: Do NOT call getState() before destroy() — it wakes up hibernated DOs (gotcha #6)
     await container.destroy();
 
-    reqLogger.info('Container destroyed', { containerId, stateBefore });
+    reqLogger.info('Container destroyed', { containerId });
 
     // Don't call getState() after destroy() — it resurrects the DO (gotcha #6)
     return c.json({ success: true, message: 'Container destroyed' });

@@ -4,6 +4,7 @@
  */
 import { Hono } from 'hono';
 import { getContainer } from '@cloudflare/containers';
+import type { DurableObjectStub } from '@cloudflare/workers-types';
 import type { Env, Session } from '../../types';
 import { getSessionKey, getSessionPrefix, listAllKvKeys, getSessionOrThrow } from '../../lib/kv-keys';
 import { AuthVariables } from '../../middleware/auth';
@@ -69,37 +70,42 @@ app.get('/batch-status', async (c) => {
   // Check container status for each session in parallel
   const statuses: Record<string, { status: string; ptyActive: boolean; startupStage?: string }> = {};
 
-  await Promise.all(
+  const results = await Promise.allSettled(
     sessions.map(async (session) => {
       // If KV says stopped, skip the expensive container probe
       if (session.status === 'stopped') {
-        statuses[session.id] = { status: 'stopped', ptyActive: false };
-        return;
+        return { sessionId: session.id, status: 'stopped', ptyActive: false } as const;
       }
 
-      try {
-        const containerId = getContainerId(bucketName, session.id);
-        const container = getContainer(c.env.CONTAINER, containerId);
-        const result = await getContainerSessionStatus(container, session.id);
-        const entry: { status: string; ptyActive: boolean; startupStage?: string } = {
-          status: result.status,
-          ptyActive: result.ptyActive,
-        };
-        // For running containers, derive a lightweight startup stage
-        if (result.status === 'running') {
-          entry.startupStage = result.ptyActive ? 'ready' : 'verifying';
-        }
-        statuses[session.id] = entry;
-      } catch (err) {
-        // Container check failed entirely - mark as stopped
-        reqLogger.warn('Batch status check failed for session', {
-          sessionId: session.id,
-          error: String(err),
-        });
-        statuses[session.id] = { status: 'stopped', ptyActive: false };
+      const containerId = getContainerId(bucketName, session.id);
+      const container = getContainer(c.env.CONTAINER, containerId);
+      const result = await getContainerSessionStatus(container, session.id);
+      const entry: { sessionId: string; status: string; ptyActive: boolean; startupStage?: string } = {
+        sessionId: session.id,
+        status: result.status,
+        ptyActive: result.ptyActive,
+      };
+      if (result.status === 'running') {
+        entry.startupStage = result.ptyActive ? 'ready' : 'verifying';
       }
+      return entry;
     })
   );
+
+  for (let i = 0; i < results.length; i++) {
+    const sessionId = sessions[i].id;
+    const result = results[i];
+    if (result.status === 'fulfilled') {
+      const { sessionId: _id, ...entry } = result.value;
+      statuses[sessionId] = entry;
+    } else {
+      reqLogger.warn('Batch status check failed for session', {
+        sessionId,
+        error: String(result.reason),
+      });
+      statuses[sessionId] = { status: 'stopped', ptyActive: false };
+    }
+  }
 
   return c.json({ statuses });
 });

@@ -92,7 +92,7 @@ app.post('/configure', async (c) => {
   if (existingLock) {
     throw new ValidationError('Setup configuration is already in progress. Please wait and try again.');
   }
-  await c.env.KV.put(lockKey, new Date().toISOString(), { expirationTtl: 60 });
+  await c.env.KV.put(lockKey, new Date().toISOString(), { expirationTtl: 300 });
 
   const steps: SetupStep[] = [];
 
@@ -117,23 +117,24 @@ app.post('/configure', async (c) => {
     // Remove stale users not in the new allowedUsers list
     const allowedSet = new Set(allowedUsers);
     const existingUserKeys = await listAllKvKeys(c.env.KV, 'user:');
-    for (const key of existingUserKeys) {
-      const email = key.name.replace('user:', '');
-      if (!allowedSet.has(email)) {
-        await c.env.KV.delete(key.name);
-        logger.info('Removed stale user', { email });
-      }
-    }
+    const staleDeletes = existingUserKeys
+      .filter(key => !allowedSet.has(key.name.replace('user:', '')))
+      .map(key => {
+        logger.info('Removed stale user', { email: key.name.replace('user:', '') });
+        return c.env.KV.delete(key.name);
+      });
+    await Promise.all(staleDeletes);
 
     // Store users in KV with role
     const adminSet = new Set(adminUsers);
-    for (const email of allowedUsers) {
+    const userWrites = allowedUsers.map(email => {
       const role = adminSet.has(email) ? 'admin' : 'user';
-      await c.env.KV.put(
+      return c.env.KV.put(
         `user:${email}`,
         JSON.stringify({ addedBy: 'setup', addedAt: new Date().toISOString(), role })
       );
-    }
+    });
+    await Promise.all(userWrites);
 
     // Step 4 & 5: Custom domain + CF Access
     await handleConfigureCustomDomain(token, accountId, customDomain, c.req.url, steps);
@@ -147,16 +148,17 @@ app.post('/configure', async (c) => {
     // 2. Auto-add the custom domain
     // 3. Always include .workers.dev as a default
     const combinedOrigins = new Set<string>(allowedOrigins || []);
-    combinedOrigins.add(customDomain);
+    combinedOrigins.add(`.${customDomain}`);
     combinedOrigins.add('.workers.dev');
     await c.env.KV.put('setup:allowed_origins', JSON.stringify([...combinedOrigins]));
 
     // Final step: Mark setup as complete
+    // Write setup:complete LAST so the system isn't considered configured if any prerequisite write fails
     steps.push({ step: 'finalize', status: 'pending' });
-    await c.env.KV.put('setup:complete', 'true');
     await c.env.KV.put('setup:account_id', accountId);
     await c.env.KV.put('setup:r2_endpoint', `https://${accountId}.r2.cloudflarestorage.com`);
     await c.env.KV.put('setup:completed_at', new Date().toISOString());
+    await c.env.KV.put('setup:complete', 'true');
     steps[steps.length - 1].status = 'success';
 
     // Reset in-memory caches so subsequent requests pick up new KV values

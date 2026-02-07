@@ -179,19 +179,11 @@ export function getContainerContext<V extends ContainerVariables>(
 
 ### 2.4 Error Handling
 
-**File:** `src/lib/errors.ts`
+**File:** `src/lib/error-types.ts`
 
-Standardized error response helpers for consistent API responses.
-
-```typescript
-export function errorResponse(c: Context, status: ContentfulStatusCode, message: string) {
-  return c.json({ error: message }, status);
-}
-
-export function successResponse<T extends object>(c: Context, data: T) {
-  return c.json({ success: true, ...data });
-}
-```
+Standardized error classes for consistent API responses (see section 2.7 for full hierarchy). Key utilities:
+- `toError(unknown)` -- safely convert catch clause values to Error instances
+- `toErrorMessage(unknown)` -- quick string extraction from unknown errors (used consistently across entire codebase)
 
 ### 2.5 Type Guards
 
@@ -359,48 +351,38 @@ const reqLogger = logger.child({ requestId: 'req-123' });
 }
 ```
 
-### 2.11 Exponential Backoff
+### 2.11 JWT Verification
 
-**File:** `src/lib/backoff.ts`
+**File:** `src/lib/jwt.ts`
 
-Retry operations with increasing delays:
-
-```typescript
-import { withBackoff, MaxRetriesExceededError } from '../lib/backoff';
-
-const result = await withBackoff(
-  () => fetchFromExternalApi(),
-  {
-    initialDelayMs: 100,
-    maxDelayMs: 5000,
-    factor: 2,
-    maxAttempts: 5,
-    jitter: true,  // Prevents thundering herd
-  }
-);
-```
-
-### 2.12 Credential Encryption
-
-**File:** `src/lib/crypto.ts`
-
-AES-256-GCM encryption for credentials at rest:
+JWT verification for Cloudflare Access tokens using RS256:
 
 ```typescript
-import { encrypt, decrypt, importKeyFromBase64 } from '../lib/crypto';
+import { verifyAccessJWT } from '../lib/jwt';
 
-const key = await importKeyFromBase64(env.ENCRYPTION_KEY);
-const encrypted = await encrypt(JSON.stringify(credentials), key);
-const decrypted = await decrypt(encrypted, key);
+const payload = await verifyAccessJWT(token, authDomain, accessAud);
+// Returns email, exp, aud, etc.
 ```
 
-**Key generation:**
-```bash
-# Generate a new key (run once)
-node -e "import('./src/lib/crypto.js').then(m => m.generateEncryptionKey().then(k => m.exportKeyToBase64(k).then(console.log)))"
-# Store as secret
-echo "base64-key" | wrangler secret put ENCRYPTION_KEY
+**Features:**
+- JWKS fetched from `https://{authDomain}/cdn-cgi/access/certs`
+- JWKS cached per-isolate with `resetJWKSCache()` for invalidation
+- RS256 signature verification using Web Crypto API
+
+### 2.12 Cache Reset
+
+**File:** `src/lib/cache-reset.ts`
+
+Centralized cache invalidation for module-level caches:
+
+```typescript
+import { resetSetupCache } from '../lib/cache-reset';
+
+// Resets CORS + auth config + JWKS caches
+resetSetupCache();
 ```
+
+Called by setup wizard after configuration changes so subsequent requests pick up new KV values.
 
 ### 2.13 DEV_MODE Gating
 
@@ -1166,7 +1148,7 @@ curl https://claudeflare.your-subdomain.workers.dev/api/container/startup-status
 | `R2_ACCOUNT_ID` | R2 endpoint construction | Dynamic (env var with KV fallback via r2-config.ts) |
 | `R2_ENDPOINT` | S3-compatible endpoint | Dynamic (env var with KV fallback via r2-config.ts) |
 | `ALLOWED_ORIGINS` | CORS allowed origins (comma-separated patterns) | wrangler.toml |
-| `ENCRYPTION_KEY` | AES-256 key for encrypting credentials at rest | Wrangler secret (optional) |
+| `ENCRYPTION_KEY` | AES-256 key for encrypting credentials at rest (DEPRECATED: crypto.ts removed) | Wrangler secret (optional) |
 
 ### Container Environment
 
@@ -1201,44 +1183,52 @@ claudeflare/
 |   |   +-- session/          # Session API (split for maintainability)
 |   |   |   +-- index.ts      # Route aggregator with shared auth middleware
 |   |   |   +-- crud.ts       # GET/POST/PATCH/DELETE session endpoints
-|   |   |   +-- lifecycle.ts  # start/stop/status session endpoints
+|   |   |   +-- lifecycle.ts  # start/stop/status/batch-status session endpoints
+|   |   +-- setup/            # Setup wizard API (split into modules)
+|   |   |   +-- index.ts      # Route aggregator (status, detect-token, configure)
+|   |   |   +-- handlers.ts   # Status, detect-token, reset/restore-for-tests
+|   |   |   +-- secrets.ts    # handleSetSecrets (R2 credentials, error 10215 fallback)
+|   |   |   +-- custom-domain.ts # handleConfigureCustomDomain (DNS, worker route)
+|   |   |   +-- access.ts     # handleCreateAccessApp (CF Access app + policy)
+|   |   |   +-- account.ts    # handleGetAccount (account ID resolution)
+|   |   |   +-- credentials.ts # handleDeriveR2Credentials (SHA-256 derivation)
+|   |   |   +-- shared.ts     # Shared: logger, rate limiter, helpers
 |   |   +-- admin.ts          # Admin-only endpoints (destroy-by-id)
 |   |   +-- terminal.ts       # Terminal WebSocket proxy
-|   |   +-- user.ts           # User info
+|   |   +-- user-profile.ts   # User info
 |   |   +-- users.ts          # User management API (GET/POST /api/users, DELETE /api/users/:email)
 |   |   +-- credentials.ts    # Credential management (DEV_MODE gated)
-|   |   +-- setup.ts          # Setup wizard API
 |   +-- middleware/
 |   |   +-- auth.ts           # Shared auth middleware (checks user allowlist in KV)
 |   |   +-- rate-limit.ts     # Per-user rate limiting middleware
 |   +-- lib/
 |   |   +-- access.ts         # CF Access auth helpers
 |   |   +-- access-policy.ts  # Shared user/Access operations helper
-|   |   +-- r2-admin.ts       # R2 bucket API
+|   |   +-- r2-admin.ts       # R2 bucket API (handles "already exists" race)
 |   |   +-- r2-config.ts      # R2 config resolution (env vars with KV fallback)
 |   |   +-- kv-keys.ts        # KV key utilities
 |   |   +-- constants.ts      # Centralized constants (ports, patterns, R2 IDs, timeouts)
 |   |   +-- container-helpers.ts  # Container initialization helpers
-|   |   +-- errors.ts         # Standardized error responses
 |   |   +-- error-types.ts    # Centralized error classes (AppError hierarchy)
 |   |   +-- type-guards.ts    # Runtime type validation
 |   |   +-- circuit-breaker.ts  # Circuit breaker pattern for resilience
 |   |   +-- circuit-breakers.ts # Shared circuit breaker instances for container routes
-|   |   +-- cors-cache.ts     # In-memory CORS origins cache (shared between index.ts and setup.ts)
+|   |   +-- cors-cache.ts     # In-memory CORS origins cache (shared between index.ts and setup)
+|   |   +-- cache-reset.ts    # Centralized cache reset (CORS + auth + JWKS)
+|   |   +-- jwt.ts            # JWT verification against CF Access JWKS (RS256)
 |   |   +-- logger.ts         # Structured JSON logging
-|   |   +-- backoff.ts        # Exponential backoff with jitter
-|   |   +-- crypto.ts         # AES-GCM encryption for credentials at rest
 |   +-- container/
 |   |   +-- index.ts          # container DO class (extends Container)
 |   +-- __tests__/
 |       +-- index.test.ts     # Edge-level redirect tests
 |       +-- lib/              # Unit tests for lib modules
-|       |   +-- backoff.test.ts
+|       |   +-- access.test.ts
+|       |   +-- access-policy.test.ts
 |       |   +-- circuit-breaker.test.ts
 |       |   +-- constants.test.ts
 |       |   +-- container-helpers.test.ts
-|       |   +-- crypto.test.ts
 |       |   +-- error-types.test.ts
+|       |   +-- jwt.test.ts
 |       |   +-- logger.test.ts
 |       |   +-- r2-config.test.ts
 |       |   +-- type-guards.test.ts
@@ -1248,6 +1238,9 @@ claudeflare/
 |       +-- routes/           # Unit tests for route handlers
 |           +-- session.test.ts
 |           +-- setup.test.ts
+|           +-- setup-shared.test.ts
+|           +-- container-lifecycle.test.ts
+|           +-- container-status.test.ts
 |           +-- users.test.ts
 |
 +-- e2e/
@@ -1302,8 +1295,7 @@ claudeflare/
 |   |   |   +-- Icon.tsx          # SVG icon wrapper for MDI
 |   |   |   +-- ui/              # Base UI components
 |   |   |   |   +-- index.ts     # Barrel export
-|   |   |   |   +-- Button.tsx, IconButton.tsx, Input.tsx
-|   |   |   |   +-- Badge.tsx, Card.tsx, Skeleton.tsx, Tooltip.tsx
+|   |   |   |   +-- Button.tsx, Input.tsx
 |   |   |   +-- setup/           # Setup wizard steps (3-step flow)
 |   |   |       +-- SetupWizard.tsx, WelcomeStep.tsx
 |   |   |       +-- ConfigureStep.tsx, ProgressStep.tsx
@@ -1317,21 +1309,29 @@ claudeflare/
 |   |   |   +-- constants.ts      # Frontend constants (intervals, timeouts)
 |   |   |   +-- schemas.ts        # Zod validation schemas
 |   |   |   +-- terminal-config.ts # Tab configuration (names, icons)
+|   |   |   +-- settings.ts      # Settings type, defaults, localStorage load/save
+|   |   |   +-- format.ts        # formatRelativeTime, formatUptime helpers
+|   |   |   +-- status-mapper.ts  # mapStartupDetailsToProgress
 |   |   +-- styles/
-|   |   |   +-- design-tokens.css  # CSS variables (colors, spacing, etc.)
+|   |   |   +-- design-tokens.css  # 100+ CSS variables
 |   |   |   +-- animations.css     # Keyframes and animation utilities
 |   |   |   +-- components.css     # Shared component styles
+|   |   |   +-- app.css, layout.css, header.css, status-bar.css
+|   |   |   +-- terminal.css, terminal-tabs.css
+|   |   |   +-- tiling-button.css, tiling-overlay.css
 |   |   |   +-- session-list.css   # Session list styles
 |   |   |   +-- init-progress.css  # Init progress modal styles
 |   |   |   +-- settings-panel.css # Settings panel styles
+|   |   |   +-- empty-state.css, button.css, input.css, icon.css
+|   |   |   +-- setup-wizard.css, welcome-step.css
+|   |   |   +-- configure-step.css, progress-step.css
 |   |   +-- __tests__/            # Frontend unit tests
 |   |       +-- setup.ts          # Test setup
 |   |       +-- smoke.test.ts     # Smoke tests
 |   |       +-- utils/
-|   |       |   +-- render.tsx    # Test render utility
 |   |       |   +-- mocks.ts     # Shared mocks
 |   |       +-- components/       # Component tests
-|   |       |   +-- Badge.test.tsx, Button.test.tsx, IconButton.test.tsx, Input.test.tsx
+|   |       |   +-- Button.test.tsx, Input.test.tsx
 |   |       |   +-- Header.test.tsx, StatusBar.test.tsx, SettingsPanel.test.tsx
 |   |       |   +-- SessionList.test.tsx, EmptyState.test.tsx, InitProgress.test.tsx
 |   |       |   +-- Terminal.test.tsx, TerminalTabs.test.tsx
@@ -1343,6 +1343,8 @@ claudeflare/
 |   |       |   +-- session-tiling.test.ts
 |   |       |   +-- session-ready-detection.test.ts
 |   |       |   +-- setup.test.ts
+|   |       +-- lib/              # Lib tests
+|   |       |   +-- format.test.ts
 |   |       +-- api/              # API tests
 |   |           +-- client.test.ts
 |   |           +-- contract.test.ts
@@ -1676,7 +1678,7 @@ cd web-ui
 npm run dev       # Start dev server
 npm run build     # Build for production
 npm run typecheck # Type check frontend
-npm test          # Run ~537 component/store/API tests
+npm test          # Run ~542 component/store/API tests
 ```
 
 ### Commands Reference
@@ -1732,18 +1734,20 @@ Located in `src/__tests__/`. Uses Vitest with `@cloudflare/vitest-pool-workers` 
 npm test
 ```
 
-**~231 tests** across 14 test files covering:
+**~317 tests** across 19 test files covering:
 - Constants validation (ports, session ID patterns, R2 permission IDs)
 - Container helper functions (getContainerId, waitForContainerHealth)
 - Type guards (isAdminRequest, isBucketNameResponse)
 - Error types (AppError hierarchy including RateLimitError, CircuitBreakerOpenError)
 - Circuit breaker pattern
-- Exponential backoff logic
+- JWT verification (RS256 against CF Access JWKS)
+- R2 config resolution (env vars with KV fallback)
+- CF Access auth helpers
 - Rate limiting middleware
 - Auth middleware (user allowlist checks in KV)
 - Structured logging
 - Edge-level redirect (GET / -> 302 /setup when not configured)
-- Route tests: setup, session CRUD/lifecycle, user management
+- Route tests: setup, setup-shared, session CRUD/lifecycle/batch-status, container lifecycle/status, user management
 
 **Shared mock:** `src/__tests__/helpers/mock-kv.ts` exports `createMockKV()` -- a Map-backed KV mock. All tests use in-memory mocks (no real KV binding).
 
@@ -1755,15 +1759,18 @@ Located in `web-ui/src/__tests__/`. Uses Vitest with SolidJS Testing Library + j
 cd web-ui && npm test
 ```
 
-**~537 tests** across 25+ test files covering:
-- Base UI components (Button, Input, Badge, Card, Skeleton, Tooltip)
+**~542 tests** across 22 test files covering:
+- Base UI components (Button, Input)
 - Layout components (Header, StatusBar, SettingsPanel)
 - Feature components (SessionList, SessionCard, TerminalTabs, InitProgress, EmptyState)
-- Terminal store (28 tests) -- WebSocket state, compound keys, reconnection
-- Session store (30 tests) -- CRUD, tiling, metrics polling
-- Setup store (44 tests) -- wizard state, validation, persistence
-- API client (35 tests) -- request handling, error mapping, retry logic
-- API contract (36 tests) -- Zod schema validation, type safety
+- Tiling components (TilingButton, TilingOverlay, TiledTerminalContainer)
+- Terminal component tests
+- Lib tests (format.ts helpers)
+- Terminal store -- WebSocket state, compound keys, reconnection
+- Session store -- CRUD, tiling, metrics polling, ready detection
+- Setup store -- wizard state, validation, persistence
+- API client -- request handling, error mapping, retry logic, sessionId validation
+- API contract -- Zod schema validation, type safety
 
 **Frontend test setup:** `web-ui/src/__tests__/setup.ts` is auto-loaded. Mocks `localStorage`, `WebSocket` (with `_simulateMessage`/`_simulateError` helpers), and `ResizeObserver`.
 
@@ -1840,7 +1847,7 @@ Zone permissions are only used during setup when configuring a custom domain. Ac
 
 All secrets are set automatically by the deploy workflow (`CLOUDFLARE_API_TOKEN`) and the setup wizard (`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`).
 
-The only optional manual secret is `ENCRYPTION_KEY` (AES-256 key for encrypting credentials at rest).
+No optional manual secrets are required. (`ENCRYPTION_KEY` was previously optional for credential encryption; `crypto.ts` has been removed.)
 
 ### Environment Variables (wrangler.toml)
 

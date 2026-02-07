@@ -289,7 +289,6 @@ describe('Frontend-Backend Contract Tests', () => {
             containerStatus: 'running',
             syncStatus: 'success',
             syncError: null,
-            terminalPid: 12345,
             healthServerOk: true,
             terminalServerOk: true,
             cpu: '15%',
@@ -311,7 +310,6 @@ describe('Frontend-Backend Contract Tests', () => {
         expect(status.details.email).toBe('user@example.com');
         expect(status.details.cpu).toBe('15%');
         expect(status.details.mem).toBe('512MB');
-        expect(status.details.terminalPid).toBe(12345);
       });
     });
 
@@ -793,7 +791,6 @@ describe('Frontend-Backend Contract Tests', () => {
           containerStatus: 'running',
           syncStatus: 'success',
           syncError: null,
-          terminalPid: 42,
           healthServerOk: true,
           terminalServerOk: true,
           cpu: '15%',

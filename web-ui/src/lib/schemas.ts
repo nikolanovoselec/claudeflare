@@ -42,7 +42,6 @@ export const StartupStatusResponseSchema = z.object({
     containerStatus: z.string().optional(),
     syncStatus: z.string().optional(),
     syncError: z.string().nullable().optional(),
-    terminalPid: z.number().optional(),
     healthServerOk: z.boolean().optional(),
     terminalServerOk: z.boolean().optional(),
     cpu: z.string().optional(),
@@ -50,12 +49,6 @@ export const StartupStatusResponseSchema = z.object({
     hdd: z.string().optional(),
   }),
   error: z.string().optional(),
-});
-
-// Session status response schema
-export const SessionStatusResponseSchema = z.object({
-  status: z.string(),
-  ptyActive: z.boolean().optional(),
 });
 
 // Batch session status response schema

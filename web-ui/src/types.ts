@@ -67,7 +67,6 @@ export interface StartupStatusResponse {
     containerStatus?: string;
     syncStatus?: string;
     syncError?: string | null;
-    terminalPid?: number;
     healthServerOk?: boolean;
     terminalServerOk?: boolean;
     // System metrics from health server
