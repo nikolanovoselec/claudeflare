@@ -133,6 +133,7 @@ initial_sync_from_r2() {
         --exclude "**/node_modules/**" \
         --include "CLAUDE.md" \
         --include "**/CLAUDE.md" \
+        --include ".claude/**" \
         --exclude "*" \
         --fast-list \
         --size-only \
@@ -172,6 +173,7 @@ establish_bisync_baseline() {
         --exclude "**/node_modules/**" \
         --include "CLAUDE.md" \
         --include "**/CLAUDE.md" \
+        --include ".claude/**" \
         --exclude "*" \
         --resync \
         --fast-list \
@@ -217,6 +219,7 @@ bisync_with_r2() {
         --exclude "**/node_modules/**" \
         --include "CLAUDE.md" \
         --include "**/CLAUDE.md" \
+        --include ".claude/**" \
         --exclude "*" \
         --fast-list \
         --conflict-resolve newer \
