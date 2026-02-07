@@ -92,13 +92,6 @@ export type TerminalConnectionState =
   | 'connected'
   | 'error';
 
-export interface TerminalConnection {
-  sessionId: string;
-  terminalId: string;
-  state: TerminalConnectionState;
-  ws?: WebSocket;
-}
-
 // Terminal tab within a session (multiple terminals per container)
 export interface TerminalTab {
   id: string;        // "1", "2", "3", "4"

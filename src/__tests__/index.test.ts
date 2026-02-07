@@ -223,3 +223,75 @@ describe('Edge-level setup redirect', () => {
     expect(mockAssets.fetch).toHaveBeenCalled();
   });
 });
+
+// ============================================================================
+// X-Request-ID Validation (S5-07)
+// ============================================================================
+describe('X-Request-ID validation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetSetupCache();
+    vi.mocked(validateWebSocketRoute).mockReturnValue({ isWebSocketRoute: false });
+  });
+
+  it('passes through a valid X-Request-ID unchanged', async () => {
+    const { env } = createMockEnv();
+
+    const request = new Request('https://example.com/api/health', {
+      headers: { 'X-Request-ID': 'abc-123_XYZ' },
+    });
+    const response = await worker.fetch(request, env, createMockCtx());
+
+    expect(response.headers.get('X-Request-ID')).toBe('abc-123_XYZ');
+  });
+
+  it('generates a new ID when X-Request-ID contains invalid characters', async () => {
+    const { env } = createMockEnv();
+
+    const request = new Request('https://example.com/api/health', {
+      headers: { 'X-Request-ID': '<script>alert(1)</script>' },
+    });
+    const response = await worker.fetch(request, env, createMockCtx());
+
+    const requestId = response.headers.get('X-Request-ID');
+    expect(requestId).not.toBe('<script>alert(1)</script>');
+    expect(requestId).toBeDefined();
+    expect(requestId!.length).toBeGreaterThan(0);
+  });
+
+  it('generates a new ID when X-Request-ID is missing', async () => {
+    const { env } = createMockEnv();
+
+    const request = new Request('https://example.com/api/health');
+    const response = await worker.fetch(request, env, createMockCtx());
+
+    const requestId = response.headers.get('X-Request-ID');
+    expect(requestId).toBeDefined();
+    expect(requestId!.length).toBeGreaterThan(0);
+  });
+
+  it('rejects X-Request-ID longer than 64 characters', async () => {
+    const { env } = createMockEnv();
+
+    const longId = 'a'.repeat(65);
+    const request = new Request('https://example.com/api/health', {
+      headers: { 'X-Request-ID': longId },
+    });
+    const response = await worker.fetch(request, env, createMockCtx());
+
+    const requestId = response.headers.get('X-Request-ID');
+    expect(requestId).not.toBe(longId);
+  });
+
+  it('accepts valid IDs with hyphens and underscores', async () => {
+    const { env } = createMockEnv();
+
+    const validId = 'req_abc-DEF_123';
+    const request = new Request('https://example.com/api/health', {
+      headers: { 'X-Request-ID': validId },
+    });
+    const response = await worker.fetch(request, env, createMockCtx());
+
+    expect(response.headers.get('X-Request-ID')).toBe(validId);
+  });
+});

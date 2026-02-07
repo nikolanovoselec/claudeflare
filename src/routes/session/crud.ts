@@ -13,7 +13,7 @@ import { getContainerId } from '../../lib/container-helpers';
 import { createLogger } from '../../lib/logger';
 import { containerSessionsCB } from '../../lib/circuit-breakers';
 import { ValidationError, NotFoundError } from '../../lib/error-types';
-import { listAllKvKeys } from '../../lib/access-policy';
+import { listAllKvKeys } from '../../lib/kv-keys';
 
 const logger = createLogger('session-crud');
 
@@ -70,7 +70,7 @@ app.post('/', sessionCreateRateLimiter, async (c) => {
     throw new ValidationError(`Session name too long (max ${MAX_SESSION_NAME_LENGTH} characters)`);
   }
   // Sanitize: remove potentially dangerous characters
-  sessionName = sessionName.replace(/[<>&"']/g, '');
+  sessionName = sessionName.replace(/[<>&"'`]/g, '');
 
   const sessionId = generateSessionId();
   const now = new Date().toISOString();
@@ -130,7 +130,7 @@ app.patch('/:id', async (c) => {
     if (body.name.length > MAX_SESSION_NAME_LENGTH) {
       throw new ValidationError(`Session name too long (max ${MAX_SESSION_NAME_LENGTH} characters)`);
     }
-    session.name = body.name.replace(/[<>&"']/g, '');
+    session.name = body.name.replace(/[<>&"'`]/g, '');
   }
   session.lastAccessedAt = new Date().toISOString();
 
@@ -145,7 +145,7 @@ app.patch('/:id', async (c) => {
  * Delete a session
  */
 app.delete('/:id', async (c) => {
-  const reqLogger = logger.child({ requestId: c.req.header('X-Request-ID') });
+  const reqLogger = logger.child({ requestId: c.get('requestId') });
   const bucketName = c.get('bucketName');
   const sessionId = c.req.param('id');
   const key = getSessionKey(bucketName, sessionId);

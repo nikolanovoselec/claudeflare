@@ -23,7 +23,7 @@ const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
  * Use DELETE to fully destroy the container and remove the session.
  */
 app.post('/:id/stop', async (c) => {
-  const reqLogger = logger.child({ requestId: c.req.header('X-Request-ID') });
+  const reqLogger = logger.child({ requestId: c.get('requestId') });
   const bucketName = c.get('bucketName');
   const sessionId = c.req.param('id');
   const key = getSessionKey(bucketName, sessionId);

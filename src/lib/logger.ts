@@ -33,6 +33,7 @@ export interface LogEntry {
 
 /**
  * Logger interface
+ * @internal
  */
 export interface Logger {
   /** Log a debug message (not output by default) */

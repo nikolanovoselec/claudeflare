@@ -10,6 +10,8 @@ import type { Env, AccessUser } from '../types';
 export type AuthVariables = {
   user: AccessUser;
   bucketName: string;
+  /** Set by request tracing middleware in index.ts, inherited by sub-routers */
+  requestId: string;
 };
 
 /**

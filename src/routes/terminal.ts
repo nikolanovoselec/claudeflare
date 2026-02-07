@@ -2,11 +2,13 @@ import { Hono } from 'hono';
 import { getContainer } from '@cloudflare/containers';
 import type { Env, Session } from '../types';
 import { getSessionKey } from '../lib/kv-keys';
+import { SESSION_ID_PATTERN } from '../lib/constants';
 import { authMiddleware, AuthVariables } from '../middleware/auth';
 import { getContainerId, checkContainerHealth } from '../lib/container-helpers';
 import { authenticateRequest } from '../lib/access';
 import { createLogger } from '../lib/logger';
 import { containerSessionsCB } from '../lib/circuit-breakers';
+import { isAllowedOrigin } from '../lib/cors-cache';
 import { AuthError, ForbiddenError, NotFoundError, toError } from '../lib/error-types';
 
 const logger = createLogger('terminal');
@@ -14,7 +16,7 @@ const logger = createLogger('terminal');
 /**
  * Result of WebSocket routing validation
  */
-export interface WebSocketRouteResult {
+interface WebSocketRouteResult {
   /** Whether the request matches a WebSocket terminal route */
   isWebSocketRoute: boolean;
   /** The full session ID including terminal suffix (e.g., "abc123-1") */
@@ -55,7 +57,7 @@ export function validateWebSocketRoute(request: Request, env: Env): WebSocketRou
   const terminalId = compoundMatch ? compoundMatch[2] : '1';
 
   // Validate sessionId format (8-24 lowercase alphanumeric)
-  if (!/^[a-z0-9]{8,24}$/.test(baseSessionId)) {
+  if (!SESSION_ID_PATTERN.test(baseSessionId)) {
     return {
       isWebSocketRoute: true,
       errorResponse: new Response(JSON.stringify({ error: 'Invalid session ID format' }), {
@@ -99,6 +101,28 @@ export async function handleWebSocketUpgrade(
   }
 
   const jsonHeaders = { 'Content-Type': 'application/json' };
+
+  // Validate Origin header for WebSocket upgrade (S5-14)
+  const origin = request.headers.get('Origin');
+  if (origin) {
+    const devMode = env.DEV_MODE === 'true';
+    let originAllowed = await isAllowedOrigin(origin, env);
+    if (!originAllowed && devMode) {
+      try {
+        const originUrl = new URL(origin);
+        originAllowed = originUrl.hostname === 'localhost' || originUrl.hostname === '127.0.0.1';
+      } catch {
+        // Invalid origin URL
+      }
+    }
+    if (!originAllowed) {
+      logger.warn('WebSocket upgrade rejected: origin not allowed', { origin });
+      return new Response(JSON.stringify({ error: 'Origin not allowed' }), {
+        status: 403,
+        headers: jsonHeaders,
+      });
+    }
+  }
 
   try {
     // Authenticate user (shared logic with authMiddleware)
@@ -167,7 +191,7 @@ export async function handleWebSocketUpgrade(
   }
 }
 
-const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
+const app = new Hono<{ Bindings: Env; Variables: AuthVariables & { requestId: string } }>();
 
 // Use shared auth middleware
 app.use('*', authMiddleware);
@@ -177,7 +201,7 @@ app.use('*', authMiddleware);
  * Get terminal connection status for a session
  */
 app.get('/:sessionId/status', async (c) => {
-  const reqLogger = logger.child({ requestId: c.req.header('X-Request-ID') });
+  const reqLogger = logger.child({ requestId: c.get('requestId') });
   const bucketName = c.get('bucketName');
   const sessionId = c.req.param('sessionId');
 

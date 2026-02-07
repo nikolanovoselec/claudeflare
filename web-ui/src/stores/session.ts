@@ -370,7 +370,7 @@ async function fetchMetricsForSession(sessionId: string): Promise<void> {
 }
 
 // Auto-fetch metrics for running sessions (called after session becomes running)
-let metricsPollingIntervals = new Map<string, ReturnType<typeof setInterval>>();
+const metricsPollingIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
 function startMetricsPolling(sessionId: string): void {
   // Don't start if already polling
@@ -676,7 +676,6 @@ export const sessionStore = {
   getInitProgressForSession,
 
   // Session metrics
-  fetchMetricsForSession,
   getMetricsForSession,
   stopMetricsPolling,
   stopAllMetricsPolling,

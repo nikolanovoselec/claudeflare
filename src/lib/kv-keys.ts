@@ -2,6 +2,9 @@
  * KV key utilities for session management
  */
 
+/** Maximum number of pagination iterations for listAllKvKeys to prevent infinite loops */
+const MAX_KV_LIST_ITERATIONS = 100;
+
 /**
  * Get KV key for a session
  */
@@ -17,7 +20,11 @@ export function getSessionPrefix(bucketName: string): string {
 }
 
 /**
- * Generate a random session ID
+ * Generate a random session ID.
+ *
+ * Produces 96 bits of entropy (12 random bytes) encoded as 24 lowercase hex
+ * characters, which matches the {@link SESSION_ID_PATTERN} validation regex
+ * (`/^[a-z0-9]{8,24}$/`).
  */
 export function generateSessionId(): string {
   const bytes = new Uint8Array(12);
@@ -25,4 +32,22 @@ export function generateSessionId(): string {
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, '0'))
     .join('');
+}
+
+/**
+ * List all KV keys with a given prefix, handling pagination.
+ * KV returns max 1000 keys per call; this loops until all are fetched.
+ * Capped at {@link MAX_KV_LIST_ITERATIONS} iterations to prevent infinite loops.
+ */
+export async function listAllKvKeys(kv: KVNamespace, prefix: string): Promise<KVNamespaceListKey<unknown>[]> {
+  const keys: KVNamespaceListKey<unknown>[] = [];
+  let cursor: string | undefined;
+  let iterations = 0;
+  do {
+    const result = await kv.list({ prefix, cursor });
+    keys.push(...result.keys);
+    cursor = result.list_complete ? undefined : result.cursor;
+    iterations++;
+  } while (cursor && iterations < MAX_KV_LIST_ITERATIONS);
+  return keys;
 }

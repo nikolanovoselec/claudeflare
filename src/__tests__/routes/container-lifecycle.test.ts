@@ -230,6 +230,48 @@ describe('Container Lifecycle Routes', () => {
       expect(res.status).toBe(200);
       expect(container().destroy).toHaveBeenCalled();
     });
+
+    it('throws ContainerError when setBucketName fails (Q11)', async () => {
+      const fetch = createTestApp('my-bucket');
+      container().getState.mockResolvedValue({ status: 'stopped' });
+
+      // First fetch: getBucketName returns null (needs update)
+      container().fetch
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ bucketName: null }), { status: 200 })
+        )
+        // Second fetch: setBucketName fails
+        .mockRejectedValueOnce(new Error('DO not reachable'));
+
+      const res = await fetch('/container/start?sessionId=abcdef1234567890abcdef12', {
+        method: 'POST',
+      });
+
+      expect(res.status).toBe(500);
+      const body = await res.json() as { code: string };
+      expect(body.code).toBe('CONTAINER_ERROR');
+    });
+
+    it('aborts container start when setBucketName throws', async () => {
+      const fetch = createTestApp('my-bucket');
+      container().getState.mockResolvedValue({ status: 'stopped' });
+
+      // getBucketName returns different bucket name -> needs update
+      container().fetch
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ bucketName: 'different-bucket' }), { status: 200 })
+        )
+        // setBucketName fails
+        .mockRejectedValueOnce(new Error('Connection refused'));
+
+      const res = await fetch('/container/start?sessionId=abcdef1234567890abcdef12', {
+        method: 'POST',
+      });
+
+      expect(res.status).toBe(500);
+      // Container should NOT have been started
+      expect(container().startAndWaitForPorts).not.toHaveBeenCalled();
+    });
   });
 
   // =========================================================================

@@ -121,7 +121,7 @@ export async function ensureBucketName(
 // Circuit Breaker Health Check
 // ============================================================================
 
-export interface ContainerHealthResult {
+interface ContainerHealthResult {
   healthy: boolean;
   data?: HealthData;
   error?: string;

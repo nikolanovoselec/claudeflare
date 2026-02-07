@@ -9,6 +9,7 @@ import type { SessionWithStatus, SessionStatus, TerminalConnectionState } from '
 import { sessionStore } from '../stores/session';
 import { terminalStore } from '../stores/terminal';
 import { MAX_TERMINALS_PER_SESSION } from '../lib/constants';
+import { formatUptime } from '../lib/format';
 
 export interface SessionCardProps {
   session: SessionWithStatus;
@@ -43,17 +44,6 @@ const statusDotVariant: Record<SessionStatus, 'success' | 'warning' | 'error' | 
   initializing: 'warning',
   error: 'error',
 };
-
-// Format uptime (compact format for metrics display)
-export function formatUptime(createdAt: string): string {
-  const ms = Date.now() - new Date(createdAt).getTime();
-  const mins = Math.floor(ms / 60000);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return `${days}d`;
-}
 
 const SessionCard: Component<SessionCardProps> = (props) => {
   const config = () => statusConfig[props.session.status];

@@ -1,0 +1,297 @@
+import { ValidationError, SetupError, toError, toErrorMessage } from '../../lib/error-types';
+import { CF_API_BASE, logger, getWorkerNameFromHostname, detectCloudflareAuthError } from './shared';
+import type { SetupStep } from './shared';
+
+/**
+ * Resolve the Cloudflare zone ID for a given domain.
+ * Looks up the zone by the root domain (last two parts of the FQDN).
+ */
+async function resolveZone(
+  token: string,
+  domain: string,
+  steps: SetupStep[],
+  stepIndex: number
+): Promise<string> {
+  const domainParts = domain.split('.');
+  const zoneName = domainParts.slice(-2).join('.');
+
+  let zonesRes: Response;
+  try {
+    zonesRes = await fetch(
+      `${CF_API_BASE}/zones?name=${zoneName}`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+  } catch (error) {
+    logger.error('Failed to fetch zones API', toError(error));
+    steps[stepIndex].status = 'error';
+    steps[stepIndex].error = 'Failed to connect to Cloudflare Zones API';
+    throw new SetupError('Failed to connect to Cloudflare Zones API', steps);
+  }
+
+  const zonesData = await zonesRes.json() as {
+    success: boolean;
+    result?: Array<{ id: string }>;
+    errors?: Array<{ code: number; message: string }>;
+  };
+
+  if (!zonesData.success) {
+    const cfErrors = zonesData.errors || [];
+    const errorMessages = cfErrors.map(e => `${e.code}: ${e.message}`).join(', ');
+    logger.error('Cloudflare Zones API error', new Error(errorMessages || 'Unknown zones API error'), {
+      domain: zoneName,
+      status: zonesRes.status,
+      errors: cfErrors,
+    });
+
+    const authError = detectCloudflareAuthError(zonesRes.status, cfErrors);
+    if (authError) {
+      const permError = 'API token lacks Zone permissions required for custom domain configuration. '
+        + 'Add "Zone > Zone > Read", "Zone > DNS > Edit", and "Zone > Workers Routes > Edit" permissions to your token, '
+        + 'or skip custom domain setup.';
+      steps[stepIndex].status = 'error';
+      steps[stepIndex].error = permError;
+      throw new SetupError(permError, steps);
+    }
+
+    steps[stepIndex].status = 'error';
+    steps[stepIndex].error = `Zones API error: ${errorMessages || 'Unknown error'}`;
+    throw new SetupError(`Zones API error for ${zoneName}: ${errorMessages || 'Unknown error'}`, steps);
+  }
+
+  if (!zonesData.result?.length) {
+    steps[stepIndex].status = 'error';
+    steps[stepIndex].error = `Zone not found for domain: ${zoneName}`;
+    throw new SetupError(`Zone not found for domain: ${zoneName}`, steps);
+  }
+
+  return zonesData.result[0].id;
+}
+
+/**
+ * Create or update a DNS CNAME record pointing the custom domain to the workers.dev target.
+ * Resolves the account subdomain, looks up existing records, and performs upsert.
+ */
+async function upsertDnsRecord(
+  token: string,
+  accountId: string,
+  zoneId: string,
+  domain: string,
+  workerName: string,
+  requestUrl: string,
+  steps: SetupStep[],
+  stepIndex: number
+): Promise<void> {
+  // Resolve account subdomain for workers.dev target
+  let accountSubdomain: string;
+  try {
+    const subdomainRes = await fetch(
+      `${CF_API_BASE}/accounts/${accountId}/workers/subdomain`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    const subdomainData = await subdomainRes.json() as {
+      success: boolean;
+      result?: { subdomain: string };
+      errors?: Array<{ code: number; message: string }>;
+    };
+
+    if (!subdomainData.success || !subdomainData.result?.subdomain) {
+      const hostname = new URL(requestUrl).hostname;
+      if (hostname.endsWith('.workers.dev')) {
+        const parts = hostname.split('.');
+        if (parts.length >= 3) {
+          accountSubdomain = parts[parts.length - 3];
+        } else {
+          throw new Error('Could not determine account subdomain');
+        }
+      } else {
+        throw new Error('Could not determine account subdomain');
+      }
+    } else {
+      accountSubdomain = subdomainData.result.subdomain;
+    }
+  } catch (error) {
+    logger.error('Failed to get account subdomain', toError(error));
+    steps[stepIndex].status = 'error';
+    steps[stepIndex].error = 'Failed to determine workers.dev subdomain for DNS record';
+    throw new SetupError('Failed to determine workers.dev subdomain for DNS record', steps);
+  }
+
+  const workersDevTarget = `${workerName}.${accountSubdomain}.workers.dev`;
+  const domainParts = domain.split('.');
+  const subdomain = domainParts.length > 2 ? domainParts.slice(0, -2).join('.') : '@';
+
+  // Check if DNS record already exists
+  let existingDnsRecordId: string | null = null;
+  try {
+    const dnsLookupRes = await fetch(
+      `${CF_API_BASE}/zones/${zoneId}/dns_records?name=${domain}`,
+      { headers: { 'Authorization': `Bearer ${token}` } }
+    );
+    const dnsLookupData = await dnsLookupRes.json() as {
+      success: boolean;
+      result?: Array<{ id: string; type: string }>;
+    };
+    if (dnsLookupData.success && dnsLookupData.result?.length) {
+      const cnameRecord = dnsLookupData.result.find(r => r.type === 'CNAME');
+      existingDnsRecordId = cnameRecord?.id || dnsLookupData.result[0]?.id || null;
+      if (existingDnsRecordId) {
+        logger.info('Found existing DNS record, will update', { domain, recordId: existingDnsRecordId });
+      }
+    }
+  } catch (lookupError) {
+    logger.warn('DNS record lookup failed, falling back to create', {
+      domain,
+      error: toErrorMessage(lookupError)
+    });
+  }
+
+  // Use PUT to update existing record, or POST to create new one
+  const dnsMethod = existingDnsRecordId ? 'PUT' : 'POST';
+  const dnsUrl = existingDnsRecordId
+    ? `${CF_API_BASE}/zones/${zoneId}/dns_records/${existingDnsRecordId}`
+    : `${CF_API_BASE}/zones/${zoneId}/dns_records`;
+
+  const dnsRecordRes = await fetch(
+    dnsUrl,
+    {
+      method: dnsMethod,
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        type: 'CNAME',
+        name: subdomain,
+        content: workersDevTarget,
+        proxied: true
+      })
+    }
+  );
+
+  if (!dnsRecordRes.ok) {
+    const dnsError = await dnsRecordRes.json() as { errors?: Array<{ code: number; message: string }> };
+    // Record might already exist - that's OK (code 81057) - only relevant for POST
+    if (dnsMethod === 'POST' && dnsError.errors?.some(e => e.code === 81057)) {
+      logger.info('DNS record already exists (detected via create error)', { domain, subdomain, target: workersDevTarget });
+    } else {
+      const dnsErrMsg = dnsError.errors?.[0]?.message || `Failed to ${existingDnsRecordId ? 'update' : 'create'} DNS record`;
+      logger.error(`DNS record ${existingDnsRecordId ? 'update' : 'creation'} failed`, new Error(dnsErrMsg), {
+        domain,
+        subdomain,
+        target: workersDevTarget,
+        zoneId,
+        method: dnsMethod,
+        status: dnsRecordRes.status,
+        errors: dnsError.errors,
+      });
+
+      const authError = detectCloudflareAuthError(dnsRecordRes.status, dnsError.errors || []);
+      if (authError) {
+        const permError = 'API token lacks DNS permissions required for custom domain configuration. '
+          + 'Add "Zone > DNS > Edit" permission to your token, or skip custom domain setup.';
+        steps[stepIndex].status = 'error';
+        steps[stepIndex].error = permError;
+        throw new SetupError(permError, steps);
+      }
+
+      steps[stepIndex].status = 'error';
+      steps[stepIndex].error = dnsErrMsg;
+      throw new SetupError(dnsErrMsg, steps);
+    }
+  } else {
+    logger.info(`DNS record ${existingDnsRecordId ? 'updated' : 'created'}`, { domain, subdomain, target: workersDevTarget });
+  }
+}
+
+/**
+ * Create a worker route mapping the custom domain pattern to the worker script.
+ * Silently succeeds if the route already exists (error code 10020).
+ */
+async function createWorkerRoute(
+  token: string,
+  zoneId: string,
+  domain: string,
+  workerName: string,
+  steps: SetupStep[],
+  stepIndex: number
+): Promise<void> {
+  const routeRes = await fetch(
+    `${CF_API_BASE}/zones/${zoneId}/workers/routes`,
+    {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        pattern: `${domain}/*`,
+        script: workerName
+      })
+    }
+  );
+
+  if (!routeRes.ok) {
+    const routeError = await routeRes.json() as { errors?: Array<{ code: number; message: string }> };
+    // Route might already exist - that's OK (code 10020)
+    if (!routeError.errors?.some(e => e.code === 10020)) {
+      const routeErrMsg = routeError.errors?.[0]?.message || 'Failed to add worker route';
+      logger.error('Worker route creation failed', new Error(routeErrMsg), {
+        domain,
+        zoneId,
+        status: routeRes.status,
+        errors: routeError.errors,
+      });
+
+      const authError = detectCloudflareAuthError(routeRes.status, routeError.errors || []);
+      if (authError) {
+        const permError = 'API token lacks Zone permissions required for worker route creation. '
+          + 'Add "Zone > Workers Routes > Edit" permission to your token, or skip custom domain setup.';
+        steps[stepIndex].status = 'error';
+        steps[stepIndex].error = permError;
+        throw new SetupError(permError, steps);
+      }
+
+      steps[stepIndex].status = 'error';
+      steps[stepIndex].error = routeErrMsg;
+      throw new SetupError(routeErrMsg, steps);
+    }
+  }
+}
+
+/**
+ * Step 4: Configure custom domain with DNS CNAME record and worker route.
+ * Orchestrates zone resolution, DNS upsert, and worker route creation.
+ */
+export async function handleConfigureCustomDomain(
+  token: string,
+  accountId: string,
+  customDomain: string,
+  requestUrl: string,
+  steps: SetupStep[]
+): Promise<string> {
+  steps.push({ step: 'configure_custom_domain', status: 'pending' });
+  const stepIndex = steps.length - 1;
+
+  // Validate domain format before making any API calls
+  const domainRegex = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
+  if (!domainRegex.test(customDomain)) {
+    steps[stepIndex].status = 'error';
+    steps[stepIndex].error = 'Invalid domain format';
+    throw new ValidationError('Invalid domain format');
+  }
+
+  // Resolve zone ID for the custom domain
+  const zoneId = await resolveZone(token, customDomain, steps, stepIndex);
+
+  // Extract worker name from request hostname
+  const workerName = getWorkerNameFromHostname(requestUrl);
+
+  // Create or update DNS CNAME record pointing to workers.dev
+  await upsertDnsRecord(token, accountId, zoneId, customDomain, workerName, requestUrl, steps, stepIndex);
+
+  // Add worker route for custom domain
+  await createWorkerRoute(token, zoneId, customDomain, workerName, steps, stepIndex);
+
+  steps[stepIndex].status = 'success';
+  return zoneId;
+}

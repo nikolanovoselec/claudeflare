@@ -68,6 +68,10 @@ export class CredentialsError extends AppError {
   }
 }
 
+/**
+ * Error thrown exclusively from setup routes during initial configuration.
+ * Includes step-level progress reporting for the setup wizard UI.
+ */
 export class SetupError extends AppError {
   public steps: Array<{ step: string; status: string; error?: string }>;
 

@@ -29,7 +29,7 @@ app.use('*', async (c, next) => {
  * Debug endpoint to check DO stored bucket name and container env vars
  */
 app.get('/debug', async (c) => {
-  const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
+  const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
 
   try {
     const { bucketName, containerId, container } = getContainerContext(c);
@@ -114,7 +114,7 @@ app.get('/debug', async (c) => {
  * Tests if the s3fs mount is working by writing and reading a file
  */
 app.get('/mount-test', async (c) => {
-  const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
+  const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
 
   try {
     const { containerId, container } = getContainerContext(c);
@@ -147,7 +147,7 @@ app.get('/mount-test', async (c) => {
  * Fetch the sync log from the container for debugging
  */
 app.get('/sync-log', async (c) => {
-  const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
+  const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
 
   try {
     const { containerId, container } = getContainerContext(c);

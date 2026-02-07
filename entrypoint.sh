@@ -298,9 +298,6 @@ shutdown_handler() {
     if [ -n "$TERMINAL_PID" ]; then
         kill $TERMINAL_PID 2>/dev/null
     fi
-    if [ -n "$HEALTH_PID" ]; then
-        kill $HEALTH_PID 2>/dev/null
-    fi
 
     echo "[entrypoint] Shutdown complete"
     exit 0
@@ -313,8 +310,15 @@ trap shutdown_handler SIGTERM SIGINT
 # Helper function to update sync status file (read by health server)
 # ============================================================================
 update_sync_status() {
-    # Args: status, error (JSON string or null)
-    echo "{\"status\":\"$1\",\"error\":$2,\"userPath\":\"$USER_HOME\"}" > /tmp/sync-status.json
+    # Args: status, error (raw string or "null")
+    local error_val="$2"
+    if [ "$error_val" = "null" ]; then
+        jq -n --arg status "$1" --arg userPath "$USER_HOME" \
+            '{status: $status, error: null, userPath: $userPath}' > /tmp/sync-status.json
+    else
+        jq -n --arg status "$1" --arg error "$error_val" --arg userPath "$USER_HOME" \
+            '{status: $status, error: $error, userPath: $userPath}' > /tmp/sync-status.json
+    fi
 }
 
 # ============================================================================
@@ -536,11 +540,11 @@ if [ $RCLONE_CONFIG_RESULT -eq 0 ]; then
         BISYNC_INIT_PID=$!
         echo "[entrypoint] Bisync init running in background (PID $BISYNC_INIT_PID)"
     else
-        update_sync_status "failed" "\"$SYNC_ERROR\""
+        update_sync_status "failed" "$SYNC_ERROR"
         # Continue anyway - servers should still start
     fi
 else
-    update_sync_status "skipped" "\"$SYNC_ERROR\""
+    update_sync_status "skipped" "$SYNC_ERROR"
 fi
 
 # Configure Claude auto-start

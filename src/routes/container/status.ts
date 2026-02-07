@@ -43,7 +43,7 @@ const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
  * Checks if the container is running and healthy
  */
 app.get('/health', async (c) => {
-  const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
+  const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
 
   try {
     const { containerId, container } = getContainerContext(c);
@@ -83,7 +83,7 @@ app.get('/health', async (c) => {
  * 6. ready (100%) - All services ready
  */
 app.get('/startup-status', async (c) => {
-  const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
+  const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
 
   try {
     const user = c.get('user');

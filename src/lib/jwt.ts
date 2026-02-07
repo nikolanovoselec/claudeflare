@@ -40,6 +40,9 @@ let cachedJWKSAuthDomain: string | null = null;
 let cacheExpiry: number = 0;
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
+// Promise deduplication: if a JWKS fetch is already in progress, reuse it
+let pendingJWKSFetch: Promise<JWKS> | null = null;
+
 /**
  * Base64url decode a string to Uint8Array.
  * Handles the URL-safe alphabet and padding.
@@ -77,21 +80,40 @@ async function getPublicKeys(authDomain: string): Promise<JWKS> {
     return cachedJWKS;
   }
 
-  const url = `https://${authDomain}/cdn-cgi/access/certs`;
-  const response = await fetch(url);
-
-  if (!response.ok) {
-    throw new Error(`Failed to fetch JWKS from ${url}: ${response.status}`);
+  // If a fetch is already in progress for the same domain, reuse it
+  // This prevents thundering herd when multiple concurrent requests
+  // all discover an expired cache at the same time
+  if (pendingJWKSFetch && cachedJWKSAuthDomain === authDomain) {
+    return pendingJWKSFetch;
   }
 
-  const jwks = (await response.json()) as JWKS;
+  const url = `https://${authDomain}/cdn-cgi/access/certs`;
 
-  // Update cache
-  cachedJWKS = jwks;
+  pendingJWKSFetch = (async () => {
+    try {
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error(`Failed to fetch JWKS from ${url}: ${response.status}`);
+      }
+
+      const jwks = (await response.json()) as JWKS;
+
+      // Update cache
+      cachedJWKS = jwks;
+      cachedJWKSAuthDomain = authDomain;
+      cacheExpiry = Date.now() + CACHE_TTL;
+
+      return jwks;
+    } finally {
+      pendingJWKSFetch = null;
+    }
+  })();
+
+  // Update domain tracker so concurrent callers can match
   cachedJWKSAuthDomain = authDomain;
-  cacheExpiry = now + CACHE_TTL;
 
-  return jwks;
+  return pendingJWKSFetch;
 }
 
 /**
@@ -200,4 +222,5 @@ export function resetJWKSCache(): void {
   cachedJWKS = null;
   cachedJWKSAuthDomain = null;
   cacheExpiry = 0;
+  pendingJWKSFetch = null;
 }

@@ -63,6 +63,52 @@ describe('API Client', () => {
     });
   });
 
+  // ==========================================================================
+  // Q12 - JSON error extraction tests
+  // ==========================================================================
+  describe('JSON error body extraction (Q12)', () => {
+    it('extracts error message from JSON error body', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        text: () => Promise.resolve(JSON.stringify({ error: 'Invalid session name' })),
+      });
+
+      await expect(getUser()).rejects.toThrow('Invalid session name');
+    });
+
+    it('falls back to raw text when body is not JSON', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve('Gateway Timeout'),
+      });
+
+      await expect(getUser()).rejects.toThrow('Gateway Timeout');
+    });
+
+    it('falls back to raw text when JSON has no error field', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        text: () => Promise.resolve(JSON.stringify({ message: 'something else' })),
+      });
+
+      // Should use the raw JSON text since parsed.error is falsy
+      await expect(getUser()).rejects.toThrow();
+    });
+
+    it('uses HTTP status code when body is completely empty', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        text: () => Promise.resolve(''),
+      });
+
+      await expect(getUser()).rejects.toThrow('HTTP 502');
+    });
+  });
+
   describe('non-JSON response handling', () => {
     it('should throw ApiError with descriptive message for non-JSON response body', async () => {
       mockFetch.mockResolvedValueOnce({

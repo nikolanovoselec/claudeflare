@@ -13,14 +13,14 @@ import { createLogger } from '../lib/logger';
 
 const logger = createLogger('admin');
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env; Variables: { requestId: string } }>();
 
 /**
  * Rate limiter for admin endpoints
  * Limits to 10 requests per minute (keyed by IP since admin routes don't use auth middleware)
  */
 const adminRateLimiter = createRateLimiter({
-  windowMs: 60000,
+  windowMs: 60 * 1000,
   maxRequests: 10,
   keyPrefix: 'admin',
 });
@@ -33,7 +33,7 @@ const adminRateLimiter = createRateLimiter({
  * DO NOT use idFromName - it creates NEW DOs!
  */
 app.post('/destroy-by-id', adminRateLimiter, async (c) => {
-  const reqLogger = logger.child({ requestId: c.req.header('X-Request-ID') });
+  const reqLogger = logger.child({ requestId: c.get('requestId') });
 
   try {
     verifyAdminSecret(c.env, c.req.header('Authorization'));

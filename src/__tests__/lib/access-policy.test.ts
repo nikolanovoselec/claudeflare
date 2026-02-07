@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { getAllUsers, listAllKvKeys } from '../../lib/access-policy';
+import { getAllUsers } from '../../lib/access-policy';
+import { listAllKvKeys } from '../../lib/kv-keys';
 import { createMockKV } from '../helpers/mock-kv';
 
 describe('access-policy.ts', () => {

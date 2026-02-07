@@ -1618,13 +1618,9 @@ cat ~/.claude_yolo_state
 
 ---
 
-## 13. Testing
+## 13. Test Infrastructure
 
-### Unit Tests
-
-**Configuration:** `vitest.config.ts`
-
-Uses `@cloudflare/vitest-pool-workers` for testing Worker code.
+**Backend:** `vitest.config.ts` uses `@cloudflare/vitest-pool-workers` -- tests execute in a real Workers runtime, not Node.js.
 
 ```typescript
 import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config';
@@ -1640,38 +1636,252 @@ export default defineWorkersConfig({
 });
 ```
 
-**Test Files:** `src/__tests__/lib/`
-- `constants.test.ts` - Port and pattern validation
-- `container-helpers.test.ts` - Container ID generation
-- `type-guards.test.ts` - Runtime type validation
+**Frontend:** `web-ui/vitest.config.ts` uses jsdom + SolidJS Testing Library.
 
-**Run:** `npm test`
+**E2E:** `vitest.e2e.config.ts` with 30s timeouts. Tests run against the deployed worker.
 
-### E2E Tests
-
-**Configuration:** `vitest.e2e.config.ts`
-
-```typescript
-export default defineConfig({
-  test: {
-    include: ['e2e/**/*.test.ts'],
-    testTimeout: 30000,
-    hookTimeout: 30000,
-  },
-});
-```
-
-**Test Files:** `e2e/`
-- `setup.ts` - Base URL and API request helper
-- `api.test.ts` - API endpoint tests
-
-**Run:** `npm run test:e2e`
-
-**Environment:** Tests run against the deployed worker. URL is constructed from `ACCOUNT_SUBDOMAIN` + `CLOUDFLARE_WORKER_NAME`.
+For full test coverage details, commands, and E2E setup, see [Section 16: Testing](#16-testing).
 
 ---
 
-## 14. Troubleshooting
+## 14. Development Setup
+
+### Prerequisites
+
+- Node.js 22+
+- Docker (for container image builds)
+- npm
+
+### Local Development
+
+```bash
+# Install dependencies
+npm install
+cd web-ui && npm install && cd ..
+
+# Run locally (requires Docker)
+npm run dev
+
+# Type checking
+npm run typecheck
+
+# Run unit tests
+npm test
+
+# Run E2E tests (against deployed worker)
+npm run test:e2e
+```
+
+### Web UI Development
+
+```bash
+cd web-ui
+npm run dev       # Start dev server
+npm run build     # Build for production
+npm run typecheck # Type check frontend
+npm test          # Run ~537 component/store/API tests
+```
+
+### Commands Reference
+
+| Command | Description |
+|---------|-------------|
+| `npm run typecheck` | Type check backend |
+| `npm run deploy` | Deploy to Cloudflare (requires Docker) |
+| `npm run deploy:docker` | Build container image and deploy |
+| `npm test` | Run backend unit tests (Vitest with Workers pool) |
+| `npm run test:e2e` | Run E2E API tests against deployed worker |
+| `npm run test:e2e:ui` | Run E2E UI tests with Puppeteer |
+
+---
+
+## 15. CI/CD (GitHub Actions)
+
+| Workflow | Trigger | What it does |
+|----------|---------|-------------|
+| `deploy.yml` | Manual (`workflow_dispatch`) | Full deploy: tests + typecheck + Docker build + wrangler deploy + set CLOUDFLARE_API_TOKEN secret |
+| `test.yml` | Pull requests | Tests + typecheck only (no deploy) |
+| `e2e.yml` | Manual | E2E tests against a deployed worker |
+
+### GitHub Secrets and Variables
+
+**Secrets** (Settings > Secrets and variables > Actions > Secrets):
+
+| Secret | Description |
+|--------|-------------|
+| `CLOUDFLARE_API_TOKEN` | The Cloudflare API token |
+| `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID |
+
+**Variables** (Settings > Secrets and variables > Actions > Variables):
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `CLOUDFLARE_WORKER_NAME` | No | Custom worker name (defaults to `claudeflare`) |
+| `ACCOUNT_SUBDOMAIN` | For E2E tests | Your account subdomain (Workers & Pages > Overview) |
+
+### Deploy Workflow Details
+
+The deploy workflow (`deploy.yml`) uses `wrangler-action@v3` with `--name ${{ vars.CLOUDFLARE_WORKER_NAME || 'claudeflare' }}`, so forks can override the worker name. After deploy, it sets `CLOUDFLARE_API_TOKEN` as a worker secret so the setup wizard can auto-detect it. Only `deploy.yml` builds the container image (requires Docker, available on GH runners).
+
+---
+
+## 16. Testing
+
+### Backend Unit Tests
+
+Located in `src/__tests__/`. Uses Vitest with `@cloudflare/vitest-pool-workers` -- tests execute in a real Workers runtime, not Node.js.
+
+```bash
+npm test
+```
+
+**~231 tests** across 14 test files covering:
+- Constants validation (ports, session ID patterns, R2 permission IDs)
+- Container helper functions (getContainerId, waitForContainerHealth)
+- Type guards (isAdminRequest, isBucketNameResponse)
+- Error types (AppError hierarchy including RateLimitError, CircuitBreakerOpenError)
+- Circuit breaker pattern
+- Exponential backoff logic
+- Rate limiting middleware
+- Auth middleware (user allowlist checks in KV)
+- Structured logging
+- Edge-level redirect (GET / -> 302 /setup when not configured)
+- Route tests: setup, session CRUD/lifecycle, user management
+
+**Shared mock:** `src/__tests__/helpers/mock-kv.ts` exports `createMockKV()` -- a Map-backed KV mock. All tests use in-memory mocks (no real KV binding).
+
+### Frontend Unit Tests
+
+Located in `web-ui/src/__tests__/`. Uses Vitest with SolidJS Testing Library + jsdom.
+
+```bash
+cd web-ui && npm test
+```
+
+**~537 tests** across 25+ test files covering:
+- Base UI components (Button, Input, Badge, Card, Skeleton, Tooltip)
+- Layout components (Header, StatusBar, SettingsPanel)
+- Feature components (SessionList, SessionCard, TerminalTabs, InitProgress, EmptyState)
+- Terminal store (28 tests) -- WebSocket state, compound keys, reconnection
+- Session store (30 tests) -- CRUD, tiling, metrics polling
+- Setup store (44 tests) -- wizard state, validation, persistence
+- API client (35 tests) -- request handling, error mapping, retry logic
+- API contract (36 tests) -- Zod schema validation, type safety
+
+**Frontend test setup:** `web-ui/src/__tests__/setup.ts` is auto-loaded. Mocks `localStorage`, `WebSocket` (with `_simulateMessage`/`_simulateError` helpers), and `ResizeObserver`.
+
+### E2E API Tests
+
+Located in `e2e/`. Tests API endpoints against the deployed worker.
+
+```bash
+ACCOUNT_SUBDOMAIN=your-subdomain npm run test:e2e
+
+# With a custom worker name
+ACCOUNT_SUBDOMAIN=your-subdomain CLOUDFLARE_WORKER_NAME=my-worker npm run test:e2e
+```
+
+### E2E UI Tests
+
+Located in `e2e/ui/`. Uses Puppeteer against the deployed worker to test user journeys.
+
+```bash
+ACCOUNT_SUBDOMAIN=your-subdomain npm run test:e2e:ui
+```
+
+**132 Puppeteer tests** covering: layout, session management, terminal interactions, settings panel, setup wizard, tiling, error handling, rate limiting, and request tracing.
+
+### E2E Requirements
+
+1. `DEV_MODE = "true"` deployed to the worker (bypasses internal auth)
+2. **No Cloudflare Access on the workers.dev domain** -- if one-click Access is enabled, E2E requests will be blocked at the edge
+3. Re-deploy with `DEV_MODE = "false"` after testing
+
+### E2E Cleanup
+
+Tests include automatic cleanup via `afterAll` hooks:
+- `cleanupAllSessions()` deletes all test sessions
+- `restoreSetupComplete()` restores the `setup:complete` KV flag
+
+If tests fail before cleanup runs, manually restore:
+```bash
+npx wrangler kv key put "setup:complete" "true" --namespace-id 359e06b11d094813ace300d96b6a2f5f --remote
+```
+
+---
+
+## 17. API Token Permissions
+
+Each permission is actively used -- none are optional.
+
+### Account Permissions
+
+| Permission | Access | Why |
+|-----------|--------|-----|
+| Account Settings | Read | Discovers account ID and verifies the token during setup |
+| Workers Scripts | Edit | Sets worker secrets (R2 credentials, admin secret) during setup. Used by `wrangler deploy` for CI/CD |
+| Workers KV Storage | Edit | Creates the KV namespace (`claudeflare-kv`) during deployment |
+| Workers R2 Storage | Edit | Creates per-user R2 buckets on container start, deletes them on user removal |
+| Containers | Edit | Full container lifecycle -- start, stop, destroy, health checks |
+| Access: Apps and Policies | Edit | Creates the CF Access app and syncs user allowlist policy |
+
+### Zone Permissions
+
+| Permission | Access | Why |
+|-----------|--------|-----|
+| Zone | Read | Resolves zone ID from root domain during custom domain setup |
+| DNS | Edit | Creates proxied CNAME record pointing custom domain to workers.dev |
+| Workers Routes | Edit | Creates worker route mapping `{customDomain}/*` to the worker |
+
+Zone permissions are only used during setup when configuring a custom domain. Account permissions are required for core functionality.
+
+---
+
+## 18. Configuration
+
+### Secrets
+
+All secrets are set automatically by the deploy workflow (`CLOUDFLARE_API_TOKEN`) and the setup wizard (`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `ADMIN_SECRET`).
+
+The only optional manual secret is `ENCRYPTION_KEY` (AES-256 key for encrypting credentials at rest).
+
+### Environment Variables (wrangler.toml)
+
+| Variable | Description |
+|----------|-------------|
+| `DEV_MODE` | Set to `"true"` to bypass Access auth (dev only) |
+| `ALLOWED_ORIGINS` | Static CORS origin patterns (defaults to `".workers.dev"`). Additional origins managed dynamically via setup wizard and stored in KV. |
+
+### CORS
+
+CORS origins are managed dynamically. During setup, the wizard automatically adds your custom domain and `.workers.dev` to the allowed origins list (stored in KV). The `ALLOWED_ORIGINS` env var in `wrangler.toml` serves as a static fallback.
+
+`R2_ACCOUNT_ID` and `R2_ENDPOINT` are resolved dynamically at runtime (env vars with KV fallback). For local dev, set them in `.dev.vars`.
+
+---
+
+## 19. Container Specs
+
+| Spec | Value |
+|------|-------|
+| Instance type | Custom (1 vCPU, 3 GiB RAM, 4 GB disk) |
+| Base image | Node.js 22 Alpine |
+| Cost | ~$56/container/month while running |
+
+### Included Tools
+
+| Category | Packages |
+|----------|----------|
+| AI | claude-yolo (wraps @anthropic-ai/claude-code) |
+| Sync | rclone |
+| Version Control | git, gh, lazygit |
+| Editors | vim, neovim, nano |
+| Build | make, gcc, g++, python3, nodejs, npm |
+| Utilities | jq, ripgrep, fd, tree, btop, htop, tmux, yazi, fzf, zoxide, bat |
+
+---
+
+## 20. Troubleshooting
 
 ### Bisync Empty Listing Error
 
@@ -1841,7 +2051,7 @@ function getContainerId(bucketName: string, sessionId: string): string {
 
 ---
 
-## 15. Debugging Guide
+## 21. Debugging Guide
 
 ### Container Status via API
 
@@ -1992,7 +2202,7 @@ curl -H "CF-Access-Client-Id: <id>" \
 
 ---
 
-## 16. Cost
+## 22. Cost
 
 ### Per-Container Pricing
 
@@ -2022,7 +2232,7 @@ curl -H "CF-Access-Client-Id: <id>" \
 
 ---
 
-## 17. Lessons Learned
+## 23. Lessons Learned
 
 1. **rclone bisync > s3fs FUSE** - FUSE mounts are fragile and slow. Periodic bisync with local disk is faster and more reliable.
 

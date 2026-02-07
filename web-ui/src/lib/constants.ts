@@ -13,6 +13,9 @@ export const STARTUP_POLL_INTERVAL_MS = 1500;
 /** Interval for polling session metrics when running (ms) */
 export const METRICS_POLL_INTERVAL_MS = 5000;
 
+/** Maximum consecutive polling errors before aborting startup */
+export const MAX_STARTUP_POLL_ERRORS = 10;
+
 // =============================================================================
 // Terminal Connection
 // =============================================================================

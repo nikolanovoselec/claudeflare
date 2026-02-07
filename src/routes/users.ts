@@ -7,6 +7,7 @@ import { getAllUsers, syncAccessPolicy } from '../lib/access-policy';
 import { getBucketName } from '../lib/access';
 import { createLogger } from '../lib/logger';
 import { AppError, ValidationError, NotFoundError, toError } from '../lib/error-types';
+import { CF_API_BASE } from '../lib/constants';
 
 const logger = createLogger('users');
 
@@ -18,7 +19,7 @@ app.use('*', authMiddleware);
  * Limits to 20 mutations per minute per user
  */
 const userMutationRateLimiter = createRateLimiter({
-  windowMs: 60000,
+  windowMs: 60 * 1000,
   maxRequests: 20,
   keyPrefix: 'user-mutation',
 });
@@ -93,7 +94,7 @@ app.delete('/:email', requireAdmin, userMutationRateLimiter, async (c) => {
   try {
     if (accountId && c.env.CLOUDFLARE_API_TOKEN) {
       const bucketName = getBucketName(email);
-      await fetch(`https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/buckets/${bucketName}`, {
+      await fetch(`${CF_API_BASE}/accounts/${accountId}/r2/buckets/${bucketName}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${c.env.CLOUDFLARE_API_TOKEN}` },
       });

@@ -1,7 +1,8 @@
 import type { Env, UserRole } from '../types';
 import { createLogger } from './logger';
+import { listAllKvKeys } from './kv-keys';
+import { CF_API_BASE } from './constants';
 
-const CF_API_BASE = 'https://api.cloudflare.com/client/v4';
 const logger = createLogger('access-policy');
 
 /** Response shape from the CF Access applications list endpoint */
@@ -21,21 +22,6 @@ interface UserEntry {
   addedBy: string;
   addedAt: string;
   role: UserRole;
-}
-
-/**
- * List all KV keys with a given prefix, handling pagination.
- * KV returns max 1000 keys per call; this loops until all are fetched.
- */
-export async function listAllKvKeys(kv: KVNamespace, prefix: string): Promise<KVNamespaceListKey<unknown>[]> {
-  const keys: KVNamespaceListKey<unknown>[] = [];
-  let cursor: string | undefined;
-  do {
-    const result = await kv.list({ prefix, cursor });
-    keys.push(...result.keys);
-    cursor = result.list_complete ? undefined : result.cursor;
-  } while (cursor);
-  return keys;
 }
 
 /**

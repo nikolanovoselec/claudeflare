@@ -3,6 +3,8 @@
  */
 
 import { createLogger } from './logger';
+import { r2AdminCB } from './circuit-breakers';
+import { CF_API_BASE } from './constants';
 
 const logger = createLogger('r2-admin');
 
@@ -25,15 +27,17 @@ async function bucketExists(
   apiToken: string,
   bucketName: string
 ): Promise<boolean> {
-  const response = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/buckets/${bucketName}`,
-    {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${apiToken}`,
-        'Content-Type': 'application/json',
-      },
-    }
+  const response = await r2AdminCB.execute(() =>
+    fetch(
+      `${CF_API_BASE}/accounts/${accountId}/r2/buckets/${bucketName}`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${apiToken}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    )
   );
 
   return response.ok;
@@ -58,23 +62,25 @@ export async function createBucketIfNotExists(
   // Create the bucket
   logger.info('Creating bucket', { bucketName });
 
-  const response = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/buckets`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ name: bucketName }),
-    }
+  const response = await r2AdminCB.execute(() =>
+    fetch(
+      `${CF_API_BASE}/accounts/${accountId}/r2/buckets`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name: bucketName }),
+      }
+    )
   );
 
   const data = await response.json() as CreateBucketResponse;
 
   if (!response.ok || !data.success) {
     const errorMsg = data.errors?.[0]?.message || `HTTP ${response.status}`;
-    logger.error('Failed to create bucket', undefined, { bucketName, errorMsg });
+    logger.error('Failed to create bucket', new Error(errorMsg), { bucketName });
     return { success: false, error: errorMsg };
   }
 

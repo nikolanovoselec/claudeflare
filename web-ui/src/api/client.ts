@@ -1,5 +1,5 @@
 import type { Session, UserInfo, InitProgress, StartupStatusResponse } from '../types';
-import { STARTUP_POLL_INTERVAL_MS, SESSION_ID_DISPLAY_LENGTH } from '../lib/constants';
+import { STARTUP_POLL_INTERVAL_MS, SESSION_ID_DISPLAY_LENGTH, MAX_STARTUP_POLL_ERRORS } from '../lib/constants';
 import { z } from 'zod';
 import {
   UserResponseSchema,
@@ -37,7 +37,14 @@ async function fetchApi<T>(
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new ApiError(response.status, errorText || `HTTP ${response.status}`);
+    let errorMessage = errorText || `HTTP ${response.status}`;
+    try {
+      const parsed = JSON.parse(errorText);
+      if (parsed.error) errorMessage = parsed.error;
+    } catch {
+      // Not JSON, use raw text
+    }
+    throw new ApiError(response.status, errorMessage);
   }
 
   // Handle empty responses
@@ -119,6 +126,76 @@ export async function getStartupStatus(sessionId: string): Promise<StartupStatus
   return fetchApi(`/container/startup-status?sessionId=${sessionId}`, {}, StartupStatusResponseSchema);
 }
 
+// Map startup status response to InitProgress format with real-time details
+function mapStartupDetailsToProgress(status: StartupStatusResponse): InitProgress {
+  const details: { key: string; value: string; status?: 'ok' | 'error' | 'pending' }[] = [];
+  if (status.details) {
+    // Container status - dynamic
+    const containerStatus = status.details.containerStatus || 'stopped';
+    details.push({
+      key: 'Container',
+      value: containerStatus === 'running' || containerStatus === 'healthy' ? 'Running' : containerStatus,
+      status: containerStatus === 'running' || containerStatus === 'healthy' ? 'ok' : 'pending',
+    });
+
+    // Sync status - dynamic
+    const syncStatus = status.details.syncStatus || 'pending';
+    let syncValue = syncStatus;
+    let syncStatusIndicator: 'ok' | 'error' | 'pending' = 'pending';
+    if (syncStatus === 'success') {
+      syncValue = 'Synced';
+      syncStatusIndicator = 'ok';
+    } else if (syncStatus === 'failed') {
+      syncValue = status.details.syncError || 'Failed';
+      syncStatusIndicator = 'error';
+    } else if (syncStatus === 'syncing') {
+      syncValue = 'Syncing...';
+      syncStatusIndicator = 'pending';
+    } else if (syncStatus === 'skipped') {
+      syncValue = 'Skipped';
+      syncStatusIndicator = 'ok';
+    } else {
+      syncValue = 'Pending';
+      syncStatusIndicator = 'pending';
+    }
+    details.push({
+      key: 'Sync',
+      value: syncValue,
+      status: syncStatusIndicator,
+    });
+
+    // Terminal status - dynamic
+    const terminalServerOk = status.details.terminalServerOk;
+    const terminalPid = status.details.terminalPid;
+    let terminalValue = 'Starting';
+    let terminalStatus: 'ok' | 'error' | 'pending' = 'pending';
+    if (terminalServerOk) {
+      terminalValue = terminalPid ? `Ready (PID ${terminalPid})` : 'Ready';
+      terminalStatus = 'ok';
+    } else if (status.details.healthServerOk) {
+      terminalValue = 'Starting...';
+      terminalStatus = 'pending';
+    }
+    details.push({
+      key: 'Terminal',
+      value: terminalValue,
+      status: terminalStatus,
+    });
+
+    // User email
+    if (status.details.email) {
+      details.push({ key: 'User', value: status.details.email, status: 'ok' });
+    }
+  }
+
+  return {
+    stage: status.stage,
+    progress: status.progress,
+    message: status.message,
+    details,
+  };
+}
+
 // Start session with polling progress (replaces SSE)
 export function startSession(
   id: string,
@@ -155,7 +232,6 @@ export function startSession(
 
     // Start polling for status
     let consecutiveErrors = 0;
-    const MAX_CONSECUTIVE_ERRORS = 10;
 
     const poll = async () => {
       if (cancelled) return;
@@ -164,74 +240,7 @@ export function startSession(
         const status = await getStartupStatus(id);
         consecutiveErrors = 0;
 
-        // Convert status to InitProgress format with real-time details
-        const details: { key: string; value: string; status?: 'ok' | 'error' | 'pending' }[] = [];
-        if (status.details) {
-          // Container status - dynamic
-          const containerStatus = status.details.containerStatus || 'stopped';
-          details.push({
-            key: 'Container',
-            value: containerStatus === 'running' || containerStatus === 'healthy' ? 'Running' : containerStatus,
-            status: containerStatus === 'running' || containerStatus === 'healthy' ? 'ok' : 'pending',
-          });
-
-          // Sync status - dynamic
-          const syncStatus = status.details.syncStatus || 'pending';
-          let syncValue = syncStatus;
-          let syncStatusIndicator: 'ok' | 'error' | 'pending' = 'pending';
-          if (syncStatus === 'success') {
-            syncValue = 'Synced';
-            syncStatusIndicator = 'ok';
-          } else if (syncStatus === 'failed') {
-            syncValue = status.details.syncError || 'Failed';
-            syncStatusIndicator = 'error';
-          } else if (syncStatus === 'syncing') {
-            syncValue = 'Syncing...';
-            syncStatusIndicator = 'pending';
-          } else if (syncStatus === 'skipped') {
-            syncValue = 'Skipped';
-            syncStatusIndicator = 'ok';
-          } else {
-            syncValue = 'Pending';
-            syncStatusIndicator = 'pending';
-          }
-          details.push({
-            key: 'Sync',
-            value: syncValue,
-            status: syncStatusIndicator,
-          });
-
-          // Terminal status - dynamic
-          const terminalServerOk = status.details.terminalServerOk;
-          const terminalPid = status.details.terminalPid;
-          let terminalValue = 'Starting';
-          let terminalStatus: 'ok' | 'error' | 'pending' = 'pending';
-          if (terminalServerOk) {
-            terminalValue = terminalPid ? `Ready (PID ${terminalPid})` : 'Ready';
-            terminalStatus = 'ok';
-          } else if (status.details.healthServerOk) {
-            terminalValue = 'Starting...';
-            terminalStatus = 'pending';
-          }
-          details.push({
-            key: 'Terminal',
-            value: terminalValue,
-            status: terminalStatus,
-          });
-
-          // User email
-          if (status.details.email) {
-            details.push({ key: 'User', value: status.details.email, status: 'ok' });
-          }
-        }
-
-        const progress: InitProgress = {
-          stage: status.stage,
-          progress: status.progress,
-          message: status.message,
-          details,
-        };
-
+        const progress = mapStartupDetailsToProgress(status);
         onProgress(progress);
 
         if (status.stage === 'ready') {
@@ -244,7 +253,7 @@ export function startSession(
       } catch (e) {
         consecutiveErrors++;
         console.error('Polling error:', e);
-        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+        if (consecutiveErrors >= MAX_STARTUP_POLL_ERRORS) {
           if (pollInterval) clearInterval(pollInterval);
           onError('Polling failed after too many consecutive errors');
           return;

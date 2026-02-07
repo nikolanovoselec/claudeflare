@@ -27,3 +27,12 @@ export const containerSessionsCB = new CircuitBreaker('container-sessions', {
   failureThreshold: 5,
   resetTimeoutMs: 30000,
 });
+
+/**
+ * Circuit breaker for R2 admin API calls
+ * Used when checking/creating R2 buckets via Cloudflare API
+ */
+export const r2AdminCB = new CircuitBreaker('r2-admin', {
+  failureThreshold: 3,
+  resetTimeoutMs: 30000,
+});

@@ -22,7 +22,7 @@ const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
  * Limits to 5 start requests per minute per user
  */
 const containerStartRateLimiter = createRateLimiter({
-  windowMs: 60000,
+  windowMs: 60 * 1000,
   maxRequests: 5,
   keyPrefix: 'container-start',
 });
@@ -33,6 +33,7 @@ const containerStartRateLimiter = createRateLimiter({
  * Use GET /api/container/startup-status to poll for readiness
  */
 app.post('/start', containerStartRateLimiter, async (c) => {
+  const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
   try {
     const bucketName = c.get('bucketName');
     const sessionId = getSessionIdFromRequest(c);
@@ -46,7 +47,6 @@ app.post('/start', containerStartRateLimiter, async (c) => {
       c.env.CLOUDFLARE_API_TOKEN,
       bucketName
     );
-    const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
 
     if (!bucketResult.success) {
       reqLogger.error('Failed to create bucket', new Error(bucketResult.error || 'Unknown error'), { bucketName });
@@ -97,6 +97,7 @@ app.post('/start', containerStartRateLimiter, async (c) => {
         reqLogger.info('Set bucket name', { bucketName, previousBucketName: storedBucketName });
       } catch (error) {
         reqLogger.error('Failed to set bucket name', toError(error));
+        throw new ContainerError('set_bucket_name', toErrorMessage(error));
       }
     }
 
@@ -154,7 +155,6 @@ app.post('/start', containerStartRateLimiter, async (c) => {
       message: 'Container start initiated. Poll /api/container/startup-status for progress.',
     });
   } catch (error) {
-    const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
     reqLogger.error('Container start error', toError(error));
     if (error instanceof ContainerError) {
       throw error;
@@ -168,7 +168,7 @@ app.post('/start', containerStartRateLimiter, async (c) => {
  * Destroy the container (SIGKILL) - used to force restart with new image
  */
 app.post('/destroy', async (c) => {
-  const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
+  const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
 
   try {
     const { containerId, container } = getContainerContext(c);

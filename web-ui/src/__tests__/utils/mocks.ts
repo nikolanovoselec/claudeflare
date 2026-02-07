@@ -1,4 +1,4 @@
-import type { Session, UserInfo, TerminalConnection, TerminalConnectionState } from '../../types';
+import type { Session, UserInfo } from '../../types';
 
 /**
  * Create a mock Session object
@@ -10,21 +10,6 @@ export function createMockSession(overrides: Partial<Session> = {}): Session {
     name: 'Test Session',
     createdAt: now,
     lastAccessedAt: now,
-    ...overrides,
-  };
-}
-
-/**
- * Create a mock TerminalConnection object
- */
-export function createMockTerminalConnection(
-  overrides: Partial<TerminalConnection> = {}
-): TerminalConnection {
-  return {
-    sessionId: 'mock-session-1',
-    terminalId: '1',
-    state: 'disconnected' as TerminalConnectionState,
-    ws: undefined,
     ...overrides,
   };
 }

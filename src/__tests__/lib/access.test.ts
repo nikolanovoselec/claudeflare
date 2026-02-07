@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { resolveUserFromKV, getBucketName } from '../../lib/access';
+import { resolveUserFromKV, getBucketName, authenticateRequest, getUserFromRequest, resetAuthConfigCache } from '../../lib/access';
+import { AuthError, ForbiddenError } from '../../lib/error-types';
+import type { Env } from '../../types';
 import { createMockKV } from '../helpers/mock-kv';
 
 describe('access.ts', () => {
@@ -8,6 +10,7 @@ describe('access.ts', () => {
   beforeEach(() => {
     mockKV = createMockKV();
     vi.clearAllMocks();
+    resetAuthConfigCache();
   });
 
   describe('resolveUserFromKV', () => {
@@ -141,6 +144,157 @@ describe('access.ts', () => {
       const longEmail = 'a'.repeat(100) + '@example.com';
       const name = getBucketName(longEmail);
       expect(name.length).toBeLessThanOrEqual(63);
+    });
+  });
+
+  // ===========================================================================
+  // authenticateRequest() tests (Q23)
+  // ===========================================================================
+  describe('authenticateRequest()', () => {
+    function makeEnv(overrides: Partial<Env> = {}): Env {
+      return {
+        KV: mockKV as unknown as KVNamespace,
+        DEV_MODE: 'false',
+        ...overrides,
+      } as Env;
+    }
+
+    it('throws AuthError when request has no auth headers and DEV_MODE=false', async () => {
+      const request = new Request('http://localhost/test');
+
+      await expect(
+        authenticateRequest(request, makeEnv())
+      ).rejects.toThrow(AuthError);
+    });
+
+    it('throws AuthError with 401 status code for unauthenticated requests', async () => {
+      const request = new Request('http://localhost/test');
+
+      try {
+        await authenticateRequest(request, makeEnv());
+        expect.unreachable('Should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(AuthError);
+        expect((err as AuthError).statusCode).toBe(401);
+      }
+    });
+
+    it('throws ForbiddenError when user is not in KV allowlist', async () => {
+      const request = new Request('http://localhost/test', {
+        headers: { 'cf-access-authenticated-user-email': 'unknown@example.com' },
+      });
+
+      await expect(
+        authenticateRequest(request, makeEnv())
+      ).rejects.toThrow(ForbiddenError);
+    });
+
+    it('throws ForbiddenError with 403 status code for unlisted users', async () => {
+      const request = new Request('http://localhost/test', {
+        headers: { 'cf-access-authenticated-user-email': 'stranger@example.com' },
+      });
+
+      try {
+        await authenticateRequest(request, makeEnv());
+        expect.unreachable('Should have thrown');
+      } catch (err) {
+        expect(err).toBeInstanceOf(ForbiddenError);
+        expect((err as ForbiddenError).statusCode).toBe(403);
+      }
+    });
+
+    it('grants admin role in DEV_MODE=true without any headers', async () => {
+      const request = new Request('http://localhost/test');
+
+      const result = await authenticateRequest(request, makeEnv({ DEV_MODE: 'true' } as Partial<Env>));
+
+      expect(result.user.authenticated).toBe(true);
+      expect(result.user.role).toBe('admin');
+      expect(result.bucketName).toContain('claudeflare-');
+      // KV allowlist should NOT be checked
+      expect(mockKV.get).not.toHaveBeenCalledWith(expect.stringMatching(/^user:/));
+    });
+
+    it('returns user object with email and bucketName for valid allowlisted user', async () => {
+      const testEmail = 'valid@example.com';
+      mockKV._set(`user:${testEmail}`, { addedBy: 'setup', addedAt: '2024-01-01', role: 'user' });
+
+      const request = new Request('http://localhost/test', {
+        headers: { 'cf-access-authenticated-user-email': testEmail },
+      });
+
+      const result = await authenticateRequest(request, makeEnv());
+
+      expect(result.user.email).toBe(testEmail);
+      expect(result.user.authenticated).toBe(true);
+      expect(result.user.role).toBe('user');
+      expect(result.bucketName).toBe(getBucketName(testEmail));
+    });
+
+    it('resolves admin role from KV entry', async () => {
+      const testEmail = 'admin-auth@example.com';
+      mockKV._set(`user:${testEmail}`, { addedBy: 'setup', addedAt: '2024-01-01', role: 'admin' });
+
+      const request = new Request('http://localhost/test', {
+        headers: { 'cf-access-authenticated-user-email': testEmail },
+      });
+
+      const result = await authenticateRequest(request, makeEnv());
+
+      expect(result.user.role).toBe('admin');
+    });
+  });
+
+  // ===========================================================================
+  // getUserFromRequest() tests
+  // ===========================================================================
+  describe('getUserFromRequest()', () => {
+    function makeEnv(overrides: Partial<Env> = {}): Env {
+      return {
+        KV: mockKV as unknown as KVNamespace,
+        DEV_MODE: 'false',
+        ...overrides,
+      } as Env;
+    }
+
+    it('returns unauthenticated user when no headers present', async () => {
+      const request = new Request('http://localhost/test');
+      const user = await getUserFromRequest(request, makeEnv());
+      expect(user.authenticated).toBe(false);
+      expect(user.email).toBe('');
+    });
+
+    it('returns authenticated user from cf-access-authenticated-user-email header', async () => {
+      const request = new Request('http://localhost/test', {
+        headers: { 'cf-access-authenticated-user-email': 'user@test.com' },
+      });
+      const user = await getUserFromRequest(request, makeEnv());
+      expect(user.authenticated).toBe(true);
+      expect(user.email).toBe('user@test.com');
+    });
+
+    it('returns authenticated user from service token cf-access-client-id header', async () => {
+      const request = new Request('http://localhost/test', {
+        headers: { 'cf-access-client-id': 'abc123.token' },
+      });
+      const user = await getUserFromRequest(request, makeEnv());
+      expect(user.authenticated).toBe(true);
+      expect(user.email).toContain('service-abc123');
+    });
+
+    it('uses SERVICE_TOKEN_EMAIL env for service token', async () => {
+      const request = new Request('http://localhost/test', {
+        headers: { 'cf-access-client-id': 'abc123.token' },
+      });
+      const user = await getUserFromRequest(request, makeEnv({ SERVICE_TOKEN_EMAIL: 'svc@company.com' } as Partial<Env>));
+      expect(user.email).toBe('svc@company.com');
+    });
+
+    it('returns test user in DEV_MODE with no headers', async () => {
+      const request = new Request('http://localhost/test');
+      const user = await getUserFromRequest(request, makeEnv({ DEV_MODE: 'true' } as Partial<Env>));
+      expect(user.authenticated).toBe(true);
+      expect(user.email).toBe('test@example.com');
     });
   });
 });

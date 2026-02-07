@@ -36,3 +36,9 @@ export const CONTAINER_ID_DISPLAY_LENGTH = 24;
 
 /** Activity poll interval for container idle detection (5 minutes) */
 export const ACTIVITY_POLL_INTERVAL_MS = 5 * 60 * 1000;
+
+/** Cloudflare API base URL */
+export const CF_API_BASE = 'https://api.cloudflare.com/client/v4';
+
+/** Rate limit key used when no user or IP is available */
+export const ANONYMOUS_RATE_LIMIT_KEY = 'anonymous';

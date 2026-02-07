@@ -1,4 +1,5 @@
 import { Hono } from 'hono';
+import { bodyLimit } from 'hono/body-limit';
 import type { Env } from './types';
 import userRoutes from './routes/user';
 import containerRoutes from './routes/container/index';
@@ -6,82 +7,13 @@ import sessionRoutes from './routes/session/index';
 import terminalRoutes, { validateWebSocketRoute, handleWebSocketUpgrade } from './routes/terminal';
 import credentialsRoutes from './routes/credentials';
 import usersRoutes from './routes/users';
-import setupRoutes from './routes/setup';
+import setupRoutes from './routes/setup/index';
 import adminRoutes from './routes/admin';
-import { DEFAULT_ALLOWED_ORIGINS, REQUEST_ID_LENGTH, CORS_MAX_AGE_SECONDS } from './lib/constants';
+import { REQUEST_ID_LENGTH, CORS_MAX_AGE_SECONDS } from './lib/constants';
 import { AppError } from './lib/error-types';
-import { getCachedKvOrigins, setCachedKvOrigins, resetCorsOriginsCache } from './lib/cors-cache';
+import { resetCorsOriginsCache, isAllowedOrigin } from './lib/cors-cache';
 import { resetAuthConfigCache } from './lib/access';
 import { createLogger } from './lib/logger';
-
-/**
- * Load allowed origin patterns from KV (setup:custom_domain + setup:allowed_origins).
- * Results are cached in memory per isolate.
- */
-async function getKvOrigins(env: Env): Promise<string[]> {
-  const cached = getCachedKvOrigins();
-  if (cached !== null) {
-    return cached;
-  }
-
-  const origins: string[] = [];
-
-  try {
-    // Read custom domain
-    const customDomain = await env.KV.get('setup:custom_domain');
-    if (customDomain) {
-      origins.push(customDomain);
-    }
-
-    // Read allowed origins list
-    const originsJson = await env.KV.get('setup:allowed_origins');
-    if (originsJson) {
-      const parsed = JSON.parse(originsJson) as string[];
-      if (Array.isArray(parsed)) {
-        for (const o of parsed) {
-          if (!origins.includes(o)) {
-            origins.push(o);
-          }
-        }
-      }
-    }
-  } catch {
-    // On error, return empty (will fall back to env/defaults)
-  }
-
-  setCachedKvOrigins(origins);
-  return origins;
-}
-
-/**
- * Check if the request origin is allowed based on environment configuration and KV-stored origins.
- * Combines origins from:
- *   1. env.ALLOWED_ORIGINS (wrangler.toml static config)
- *   2. KV: setup:custom_domain and setup:allowed_origins (dynamic, set by setup wizard)
- * Falls back to DEFAULT_ALLOWED_ORIGINS if env.ALLOWED_ORIGINS is not set.
- *
- * SECURITY NOTE — Suffix-matching trade-off:
- * Origin validation uses suffix matching (origin.endsWith(pattern)) rather than
- * exact-match or regex. This means a pattern like ".example.com" will match any
- * subdomain including sibling subdomains (e.g., "evil.example.com" would pass).
- * This is an intentional trade-off: it keeps configuration simple (no regex to
- * maintain) while Cloudflare Access serves as the primary authentication gate.
- * Any request that passes CORS still needs a valid CF Access JWT, so the
- * practical risk of sibling-subdomain spoofing is mitigated at the auth layer.
- */
-async function isAllowedOrigin(origin: string, env: Env): Promise<boolean> {
-  const staticPatterns = env.ALLOWED_ORIGINS
-    ? env.ALLOWED_ORIGINS.split(',').map(s => s.trim())
-    : DEFAULT_ALLOWED_ORIGINS;
-
-  if (staticPatterns.some(pattern => origin.endsWith(pattern))) {
-    return true;
-  }
-
-  // Check KV-stored origins (cached)
-  const kvOrigins = await getKvOrigins(env);
-  return kvOrigins.some(pattern => origin.endsWith(pattern));
-}
 
 // Type for app context with request ID
 type AppVariables = {
@@ -90,13 +22,19 @@ type AppVariables = {
 
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
 
-const requestLogger = createLogger('request');
+const logger = createLogger('index');
+
+/** Valid X-Request-ID pattern: 1-64 chars, alphanumeric plus dash and underscore */
+const REQUEST_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 
 // ============================================================================
 // Request Tracing Middleware
 // ============================================================================
 app.use('*', async (c, next) => {
-  const requestId = c.req.header('X-Request-ID') || crypto.randomUUID().slice(0, REQUEST_ID_LENGTH);
+  const clientId = c.req.header('X-Request-ID');
+  const requestId = (clientId && REQUEST_ID_PATTERN.test(clientId))
+    ? clientId
+    : crypto.randomUUID().slice(0, REQUEST_ID_LENGTH);
   c.header('X-Request-ID', requestId);
   c.set('requestId', requestId);
 
@@ -104,7 +42,7 @@ app.use('*', async (c, next) => {
   await next();
   const duration = Date.now() - start;
 
-  requestLogger.info('Request completed', {
+  logger.info('Request completed', {
     requestId,
     method: c.req.method,
     path: c.req.path,
@@ -160,6 +98,9 @@ app.use('*', async (c, next) => {
   }
 });
 
+// Body size limit on API routes (64 KiB)
+app.use('/api/*', bodyLimit({ maxSize: 64 * 1024 }));
+
 // Health check
 app.get('/health', (c) => c.json({ status: 'ok' }));
 app.get('/api/health', (c) => c.json({ status: 'ok', timestamp: new Date().toISOString() }));
@@ -205,13 +146,11 @@ export function resetSetupCache() {
 // may catch and return directly when the shape differs from AppError.toJSON().
 type AppStatusCode = 400 | 401 | 403 | 404 | 409 | 429 | 500 | 503;
 
-const errorLogger = createLogger('error');
-
 app.onError((err, c) => {
   const requestId = c.get('requestId') || 'unknown';
 
   if (err instanceof AppError) {
-    errorLogger.warn(err.message, {
+    logger.warn(err.message, {
       requestId,
       code: err.code,
       statusCode: err.statusCode,
@@ -219,7 +158,7 @@ app.onError((err, c) => {
     return c.json(err.toJSON(), err.statusCode as AppStatusCode);
   }
 
-  errorLogger.error('Unexpected error', err instanceof Error ? err : new Error(String(err)), { requestId });
+  logger.error('Unexpected error', err instanceof Error ? err : new Error(String(err)), { requestId });
   return c.json({ error: 'An unexpected error occurred' }, 500);
 });
 
@@ -270,7 +209,15 @@ export default {
 
     // For all other routes, serve from static assets
     // With not_found_handling = "single-page-application", missing routes get index.html
-    return env.ASSETS.fetch(request);
+    const assetResponse = await env.ASSETS.fetch(request);
+    const secureResponse = new Response(assetResponse.body, assetResponse);
+    secureResponse.headers.set('X-Frame-Options', 'DENY');
+    secureResponse.headers.set('X-Content-Type-Options', 'nosniff');
+    secureResponse.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    secureResponse.headers.set('Content-Security-Policy',
+      "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' wss:; img-src 'self' data:; script-src 'self'"
+    );
+    return secureResponse;
   }
 };
 
