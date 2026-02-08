@@ -1,7 +1,6 @@
 name: Test
 on:
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: test-${{ github.head_ref }}
@@ -12,7 +11,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: tools_github_runner
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

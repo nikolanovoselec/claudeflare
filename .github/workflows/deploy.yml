@@ -1,7 +1,5 @@
 name: Deploy
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -13,7 +11,7 @@ permissions:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: tools_github_runner
     environment: production
     timeout-minutes: 20
     steps:
