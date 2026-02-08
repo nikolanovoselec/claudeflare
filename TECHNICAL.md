@@ -1952,6 +1952,28 @@ curl /api/container/sync-log?sessionId=xxx
 - Bucket doesn't exist
 - Network timeout to R2
 
+### R2 Sync Transfers 0 Files — rclone Filter Order
+
+**Symptom:** Sync log shows `"Using --filter is recommended instead of both --include and --exclude as the order they are parsed in is indeterminate"` and `"There was nothing to transfer"` despite many files listed.
+
+**Cause:** Mixing `--include` and `--exclude` rclone flags makes filter processing order indeterminate. rclone may process all excludes before includes, effectively blocking everything.
+
+**Fix:** Use `--filter` flags instead. `--filter "- pattern"` for exclude, `--filter "+ pattern"` for include. Order is guaranteed with `--filter`.
+
+**Correct pattern:**
+```bash
+rclone sync "r2:$BUCKET/" "$HOME/" \
+    --filter "- .config/rclone/**" \
+    --filter "- .cache/rclone/**" \
+    --filter "- .npm/**" \
+    --filter "- **/node_modules/**" \
+    --filter "+ workspace/**/CLAUDE.md" \
+    --filter "+ workspace/**/.claude/**" \
+    --filter "- workspace/**"
+```
+
+**Diagnosis:** Check `/tmp/sync.log` inside the container for the indeterminate order warning.
+
 ### Slow Sync Despite Workspace Exclusion
 
 **Symptom:** Container startup slow even with workspace excluded.
