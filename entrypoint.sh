@@ -14,7 +14,6 @@ echo "[entrypoint] PWD: $(pwd)"
 
 # Initialize PID placeholders
 TERMINAL_PID=0
-SYNC_DAEMON_PID=0
 
 echo "[entrypoint] pwd: $(pwd)"
 echo "[entrypoint] HOME: $HOME"
@@ -117,6 +116,20 @@ init_sync_log() {
 # Rclone config path (set after create_rclone_config)
 RCLONE_CONFIG="$USER_HOME/.config/rclone/rclone.conf"
 
+# Shared rclone filter rules (used by all sync functions)
+RCLONE_FILTERS=(
+    --filter "- .config/rclone/**"
+    --filter "- .cache/rclone/**"
+    --filter "- .npm/**"
+    --filter "- **/node_modules/**"
+    --filter "+ workspace/**/"
+    --filter "+ workspace/CLAUDE.md"
+    --filter "+ workspace/**/CLAUDE.md"
+    --filter "+ workspace/.claude/**"
+    --filter "+ workspace/**/.claude/**"
+    --filter "- workspace/**"
+)
+
 # Step 1: One-way sync FROM R2 TO local (restore user data)
 # This ensures existing credentials, plugins, etc. are restored BEFORE anything else runs
 # Excludes workspace folder - workspace is ephemeral per-session
@@ -127,16 +140,7 @@ initial_sync_from_r2() {
 
     timeout $SYNC_TIMEOUT rclone sync "r2:$R2_BUCKET_NAME/" "$USER_HOME/" \
         --config "$RCLONE_CONFIG" \
-        --filter "- .config/rclone/**" \
-        --filter "- .cache/rclone/**" \
-        --filter "- .npm/**" \
-        --filter "- **/node_modules/**" \
-        --filter "+ workspace/**/" \
-        --filter "+ workspace/CLAUDE.md" \
-        --filter "+ workspace/**/CLAUDE.md" \
-        --filter "+ workspace/.claude/**" \
-        --filter "+ workspace/**/.claude/**" \
-        --filter "- workspace/**" \
+        "${RCLONE_FILTERS[@]}" \
         --fast-list \
         --size-only \
         --multi-thread-streams 4 \
@@ -169,16 +173,7 @@ establish_bisync_baseline() {
 
     timeout $BISYNC_TIMEOUT rclone bisync "$USER_HOME/" "r2:$R2_BUCKET_NAME/" \
         --config "$RCLONE_CONFIG" \
-        --filter "- .config/rclone/**" \
-        --filter "- .cache/rclone/**" \
-        --filter "- .npm/**" \
-        --filter "- **/node_modules/**" \
-        --filter "+ workspace/**/" \
-        --filter "+ workspace/CLAUDE.md" \
-        --filter "+ workspace/**/CLAUDE.md" \
-        --filter "+ workspace/.claude/**" \
-        --filter "+ workspace/**/.claude/**" \
-        --filter "- workspace/**" \
+        "${RCLONE_FILTERS[@]}" \
         --resync \
         --fast-list \
         --conflict-resolve newer \
@@ -217,16 +212,7 @@ bisync_with_r2() {
     # First try normal bisync
     rclone bisync "$USER_HOME/" "r2:$R2_BUCKET_NAME/" \
         --config "$RCLONE_CONFIG" \
-        --filter "- .config/rclone/**" \
-        --filter "- .cache/rclone/**" \
-        --filter "- .npm/**" \
-        --filter "- **/node_modules/**" \
-        --filter "+ workspace/**/" \
-        --filter "+ workspace/CLAUDE.md" \
-        --filter "+ workspace/**/CLAUDE.md" \
-        --filter "+ workspace/.claude/**" \
-        --filter "+ workspace/**/.claude/**" \
-        --filter "- workspace/**" \
+        "${RCLONE_FILTERS[@]}" \
         --fast-list \
         --conflict-resolve newer \
         --resilient \
@@ -241,16 +227,7 @@ bisync_with_r2() {
         echo "[sync] Normal bisync failed (exit $RESULT), attempting --resync..." | tee -a /tmp/sync.log
         rclone bisync "$USER_HOME/" "r2:$R2_BUCKET_NAME/" \
             --config "$RCLONE_CONFIG" \
-            --filter "- .config/rclone/**" \
-            --filter "- .cache/rclone/**" \
-            --filter "- .npm/**" \
-            --filter "- **/node_modules/**" \
-            --filter "+ workspace/**/" \
-            --filter "+ workspace/CLAUDE.md" \
-            --filter "+ workspace/**/CLAUDE.md" \
-            --filter "+ workspace/.claude/**" \
-            --filter "+ workspace/**/.claude/**" \
-            --filter "- workspace/**" \
+            "${RCLONE_FILTERS[@]}" \
             --conflict-resolve newer \
             --resync \
             --resilient \
@@ -526,6 +503,3 @@ fi
 
 # Keep container alive by waiting for terminal server
 wait $TERMINAL_PID
-# Rebuild: 1769966841
-# Rebuild: 1770224125
-# Rebuild: 1770229325
