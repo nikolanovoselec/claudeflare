@@ -107,6 +107,12 @@ Browser (multiple tabs)
 +---------------------------+
 ```
 
+## Why Claude-Unleashed?
+
+Cloudflare Containers run as root. The standard Claude Code CLI refuses to combine `--dangerously-skip-permissions` with root execution -- a safety check that makes sense locally but blocks headless container use. [Claude-unleashed](https://github.com/nikolanovoselec/claude-unleashed) wraps the official `@anthropic-ai/claude-code` CLI, bypassing the root check so containers can run Claude Code without permission prompts. It ships a pinned baseline (2.1.25) and auto-updates to the latest version on first container start.
+
+This is safe in context: each container is isolated, ephemeral, and single-user. See `TECHNICAL.md` section 12 for details.
+
 ## Cost
 
 ~$56/container/month (1 vCPU, 3 GiB RAM). Cost scales per active session -- idle containers hibernate after 30 minutes.
