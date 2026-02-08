@@ -1,4 +1,5 @@
 import { SetupError, toError } from '../../lib/error-types';
+import { parseCfResponse } from '../../lib/cf-api';
 import { CF_API_BASE, logger } from './shared';
 import type { SetupStep } from './shared';
 
@@ -16,10 +17,7 @@ export async function handleGetAccount(
     const accountsRes = await fetch(`${CF_API_BASE}/accounts`, {
       headers: { 'Authorization': `Bearer ${token}` }
     });
-    const accountsData = await accountsRes.json() as {
-      success: boolean;
-      result?: Array<{ id: string }>;
-    };
+    const accountsData = await parseCfResponse<Array<{ id: string }>>(accountsRes);
 
     if (!accountsData.success || !accountsData.result?.length) {
       steps[stepIndex].status = 'error';

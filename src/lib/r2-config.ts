@@ -1,4 +1,5 @@
 import { CF_API_BASE } from './constants';
+import { parseCfResponse } from './cf-api';
 import type { Env } from '../types';
 
 /**
@@ -33,10 +34,7 @@ export async function getR2Config(env: Env): Promise<{ accountId: string; endpoi
     const res = await fetch(`${CF_API_BASE}/accounts`, {
       headers: { 'Authorization': `Bearer ${token}` },
     });
-    const data = await res.json() as {
-      success: boolean;
-      result?: Array<{ id: string }>;
-    };
+    const data = await parseCfResponse<Array<{ id: string }>>(res);
 
     if (data.success && data.result?.length) {
       const accountId = data.result[0].id;

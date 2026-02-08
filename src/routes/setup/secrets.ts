@@ -1,4 +1,5 @@
 import { SetupError, toError } from '../../lib/error-types';
+import { parseCfResponse } from '../../lib/cf-api';
 import { CF_API_BASE, logger, getWorkerNameFromHostname } from './shared';
 import type { SetupStep } from './shared';
 
@@ -19,10 +20,7 @@ async function deployLatestVersion(
       `${CF_API_BASE}/accounts/${accountId}/workers/scripts/${workerName}/versions`,
       { headers: { 'Authorization': `Bearer ${token}` } }
     );
-    const versionsData = await versionsRes.json() as {
-      success: boolean;
-      result?: { items?: Array<{ id: string }> };
-    };
+    const versionsData = await parseCfResponse<{ items?: Array<{ id: string }> }>(versionsRes);
 
     if (!versionsData.success || !versionsData.result?.items?.length) {
       logger.error('Failed to list worker versions', new Error(JSON.stringify(versionsData)));

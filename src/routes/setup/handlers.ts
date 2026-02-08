@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { Env } from '../../types';
 import { AuthError, toError } from '../../lib/error-types';
+import { parseCfResponse } from '../../lib/cf-api';
 import { CF_API_BASE, logger } from './shared';
 
 const handlers = new Hono<{ Bindings: Env }>();
@@ -36,11 +37,7 @@ handlers.get('/detect-token', async (c) => {
     const verifyRes = await fetch(`${CF_API_BASE}/user/tokens/verify`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    const verifyData = await verifyRes.json() as {
-      success: boolean;
-      result?: { id: string; status: string };
-      errors?: Array<{ message: string }>;
-    };
+    const verifyData = await parseCfResponse<{ id: string; status: string }>(verifyRes);
 
     if (!verifyData.success) {
       return c.json({ detected: true, valid: false, error: 'Token is invalid or expired' });
@@ -50,10 +47,7 @@ handlers.get('/detect-token', async (c) => {
     const accountsRes = await fetch(`${CF_API_BASE}/accounts`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    const accountsData = await accountsRes.json() as {
-      success: boolean;
-      result?: Array<{ id: string; name: string }>;
-    };
+    const accountsData = await parseCfResponse<Array<{ id: string; name: string }>>(accountsRes);
 
     if (!accountsData.success || !accountsData.result?.length) {
       return c.json({ detected: true, valid: false, error: 'No accounts found for this token' });

@@ -1,4 +1,5 @@
 import { ValidationError, SetupError, toError, toErrorMessage } from '../../lib/error-types';
+import { parseCfResponse } from '../../lib/cf-api';
 import { CF_API_BASE, logger, getWorkerNameFromHostname, detectCloudflareAuthError } from './shared';
 import type { SetupStep } from './shared';
 
@@ -34,11 +35,7 @@ async function resolveZone(
       throw new SetupError('Failed to connect to Cloudflare Zones API', steps);
     }
 
-    const zonesData = await zonesRes.json() as {
-      success: boolean;
-      result?: Array<{ id: string }>;
-      errors?: Array<{ code: number; message: string }>;
-    };
+    const zonesData = await parseCfResponse<Array<{ id: string }>>(zonesRes);
 
     if (!zonesData.success) {
       const cfErrors = zonesData.errors || [];

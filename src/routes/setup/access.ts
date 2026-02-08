@@ -1,13 +1,7 @@
 import { SetupError, toErrorMessage } from '../../lib/error-types';
+import { parseCfResponse } from '../../lib/cf-api';
 import { CF_API_BASE, logger } from './shared';
 import type { SetupStep } from './shared';
-
-/** CF API response shape for Access app operations */
-interface AccessAppResponse {
-  success: boolean;
-  result?: { id: string; aud: string };
-  errors?: Array<{ code?: number; message: string }>;
-}
 
 /**
  * Look up an existing CF Access app by domain.
@@ -76,7 +70,7 @@ async function upsertAccessApp(
       skip_interstitial: true
     })
   });
-  const data = await res.json() as AccessAppResponse;
+  const data = await parseCfResponse<{ id: string; aud: string }>(res);
 
   if (!data.success || !data.result) {
     const alreadyExistsError = data.errors?.some(e =>

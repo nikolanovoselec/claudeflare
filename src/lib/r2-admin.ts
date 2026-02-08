@@ -5,19 +5,9 @@
 import { createLogger } from './logger';
 import { r2AdminCB } from './circuit-breakers';
 import { CF_API_BASE } from './constants';
+import { parseCfResponse } from './cf-api';
 
 const logger = createLogger('r2-admin');
-
-interface CreateBucketResponse {
-  success: boolean;
-  errors: Array<{ code: number; message: string }>;
-  messages: string[];
-  result?: {
-    name: string;
-    creation_date: string;
-    location: string;
-  };
-}
 
 /**
  * Check if a bucket exists
@@ -76,7 +66,7 @@ export async function createBucketIfNotExists(
     )
   );
 
-  const data = await response.json() as CreateBucketResponse;
+  const data = await parseCfResponse<{ name: string; creation_date: string; location: string }>(response);
 
   if (!response.ok || !data.success) {
     // Treat "already exists" as success (race between bucketExists check and creation)
