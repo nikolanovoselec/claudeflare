@@ -118,6 +118,8 @@ RCLONE_CONFIG="$USER_HOME/.config/rclone/rclone.conf"
 
 # Shared rclone filter rules (used by all sync functions)
 RCLONE_FILTERS=(
+    --filter "- .bashrc"
+    --filter "- .bash_profile"
     --filter "- .config/rclone/**"
     --filter "- .cache/rclone/**"
     --filter "- .npm/**"
@@ -324,7 +326,7 @@ update_sync_status() {
 configure_claude_autostart() {
     BASHRC_FILE="$USER_HOME/.bashrc"
     BASH_PROFILE="$USER_HOME/.bash_profile"
-    AUTOSTART_MARKER="# claude-autostart"
+    AUTOSTART_MARKER="# terminal-autostart"
 
     # Ensure .bash_profile sources .bashrc (for login shells)
     if [ ! -f "$BASH_PROFILE" ] || ! grep -q "source.*bashrc\|\..*bashrc" "$BASH_PROFILE" 2>/dev/null; then
@@ -338,12 +340,13 @@ PROFILE_EOF
         echo "[entrypoint] .bash_profile created"
     fi
 
-    # Strip any existing autostart block (may be stale from R2 sync)
-    if [ -f "$BASHRC_FILE" ]; then
-        sed -i '/# claude-autostart/,/^fi$/d; /# terminal-autostart/,/^fi$/d' "$BASHRC_FILE"
+    # Check if already configured (safe now that .bashrc is excluded from R2 sync)
+    if grep -q "$AUTOSTART_MARKER" "$BASHRC_FILE" 2>/dev/null; then
+        echo "[entrypoint] Claude auto-start already configured in .bashrc"
+        return 0
     fi
 
-    echo "[entrypoint] Writing Claude auto-start to .bashrc..."
+    echo "[entrypoint] Adding Claude auto-start to .bashrc..."
 
     # Create .bashrc if it doesn't exist
     touch "$BASHRC_FILE"
