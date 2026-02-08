@@ -1,28 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isAdminRequest, isBucketNameResponse } from '../../lib/type-guards';
-
-describe('isAdminRequest', () => {
-  it('returns true for valid admin request', () => {
-    expect(isAdminRequest({ doId: 'abc123' })).toBe(true);
-  });
-
-  it('returns false for missing doId', () => {
-    expect(isAdminRequest({})).toBe(false);
-    expect(isAdminRequest({ otherId: 'abc' })).toBe(false);
-  });
-
-  it('returns false for non-string doId', () => {
-    expect(isAdminRequest({ doId: 123 })).toBe(false);
-    expect(isAdminRequest({ doId: null })).toBe(false);
-  });
-
-  it('returns false for non-objects', () => {
-    expect(isAdminRequest(null)).toBe(false);
-    expect(isAdminRequest(undefined)).toBe(false);
-    expect(isAdminRequest('string')).toBe(false);
-    expect(isAdminRequest(123)).toBe(false);
-  });
-});
+import { isBucketNameResponse } from '../../lib/type-guards';
 
 describe('isBucketNameResponse', () => {
   it('returns true for valid response with string', () => {

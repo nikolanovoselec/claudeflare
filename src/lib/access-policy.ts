@@ -1,6 +1,6 @@
 import type { Env, UserRole } from '../types';
 import { createLogger } from './logger';
-import { listAllKvKeys } from './kv-keys';
+import { listAllKvKeys, emailFromKvKey } from './kv-keys';
 import { CF_API_BASE } from './constants';
 import { cfApiCB } from './circuit-breakers';
 
@@ -36,7 +36,7 @@ export async function getAllUsers(kv: KVNamespace): Promise<UserEntry[]> {
       if (!data) return null;
       return {
         ...data,
-        email: key.name.replace('user:', ''),
+        email: emailFromKvKey(key.name),
         role: data.role ?? 'user',
       } as UserEntry;
     })

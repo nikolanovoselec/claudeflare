@@ -1,6 +1,6 @@
 import { SetupError, toErrorMessage } from '../../lib/error-types';
 import { parseCfResponse } from '../../lib/cf-api';
-import { CF_API_BASE, logger } from './shared';
+import { CF_API_BASE, logger, addStep } from './shared';
 import type { SetupStep } from './shared';
 
 /**
@@ -235,8 +235,7 @@ export async function handleCreateAccessApp(
   steps: SetupStep[],
   kv: KVNamespace
 ): Promise<void> {
-  steps.push({ step: 'create_access_app', status: 'pending' });
-  const stepIndex = steps.length - 1;
+  const stepIndex = addStep(steps, 'create_access_app');
 
   const existingAppId = await findExistingAccessApp(token, accountId, customDomain);
 

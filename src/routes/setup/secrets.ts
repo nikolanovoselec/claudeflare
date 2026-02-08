@@ -1,6 +1,6 @@
 import { SetupError, toError } from '../../lib/error-types';
 import { parseCfResponse } from '../../lib/cf-api';
-import { CF_API_BASE, logger, getWorkerNameFromHostname } from './shared';
+import { CF_API_BASE, logger, getWorkerNameFromHostname, addStep } from './shared';
 import type { SetupStep } from './shared';
 
 /**
@@ -117,8 +117,7 @@ export async function handleSetSecrets(
   requestUrl: string,
   steps: SetupStep[]
 ): Promise<void> {
-  steps.push({ step: 'set_secrets', status: 'pending' });
-  const stepIndex = steps.length - 1;
+  const stepIndex = addStep(steps, 'set_secrets');
   // Extract worker name from the request hostname
   const workerName = getWorkerNameFromHostname(requestUrl);
 

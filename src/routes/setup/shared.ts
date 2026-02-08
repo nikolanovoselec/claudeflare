@@ -20,6 +20,14 @@ export const setupRateLimiter = createRateLimiter({
 export type SetupStep = { step: string; status: 'pending' | 'success' | 'error'; error?: string };
 
 /**
+ * Push a new pending step and return its index for later status updates.
+ */
+export function addStep(steps: SetupStep[], step: string): number {
+  steps.push({ step, status: 'pending' });
+  return steps.length - 1;
+}
+
+/**
  * Extract the worker name from the request hostname.
  * For workers.dev: first part of hostname (e.g., "claudeflare" from "claudeflare.test.workers.dev")
  * For custom domains or other: uses envWorkerName if provided, otherwise defaults to "claudeflare"

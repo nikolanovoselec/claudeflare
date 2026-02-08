@@ -1,6 +1,6 @@
 import { ValidationError, SetupError, toError, toErrorMessage } from '../../lib/error-types';
 import { parseCfResponse } from '../../lib/cf-api';
-import { CF_API_BASE, logger, getWorkerNameFromHostname, detectCloudflareAuthError } from './shared';
+import { CF_API_BASE, logger, getWorkerNameFromHostname, detectCloudflareAuthError, addStep } from './shared';
 import type { SetupStep } from './shared';
 
 /**
@@ -288,8 +288,7 @@ export async function handleConfigureCustomDomain(
   requestUrl: string,
   steps: SetupStep[]
 ): Promise<string> {
-  steps.push({ step: 'configure_custom_domain', status: 'pending' });
-  const stepIndex = steps.length - 1;
+  const stepIndex = addStep(steps, 'configure_custom_domain');
 
   // Validate domain format before making any API calls
   const domainRegex = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;

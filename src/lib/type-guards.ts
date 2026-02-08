@@ -1,8 +1,3 @@
-export function isAdminRequest(data: unknown): data is { doId: string } {
-  return typeof data === 'object' && data !== null &&
-         'doId' in data && typeof (data as Record<string, unknown>).doId === 'string';
-}
-
 export function isBucketNameResponse(data: unknown): data is { bucketName: string | null } {
   if (typeof data !== 'object' || data === null || !('bucketName' in data)) {
     return false;

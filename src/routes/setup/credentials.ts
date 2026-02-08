@@ -1,5 +1,5 @@
 import { SetupError, toError } from '../../lib/error-types';
-import { CF_API_BASE, logger } from './shared';
+import { CF_API_BASE, logger, addStep } from './shared';
 import type { SetupStep } from './shared';
 
 /**
@@ -15,8 +15,7 @@ export async function handleDeriveR2Credentials(
   token: string,
   steps: SetupStep[]
 ): Promise<{ accessKeyId: string; secretAccessKey: string }> {
-  steps.push({ step: 'derive_r2_credentials', status: 'pending' });
-  const stepIndex = steps.length - 1;
+  const stepIndex = addStep(steps, 'derive_r2_credentials');
 
   try {
     // Get the token ID from the verify endpoint

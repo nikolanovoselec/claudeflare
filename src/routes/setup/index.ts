@@ -3,7 +3,7 @@ import { z } from 'zod';
 import type { Env } from '../../types';
 import { ValidationError, SetupError, toError } from '../../lib/error-types';
 import { resetSetupCache } from '../../lib/cache-reset';
-import { listAllKvKeys } from '../../lib/kv-keys';
+import { listAllKvKeys, emailFromKvKey } from '../../lib/kv-keys';
 import { authMiddleware, requireAdmin, type AuthVariables } from '../../middleware/auth';
 import { setupRateLimiter, logger } from './shared';
 import type { SetupStep } from './shared';
@@ -118,9 +118,9 @@ app.post('/configure', async (c) => {
     const allowedSet = new Set(allowedUsers);
     const existingUserKeys = await listAllKvKeys(c.env.KV, 'user:');
     const staleDeletes = existingUserKeys
-      .filter(key => !allowedSet.has(key.name.replace('user:', '')))
+      .filter(key => !allowedSet.has(emailFromKvKey(key.name)))
       .map(key => {
-        logger.info('Removed stale user', { email: key.name.replace('user:', '') });
+        logger.info('Removed stale user', { email: emailFromKvKey(key.name) });
         return c.env.KV.delete(key.name);
       });
     await Promise.all(staleDeletes);

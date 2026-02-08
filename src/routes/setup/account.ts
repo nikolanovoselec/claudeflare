@@ -1,6 +1,6 @@
 import { SetupError, toError } from '../../lib/error-types';
 import { parseCfResponse } from '../../lib/cf-api';
-import { CF_API_BASE, logger } from './shared';
+import { CF_API_BASE, logger, addStep } from './shared';
 import type { SetupStep } from './shared';
 
 /**
@@ -10,8 +10,7 @@ export async function handleGetAccount(
   token: string,
   steps: SetupStep[]
 ): Promise<string> {
-  steps.push({ step: 'get_account', status: 'pending' });
-  const stepIndex = steps.length - 1;
+  const stepIndex = addStep(steps, 'get_account');
 
   try {
     const accountsRes = await fetch(`${CF_API_BASE}/accounts`, {

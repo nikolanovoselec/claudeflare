@@ -4,6 +4,13 @@
 import type { Session } from '../types';
 import { NotFoundError } from './error-types';
 
+/**
+ * Extract the email address from a KV key like "user:alice@example.com"
+ */
+export function emailFromKvKey(keyName: string): string {
+  return keyName.replace('user:', '');
+}
+
 /** Maximum number of pagination iterations for listAllKvKeys to prevent infinite loops */
 const MAX_KV_LIST_ITERATIONS = 100;
 
