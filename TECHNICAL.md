@@ -1478,28 +1478,42 @@ Standard Claude Code CLI prevents combining `--dangerously-skip-permissions` wit
 
 ### How It Works
 
-1. Ships with Claude Code 2.1.25 baseline
-2. Auto-update disabled on auto-start for fast boot; users run `cu` manually to update
+1. Ships with Claude Code 2.1.25 baseline (pinned in Dockerfile via commit hash)
+2. **Two separate updaters, two controls:**
+   - **claude-unleashed's updater**: checks npm for latest `@anthropic-ai/claude-code`. Disabled on auto-start via `CLAUDE_UNLEASHED_NO_UPDATE=1` (fast boot). Runs on manual `cu` (updates to latest).
+   - **Upstream CLI's internal auto-updater**: background process that checks for native builds. Always disabled via `DISABLE_AUTOUPDATER=1` (set by claude-unleashed) + source patch for `DISABLE_INSTALLATION_CHECKS`. Without this, causes 30s startup delay and "Auto-update failed" errors in containers.
 3. The `claude` wrapper in `/usr/local/bin/claude` delegates to `cu` (claude-unleashed)
 4. All configuration via Dockerfile ENV vars -- no CLI flags or consent prompts needed
 
 ### Container Configuration
 
-**Dockerfile installs claude-unleashed:**
+**Dockerfile installs claude-unleashed (pinned by commit hash to bust Docker layer cache):**
 ```dockerfile
-RUN npm install -g github:nikolanovoselec/claude-unleashed
+RUN npm install -g github:nikolanovoselec/claude-unleashed#<commit-hash>
 ```
 
 ### Environment Variables
 
+**Global (Dockerfile ENV -- always active):**
+
 | Variable | Purpose | Value |
 |----------|---------|-------|
-| `CLAUDE_UNLEASHED_SILENT` | Suppress banners (auto-start only, inline in entrypoint) | `1` |
-| `CLAUDE_UNLEASHED_NO_UPDATE` | Disable auto-update (auto-start only, inline in entrypoint) | `1` |
 | `CLAUDE_UNLEASHED_SKIP_CONSENT` | Skip consent prompt | `1` |
-| `DISABLE_INSTALLATION_CHECKS` | Suppress upstream CLI deprecation warnings (set internally by claude-unleashed) | `1` |
-| `DISABLE_AUTOUPDATER` | Disable upstream CLI background auto-updater (set internally by claude-unleashed) | `1` |
 | `IS_SANDBOX` | Sandbox mode | `1` |
+
+**Auto-start only (exported in `.bashrc`, unset after `cu` exits):**
+
+| Variable | Purpose | Value |
+|----------|---------|-------|
+| `CLAUDE_UNLEASHED_SILENT` | Suppress banners | `1` |
+| `CLAUDE_UNLEASHED_NO_UPDATE` | Skip claude-unleashed's updater (fast boot) | `1` |
+
+**Set internally by claude-unleashed (always, before importing CLI):**
+
+| Variable | Purpose | Value |
+|----------|---------|-------|
+| `DISABLE_INSTALLATION_CHECKS` | Suppress upstream CLI deprecation warnings | `1` |
+| `DISABLE_AUTOUPDATER` | Disable upstream CLI background auto-updater | `1` |
 
 ### Security Considerations
 
@@ -1514,7 +1528,7 @@ RUN npm install -g github:nikolanovoselec/claude-unleashed
 - Shell command execution prompts
 - Network access prompts
 
-Global config via Dockerfile ENV: `CLAUDE_UNLEASHED_SKIP_CONSENT`, `IS_SANDBOX`. claude-unleashed internally sets `DISABLE_INSTALLATION_CHECKS=1` and `DISABLE_AUTOUPDATER=1` before importing the upstream CLI. Auto-start adds `CLAUDE_UNLEASHED_SILENT` and `CLAUDE_UNLEASHED_NO_UPDATE` via export in `.bashrc`. The `claude` wrapper in `/usr/local/bin/claude` delegates to `cu` (claude-unleashed).
+Global Dockerfile ENV sets `CLAUDE_UNLEASHED_SKIP_CONSENT` and `IS_SANDBOX`. claude-unleashed internally sets `DISABLE_INSTALLATION_CHECKS` and `DISABLE_AUTOUPDATER` before importing the upstream CLI (always active, including manual runs). Auto-start exports `CLAUDE_UNLEASHED_SILENT` and `CLAUDE_UNLEASHED_NO_UPDATE` in `.bashrc`, then unsets them after `cu` exits -- so manual re-runs get full output and auto-update. The `claude` wrapper in `/usr/local/bin/claude` delegates to `cu`.
 
 ### Troubleshooting
 
