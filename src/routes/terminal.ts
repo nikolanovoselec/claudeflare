@@ -219,6 +219,9 @@ app.use('*', authMiddleware);
 /**
  * GET /api/terminal/:sessionId/status
  * Get terminal connection status for a session
+ *
+ * Uses :sessionId (not :id) because the path /api/terminal/:sessionId/status
+ * refers to a terminal's session, not the terminal resource itself
  */
 app.get('/:sessionId/status', async (c) => {
   const reqLogger = logger.child({ requestId: c.get('requestId') });
