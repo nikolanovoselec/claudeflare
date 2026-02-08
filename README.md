@@ -32,17 +32,17 @@ Running Claude Code typically requires a local terminal setup. Claudeflare remov
 
 Go to [Cloudflare Dashboard > My Profile > API Tokens](https://dash.cloudflare.com/profile/api-tokens) and create a custom token with these permissions:
 
-| Scope | Permission | Access |
-|-------|------------|--------|
-| Account | Account Settings | Read |
-| Account | Workers Scripts | Edit |
-| Account | Workers KV Storage | Edit |
-| Account | Workers R2 Storage | Edit |
-| Account | Containers | Edit |
-| Account | Access: Apps and Policies | Edit |
-| Zone | Zone | Read |
-| Zone | DNS | Edit |
-| Zone | Workers Routes | Edit |
+| Scope | Permission | Access | Reason |
+|-------|-----------|--------|--------|
+| Account | Account Settings | Read | Read account metadata (subdomain, account ID) during setup |
+| Account | Workers Scripts | Edit | Deploy and manage the Worker |
+| Account | Workers KV Storage | Edit | Create and manage KV namespaces for session/user data |
+| Account | Workers R2 Storage | Edit | Create R2 bucket for persistent workspace sync |
+| Account | Containers | Edit | Create and manage container instances for Claude sessions |
+| Account | Access: Apps and Policies | Edit | Create Cloudflare Access app and user allowlist for authentication |
+| Zone | Zone | Read | List available zones during custom domain setup |
+| Zone | DNS | Edit | Create DNS records for custom domain routing |
+| Zone | Workers Routes | Edit | Configure worker routes for custom domain |
 
 ### 2. Fork and Configure GitHub
 
@@ -54,10 +54,11 @@ Fork this repo and add the following in Settings > Secrets and variables > Actio
 
 **Variables (optional):**
 - `CLOUDFLARE_WORKER_NAME` -- custom worker name (defaults to `claudeflare`)
+- `RUNNER` -- name of self-hosted GitHub Actions runner (defaults to `ubuntu-latest`)
 
 ### 3. Deploy
 
-Go to **Actions > Deploy** and click **Run workflow** on `main`.
+Push to `main` (or merge a PR to `main`) to trigger automatic deployment. For feature branches, go to **Actions > Deploy** and click **Run workflow**.
 
 ### 4. Run the Setup Wizard
 

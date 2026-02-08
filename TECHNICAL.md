@@ -1733,7 +1733,7 @@ Tests include automatic cleanup via `afterAll` hooks:
 
 If tests fail before cleanup runs, manually restore:
 ```bash
-npx wrangler kv key put "setup:complete" "true" --namespace-id 359e06b11d094813ace300d96b6a2f5f --remote
+npx wrangler kv key put "setup:complete" "true" --namespace-id <your-namespace-id> --remote
 ```
 
 ---
