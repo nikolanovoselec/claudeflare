@@ -14,6 +14,7 @@ DEV_MODE = "false"
 # Allowed CORS origins (comma-separated domain patterns)
 # Additional origins are managed dynamically via KV (setup:custom_domain, setup:allowed_origins)
 ALLOWED_ORIGINS = ".workers.dev"
+LOG_LEVEL = "info"
 
 # REMOVE or comment out - per-user buckets are created dynamically
 # [[r2_buckets]]

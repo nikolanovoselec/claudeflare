@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { createLogger, LogLevel, LogEntry, Logger } from '../../lib/logger';
+import { createLogger, setLogLevel, LogLevel, LogEntry, Logger } from '../../lib/logger';
 
 describe('createLogger', () => {
   let consoleSpy: {
@@ -208,6 +208,29 @@ describe('createLogger', () => {
       const entry = parseLogOutput(consoleSpy.log);
       expect(entry?.level1).toBe('a');
       expect(entry?.level2).toBe('b');
+    });
+  });
+
+  describe('setLogLevel', () => {
+    afterEach(() => {
+      // Reset to default
+      setLogLevel('info');
+    });
+
+    it('allows debug messages when level set to debug', () => {
+      setLogLevel('debug');
+      const logger = createLogger('test');
+      logger.debug('Debug visible');
+      expect(consoleSpy.log).toHaveBeenCalled();
+      const entry = parseLogOutput(consoleSpy.log);
+      expect(entry?.level).toBe('debug');
+    });
+
+    it('suppresses info messages when level set to warn', () => {
+      setLogLevel('warn');
+      const logger = createLogger('test');
+      logger.info('Should be hidden');
+      expect(consoleSpy.log).not.toHaveBeenCalled();
     });
   });
 

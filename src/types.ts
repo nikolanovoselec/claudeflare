@@ -36,6 +36,9 @@ export interface Env {
   // Allowed CORS origins (comma-separated patterns, e.g., ".workers.dev,.example.com")
   ALLOWED_ORIGINS?: string;
 
+  // Configurable log level (debug | info | warn | error)
+  LOG_LEVEL?: string;
+
   // Optional worker name override for forks (set via wrangler.toml [vars] or GitHub Actions)
   CLOUDFLARE_WORKER_NAME?: string;
 

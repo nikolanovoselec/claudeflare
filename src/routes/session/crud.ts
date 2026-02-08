@@ -3,6 +3,7 @@
  * Handles GET/POST/PATCH/DELETE operations for sessions
  */
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { getContainer } from '@cloudflare/containers';
 import type { Env, Session } from '../../types';
 import { getSessionKey, getSessionPrefix, generateSessionId, getSessionOrThrow, listAllKvKeys, sanitizeSessionName } from '../../lib/kv-keys';
@@ -13,6 +14,9 @@ import { getContainerId } from '../../lib/container-helpers';
 import { createLogger } from '../../lib/logger';
 import { containerSessionsCB } from '../../lib/circuit-breakers';
 import { ValidationError } from '../../lib/error-types';
+
+const CreateSessionBody = z.object({ name: z.string().max(MAX_SESSION_NAME_LENGTH).optional() }).strict();
+const UpdateSessionBody = z.object({ name: z.string().max(MAX_SESSION_NAME_LENGTH).optional() }).strict();
 
 const logger = createLogger('session-crud');
 
@@ -61,13 +65,13 @@ app.get('/', async (c) => {
  */
 app.post('/', sessionCreateRateLimiter, async (c) => {
   const bucketName = c.get('bucketName');
-  const body = await c.req.json<{ name?: string }>();
-
-  // Validate session name
-  let sessionName = body.name?.trim() || 'Terminal';
-  if (sessionName.length > MAX_SESSION_NAME_LENGTH) {
-    throw new ValidationError(`Session name too long (max ${MAX_SESSION_NAME_LENGTH} characters)`);
+  const raw = await c.req.json();
+  const parsed = CreateSessionBody.safeParse(raw);
+  if (!parsed.success) {
+    throw new ValidationError(parsed.error.errors[0].message);
   }
+
+  let sessionName = parsed.data.name?.trim() || 'Terminal';
   sessionName = sanitizeSessionName(sessionName);
 
   const sessionId = generateSessionId();
@@ -113,14 +117,15 @@ app.patch('/:id', async (c) => {
 
   const session = await getSessionOrThrow(c.env.KV, key);
 
-  const body = await c.req.json<{ name?: string }>();
+  const raw = await c.req.json();
+  const parsed = UpdateSessionBody.safeParse(raw);
+  if (!parsed.success) {
+    throw new ValidationError(parsed.error.errors[0].message);
+  }
 
   // Update fields
-  if (body.name) {
-    if (body.name.length > MAX_SESSION_NAME_LENGTH) {
-      throw new ValidationError(`Session name too long (max ${MAX_SESSION_NAME_LENGTH} characters)`);
-    }
-    session.name = sanitizeSessionName(body.name);
+  if (parsed.data.name) {
+    session.name = sanitizeSessionName(parsed.data.name);
   }
   session.lastAccessedAt = new Date().toISOString();
 

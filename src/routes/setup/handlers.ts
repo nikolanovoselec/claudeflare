@@ -2,7 +2,10 @@ import { Hono } from 'hono';
 import type { Env } from '../../types';
 import { AuthError, toError } from '../../lib/error-types';
 import { parseCfResponse } from '../../lib/cf-api';
+import { createRateLimiter } from '../../middleware/rate-limit';
 import { CF_API_BASE, logger } from './shared';
+
+const statusRateLimiter = createRateLimiter({ windowMs: 60_000, maxRequests: 30, keyPrefix: 'setup-status' });
 
 const handlers = new Hono<{ Bindings: Env }>();
 
@@ -10,7 +13,7 @@ const handlers = new Hono<{ Bindings: Env }>();
  * GET /api/setup/status
  * Check if setup is complete (public endpoint)
  */
-handlers.get('/status', async (c) => {
+handlers.get('/status', statusRateLimiter, async (c) => {
   const setupComplete = await c.env.KV.get('setup:complete');
   const configured = setupComplete === 'true';
 

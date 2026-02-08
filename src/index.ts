@@ -13,7 +13,8 @@ import { REQUEST_ID_LENGTH, REQUEST_ID_PATTERN, CORS_MAX_AGE_SECONDS } from './l
 import { AppError } from './lib/error-types';
 import { isAllowedOrigin } from './lib/cors-cache';
 import { resetSetupCache as resetSetupCacheShared } from './lib/cache-reset';
-import { createLogger } from './lib/logger';
+import { createLogger, setLogLevel } from './lib/logger';
+import type { LogLevel } from './lib/logger';
 
 // Type for app context with request ID
 type AppVariables = {
@@ -182,6 +183,10 @@ app.onError((err, c) => {
  */
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    if (env.LOG_LEVEL) {
+      setLogLevel(env.LOG_LEVEL as LogLevel);
+    }
+
     const url = new URL(request.url);
 
     // Intercept WebSocket terminal requests BEFORE Hono

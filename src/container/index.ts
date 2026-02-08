@@ -182,7 +182,7 @@ export class container extends Container<Env> {
           headers: { 'Content-Type': 'application/json' },
         });
       } catch (err) {
-        return new Response(JSON.stringify({ error: String(err) }), {
+        return new Response(JSON.stringify({ error: toErrorMessage(err) }), {
           status: 500,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -260,7 +260,7 @@ export class container extends Container<Env> {
       this._activityPollAlarm = true;
       this.logger.info('Activity poll scheduled', { nextPollTime: new Date(nextPollTime).toISOString() });
     } catch (err) {
-      this.logger.error('Failed to schedule activity poll', err instanceof Error ? err : new Error(String(err)));
+      this.logger.error('Failed to schedule activity poll', err instanceof Error ? err : new Error(toErrorMessage(err)));
     }
   }
 
@@ -291,7 +291,7 @@ export class container extends Container<Env> {
         await this.ctx.storage.deleteAlarm();
         await this.ctx.storage.deleteAll();
       } catch (err) {
-        this.logger.error('Failed to cleanup zombie', err instanceof Error ? err : new Error(String(err)));
+        this.logger.error('Failed to cleanup zombie', err instanceof Error ? err : new Error(toErrorMessage(err)));
       }
       return true;
     }
@@ -312,7 +312,7 @@ export class container extends Container<Env> {
       }
       return false;
     } catch (err) {
-      this.logger.warn('Could not get state in alarm, destroying as zombie', { error: String(err) });
+      this.logger.warn('Could not get state in alarm, destroying as zombie', { error: toErrorMessage(err) });
       await this.cleanupAndDestroy();
       return true;
     }
@@ -398,12 +398,12 @@ export class container extends Container<Env> {
       // Schedule next poll
       await this.scheduleActivityPoll();
     } catch (err) {
-      this.logger.error('Error in activity poll', err instanceof Error ? err : new Error(String(err)));
+      this.logger.error('Error in activity poll', err instanceof Error ? err : new Error(toErrorMessage(err)));
       // On error, destroy the container to prevent zombie
       try {
         await this.cleanupAndDestroy();
       } catch (destroyErr) {
-        this.logger.error('Failed to destroy zombie', destroyErr instanceof Error ? destroyErr : new Error(String(destroyErr)));
+        this.logger.error('Failed to destroy zombie', destroyErr instanceof Error ? destroyErr : new Error(toErrorMessage(destroyErr)));
       }
     }
   }
@@ -467,7 +467,7 @@ export class container extends Container<Env> {
       await this.ctx.storage.delete('bucketName');
       this.logger.info('Operational storage cleared');
     } catch (err) {
-      this.logger.error('Failed to clear storage', err instanceof Error ? err : new Error(String(err)));
+      this.logger.error('Failed to clear storage', err instanceof Error ? err : new Error(toErrorMessage(err)));
     }
     return super.destroy();
   }
@@ -483,7 +483,7 @@ export class container extends Container<Env> {
    * Called when the container encounters an error
    */
   override onError(error: unknown): void {
-    this.logger.error('Container error', error instanceof Error ? error : new Error(String(error)));
+    this.logger.error('Container error', error instanceof Error ? error : new Error(toErrorMessage(error)));
   }
 
 }
