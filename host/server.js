@@ -81,7 +81,7 @@ const PORT = process.env.TERMINAL_PORT || 8080;
 // The .bashrc has claude auto-start logic that only works in interactive login shells
 const TERMINAL_COMMAND = process.env.TERMINAL_COMMAND || '/bin/bash';
 const TERMINAL_ARGS = process.env.TERMINAL_ARGS || '-l';  // Login shell flag
-const WORKSPACE_DEFAULT = process.env.WORKSPACE || '/mnt/r2/workspace';
+const WORKSPACE_DEFAULT = process.env.WORKSPACE || '/home/user/workspace';
 
 // PTY persistence settings
 const PTY_KEEPALIVE_MS = parseInt(process.env.PTY_KEEPALIVE_MS || '1800000', 10); // 30 minutes - matches container sleepAfter
@@ -563,6 +563,19 @@ const server = http.createServer(async (req, res) => {
     } else {
       res.writeHead(404, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Session not found' }));
+    }
+    return;
+  }
+
+  // Sync log endpoint
+  if (pathname === '/sync-log' && method === 'GET') {
+    try {
+      const log = fs.readFileSync('/tmp/sync.log', 'utf8');
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end(log);
+    } catch {
+      res.writeHead(404);
+      res.end('No sync log found');
     }
     return;
   }
