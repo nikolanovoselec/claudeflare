@@ -15,6 +15,7 @@ interface JWTPayload {
   email: string;
   exp: number;
   iat: number;
+  nbf?: number;
   iss: string;
   sub: string;
   type: string;
@@ -39,6 +40,10 @@ let cachedJWKS: JWKS | null = null;
 let cachedJWKSAuthDomain: string | null = null;
 let cacheExpiry: number = 0;
 const CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+// Track when JWKS was last fetched for cache-bust on kid miss
+let lastJWKSFetchTime: number = 0;
+const JWKS_FRESHNESS_THRESHOLD = 30 * 1000; // 30 seconds
 
 // Promise deduplication: if a JWKS fetch is already in progress, reuse it
 let pendingJWKSFetch: Promise<JWKS> | null = null;
@@ -103,6 +108,7 @@ async function getPublicKeys(authDomain: string): Promise<JWKS> {
       cachedJWKS = jwks;
       cachedJWKSAuthDomain = authDomain;
       cacheExpiry = Date.now() + CACHE_TTL;
+      lastJWKSFetchTime = Date.now();
 
       return jwks;
     } finally {
@@ -146,8 +152,15 @@ export async function verifyAccessJWT(
       return null;
     }
 
-    const jwks = await getPublicKeys(authDomain);
-    const matchingKey = jwks.keys.find((key) => key.kid === header.kid);
+    let jwks = await getPublicKeys(authDomain);
+    let matchingKey = jwks.keys.find((key) => key.kid === header.kid);
+
+    // SEC8: Cache-bust on kid miss — re-fetch JWKS if cache is stale
+    if (!matchingKey && Date.now() - lastJWKSFetchTime > JWKS_FRESHNESS_THRESHOLD) {
+      cachedJWKS = null;
+      jwks = await getPublicKeys(authDomain);
+      matchingKey = jwks.keys.find((key) => key.kid === header.kid);
+    }
 
     if (!matchingKey) {
       return null;
@@ -213,6 +226,11 @@ export async function verifyAccessJWT(
       return null;
     }
 
+    // Check not-before (SEC7)
+    if (payload.nbf !== undefined && payload.nbf > now) {
+      return null;
+    }
+
     // 6. Return email if all checks pass
     return payload.email || null;
   } catch {
@@ -229,4 +247,5 @@ export function resetJWKSCache(): void {
   cachedJWKSAuthDomain = null;
   cacheExpiry = 0;
   pendingJWKSFetch = null;
+  lastJWKSFetchTime = 0;
 }

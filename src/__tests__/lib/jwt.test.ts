@@ -269,6 +269,50 @@ describe('JWT verification', () => {
       expect(result).toBeNull();
     });
 
+    it('returns null for a token with nbf in the future', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const token = await createTestJWT(
+        {
+          aud: [TEST_AUD],
+          email: TEST_EMAIL,
+          exp: now + 7200,
+          iat: now - 60,
+          nbf: now + 3600, // not valid yet
+          iss: `https://${TEST_AUTH_DOMAIN}`,
+          sub: 'user-id-123',
+          type: 'app',
+          country: 'US',
+        },
+        testKeyPair.privateKey,
+        testKeyPair.kid
+      );
+
+      const result = await verifyAccessJWT(token, TEST_AUTH_DOMAIN, TEST_AUD);
+      expect(result).toBeNull();
+    });
+
+    it('returns email for a token with nbf in the past', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const token = await createTestJWT(
+        {
+          aud: [TEST_AUD],
+          email: TEST_EMAIL,
+          exp: now + 3600,
+          iat: now - 120,
+          nbf: now - 60, // already valid
+          iss: `https://${TEST_AUTH_DOMAIN}`,
+          sub: 'user-id-123',
+          type: 'app',
+          country: 'US',
+        },
+        testKeyPair.privateKey,
+        testKeyPair.kid
+      );
+
+      const result = await verifyAccessJWT(token, TEST_AUTH_DOMAIN, TEST_AUD);
+      expect(result).toBe(TEST_EMAIL);
+    });
+
     it('returns null for a token with no email', async () => {
       const now = Math.floor(Date.now() / 1000);
       const token = await createTestJWT(
@@ -452,6 +496,66 @@ describe('JWT verification', () => {
         return url.includes('/cdn-cgi/access/certs');
       });
       expect(jwksCalls.length).toBe(2);
+    });
+
+    it('re-fetches JWKS when kid not found and cache is stale', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const payload = {
+        aud: [TEST_AUD],
+        email: TEST_EMAIL,
+        exp: now + 3600,
+        iat: now - 60,
+        iss: `https://${TEST_AUTH_DOMAIN}`,
+        sub: 'user-id-123',
+        type: 'app',
+        country: 'US',
+      };
+
+      // Generate a second key pair with a different kid
+      const secondKeyPair = await generateTestKeyPair('rotated-kid');
+
+      // First call: mock only returns the original key (caches JWKS without rotated-kid)
+      const token1 = await createTestJWT(payload, testKeyPair.privateKey, testKeyPair.kid);
+      await verifyAccessJWT(token1, TEST_AUTH_DOMAIN, TEST_AUD);
+
+      // Now create a token signed with the rotated key
+      const token2 = await createTestJWT(payload, secondKeyPair.privateKey, secondKeyPair.kid);
+
+      // Update fetch mock to return BOTH keys (simulates Cloudflare key rotation)
+      let fetchCallCount = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.length;
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        if (url === `https://${TEST_AUTH_DOMAIN}/cdn-cgi/access/certs`) {
+          const jwksResponse = createMockJWKSResponse([testKeyPair.publicKeyJWK, secondKeyPair.publicKeyJWK]);
+          return new Response(JSON.stringify(jwksResponse), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return new Response('Not Found', { status: 404 });
+      }) as typeof globalThis.fetch;
+
+      // Simulate stale cache by advancing time past the freshness threshold (30s)
+      const originalDateNow = Date.now;
+      let timeOffset = 0;
+      globalThis.Date.now = () => originalDateNow() + timeOffset;
+      timeOffset = 31 * 1000; // 31 seconds past freshness threshold
+
+      try {
+        // This should trigger cache-bust: kid 'rotated-kid' not in cached JWKS, cache is stale
+        const result = await verifyAccessJWT(token2, TEST_AUTH_DOMAIN, TEST_AUD);
+        expect(result).toBe(TEST_EMAIL);
+
+        // Verify that a re-fetch happened
+        const newFetchCalls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls;
+        const jwksCalls = newFetchCalls.filter((call) => {
+          const url = typeof call[0] === 'string' ? call[0] : call[0] instanceof URL ? call[0].toString() : call[0].url;
+          return url.includes('/cdn-cgi/access/certs');
+        });
+        expect(jwksCalls.length).toBe(1); // re-fetched once with the new mock
+      } finally {
+        globalThis.Date.now = originalDateNow;
+      }
     });
   });
 });
