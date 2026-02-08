@@ -290,6 +290,48 @@ describe('JWT verification', () => {
       expect(result).toBeNull();
     });
 
+    it('returns null for missing issuer', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const token = await createTestJWT(
+        {
+          aud: [TEST_AUD],
+          email: TEST_EMAIL,
+          exp: now + 3600,
+          iat: now - 60,
+          // iss intentionally omitted
+          sub: 'user-id-123',
+          type: 'app',
+          country: 'US',
+        },
+        testKeyPair.privateKey,
+        testKeyPair.kid
+      );
+
+      const result = await verifyAccessJWT(token, TEST_AUTH_DOMAIN, TEST_AUD);
+      expect(result).toBeNull();
+    });
+
+    it('returns null for wrong issuer', async () => {
+      const now = Math.floor(Date.now() / 1000);
+      const token = await createTestJWT(
+        {
+          aud: [TEST_AUD],
+          email: TEST_EMAIL,
+          exp: now + 3600,
+          iat: now - 60,
+          iss: 'https://wrong-team.cloudflareaccess.com',
+          sub: 'user-id-123',
+          type: 'app',
+          country: 'US',
+        },
+        testKeyPair.privateKey,
+        testKeyPair.kid
+      );
+
+      const result = await verifyAccessJWT(token, TEST_AUTH_DOMAIN, TEST_AUD);
+      expect(result).toBeNull();
+    });
+
     it('returns email when aud is an array containing the expected aud among others', async () => {
       const now = Math.floor(Date.now() / 1000);
       const token = await createTestJWT(

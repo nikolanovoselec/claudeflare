@@ -197,6 +197,12 @@ export async function verifyAccessJWT(
       return null;
     }
 
+    // Check issuer
+    const expectedIssuer = `https://${authDomain}`;
+    if (!payload.iss || payload.iss !== expectedIssuer) {
+      return null;
+    }
+
     // Check expiration
     if (!payload.exp || payload.exp <= now) {
       return null;

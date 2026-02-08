@@ -26,6 +26,7 @@ const SECURITY_HEADERS: Record<string, string> = {
   'X-Content-Type-Options': 'nosniff',
   'X-Frame-Options': 'DENY',
   'Referrer-Policy': 'strict-origin-when-cross-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
 };
 
 const app = new Hono<{ Bindings: Env; Variables: AppVariables }>();
@@ -227,7 +228,7 @@ export default {
       secureResponse.headers.set(key, value);
     }
     secureResponse.headers.set('Content-Security-Policy',
-      "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' wss:; img-src 'self' data:; script-src 'self'"
+      "default-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self' wss:; img-src 'self' data:; script-src 'self'; frame-ancestors 'none'"
     );
     return secureResponse;
   }
