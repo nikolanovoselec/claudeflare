@@ -106,17 +106,6 @@ const Terminal: Component<TerminalProps> = (props) => {
         return true;
       }
 
-      // Ctrl+X: Always send SIGINT (alternative interrupt key)
-      if (event.ctrlKey && event.key === 'x') {
-        // Send Ctrl+C (ASCII 3) to PTY for interrupt
-        const ws = terminalStore.getTerminal(props.sessionId, props.terminalId);
-        if (ws) {
-          // The onData handler sends to WebSocket, so we write to terminal input
-          terminal!.paste('\x03'); // ASCII 3 = Ctrl+C / ETX
-        }
-        return false;
-      }
-
       // Ctrl+V: Paste from clipboard
       if (event.ctrlKey && event.key === 'v') {
         navigator.clipboard.readText().then((text) => {

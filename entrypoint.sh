@@ -132,7 +132,9 @@ initial_sync_from_r2() {
         --filter "- .npm/**" \
         --filter "- **/node_modules/**" \
         --filter "+ workspace/**/" \
+        --filter "+ workspace/CLAUDE.md" \
         --filter "+ workspace/**/CLAUDE.md" \
+        --filter "+ workspace/.claude/**" \
         --filter "+ workspace/**/.claude/**" \
         --filter "- workspace/**" \
         --fast-list \
@@ -172,7 +174,9 @@ establish_bisync_baseline() {
         --filter "- .npm/**" \
         --filter "- **/node_modules/**" \
         --filter "+ workspace/**/" \
+        --filter "+ workspace/CLAUDE.md" \
         --filter "+ workspace/**/CLAUDE.md" \
+        --filter "+ workspace/.claude/**" \
         --filter "+ workspace/**/.claude/**" \
         --filter "- workspace/**" \
         --resync \
@@ -218,7 +222,9 @@ bisync_with_r2() {
         --filter "- .npm/**" \
         --filter "- **/node_modules/**" \
         --filter "+ workspace/**/" \
+        --filter "+ workspace/CLAUDE.md" \
         --filter "+ workspace/**/CLAUDE.md" \
+        --filter "+ workspace/.claude/**" \
         --filter "+ workspace/**/.claude/**" \
         --filter "- workspace/**" \
         --fast-list \
@@ -240,7 +246,9 @@ bisync_with_r2() {
             --filter "- .npm/**" \
             --filter "- **/node_modules/**" \
             --filter "+ workspace/**/" \
+            --filter "+ workspace/CLAUDE.md" \
             --filter "+ workspace/**/CLAUDE.md" \
+            --filter "+ workspace/.claude/**" \
             --filter "+ workspace/**/.claude/**" \
             --filter "- workspace/**" \
             --conflict-resolve newer \
