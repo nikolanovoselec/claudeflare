@@ -109,7 +109,9 @@ Browser (multiple tabs)
 
 ## Why Claude-Unleashed?
 
-Cloudflare Containers run as root. The standard Claude Code CLI refuses to combine `--dangerously-skip-permissions` with root execution -- a safety check that makes sense locally but blocks headless container use. [Claude-unleashed](https://github.com/nikolanovoselec/claude-unleashed) wraps the official `@anthropic-ai/claude-code` CLI, bypassing the root check so containers can run Claude Code without permission prompts. It ships a pinned baseline (2.1.25) and auto-updates to the latest version on first container start.
+Cloudflare Containers run as root. The standard Claude Code CLI refuses to combine `--dangerously-skip-permissions` with root execution -- a safety check that makes sense locally but blocks headless container use. [Claude-unleashed](https://github.com/nikolanovoselec/claude-unleashed) wraps the official `@anthropic-ai/claude-code` CLI, bypassing the root check so containers can run Claude Code without permission prompts.
+
+The container ships a pinned baseline (2.1.25) with auto-update disabled on startup for fast boot. To update to the latest version, exit Claude and run `cu` or `claude-unleashed` in any terminal tab.
 
 This is safe in context: each container is isolated, ephemeral, and single-user. See `TECHNICAL.md` section 12 for details.
 

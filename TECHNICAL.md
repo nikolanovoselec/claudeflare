@@ -1414,7 +1414,7 @@ Container Start
 └── Start terminal server (port 8080)
 ```
 
-Claude-unleashed auto-updates to the latest `@anthropic-ai/claude-code` on first run. No pre-seeding or consent management is needed (handled by `CLAUDE_UNLEASHED_SKIP_CONSENT=1`).
+Auto-update is disabled on tab 1 auto-start (`CLAUDE_UNLEASHED_SILENT=1 CLAUDE_UNLEASHED_NO_UPDATE=1` inline env vars) for fast container boot. Users can update manually by running `cu` or `claude-unleashed` in any terminal tab. No consent prompts in either mode (`CLAUDE_UNLEASHED_SKIP_CONSENT=1` set globally in Dockerfile).
 
 ---
 
@@ -1479,7 +1479,7 @@ Standard Claude Code CLI prevents combining `--dangerously-skip-permissions` wit
 ### How It Works
 
 1. Ships with Claude Code 2.1.25 baseline
-2. Auto-updates to latest `@anthropic-ai/claude-code` on first container start
+2. Auto-update disabled on auto-start for fast boot; users run `cu` manually to update
 3. The `claude` wrapper in `/usr/local/bin/claude` delegates to `cu` (claude-unleashed)
 4. All configuration via Dockerfile ENV vars -- no CLI flags or consent prompts needed
 
@@ -1494,7 +1494,8 @@ RUN npm install -g github:nikolanovoselec/claude-unleashed
 
 | Variable | Purpose | Value |
 |----------|---------|-------|
-| `CLAUDE_UNLEASHED_SILENT` | Suppress banners | `1` |
+| `CLAUDE_UNLEASHED_SILENT` | Suppress banners (auto-start only, inline in entrypoint) | `1` |
+| `CLAUDE_UNLEASHED_NO_UPDATE` | Disable auto-update (auto-start only, inline in entrypoint) | `1` |
 | `CLAUDE_UNLEASHED_SKIP_CONSENT` | Skip consent prompt | `1` |
 | `DISABLE_INSTALLATION_CHECKS` | Skips PATH checks that fail in sudo/root contexts | `1` |
 | `IS_SANDBOX` | Sandbox mode | `1` |
@@ -1512,7 +1513,7 @@ RUN npm install -g github:nikolanovoselec/claude-unleashed
 - Shell command execution prompts
 - Network access prompts
 
-Configuration is via Dockerfile ENV vars (`CLAUDE_UNLEASHED_SILENT`, `CLAUDE_UNLEASHED_SKIP_CONSENT`, `DISABLE_INSTALLATION_CHECKS`, `IS_SANDBOX`). The `claude` wrapper in `/usr/local/bin/claude` delegates to `cu` (claude-unleashed).
+Global config via Dockerfile ENV: `CLAUDE_UNLEASHED_SKIP_CONSENT`, `DISABLE_INSTALLATION_CHECKS`, `IS_SANDBOX`. Auto-start adds `CLAUDE_UNLEASHED_SILENT` and `CLAUDE_UNLEASHED_NO_UPDATE` as inline env vars. The `claude` wrapper in `/usr/local/bin/claude` delegates to `cu` (claude-unleashed).
 
 ### Troubleshooting
 

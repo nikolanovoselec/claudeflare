@@ -15,7 +15,6 @@ FROM node:22-alpine
 
 # Suppress npm update nag; configure claude-unleashed for non-interactive container use
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false
-ENV CLAUDE_UNLEASHED_SILENT=1
 ENV CLAUDE_UNLEASHED_SKIP_CONSENT=1
 ENV DISABLE_INSTALLATION_CHECKS=1
 ENV IS_SANDBOX=1
@@ -56,12 +55,13 @@ RUN apk add --no-cache \
     && apk add --no-cache lazygit --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community
 
 # Install claude-unleashed globally (wraps Claude Code with permission bypass)
-# Ships with Claude Code 2.1.25 baseline; auto-updates to latest on first container start
+# Ships with Claude Code 2.1.25 baseline; auto-update disabled for fast startup
+# Users can update manually by running `cu` or `claude-unleashed` in any terminal tab
 RUN npm install -g github:nikolanovoselec/claude-unleashed
 
 # Create 'claude' wrapper that uses claude-unleashed transparently
 # Users type 'claude' as usual, gets unleashed mode under the hood
-# All flags are set via env vars above (CLAUDE_UNLEASHED_SILENT, CLAUDE_UNLEASHED_SKIP_CONSENT, etc.)
+# Global env: CLAUDE_UNLEASHED_SKIP_CONSENT. Auto-start adds SILENT + NO_UPDATE.
 RUN printf '#!/bin/bash\nexec cu "$@"\n' > /usr/local/bin/claude && \
     chmod +x /usr/local/bin/claude
 
