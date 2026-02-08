@@ -4,6 +4,7 @@ import type { TerminalConnectionState } from '../types';
 import { getTerminalWebSocketUrl } from '../api/client';
 import type { Terminal } from '@xterm/xterm';
 import type { FitAddon } from '@xterm/addon-fit';
+import { logger } from '../lib/logger';
 import {
   MAX_CONNECTION_RETRIES,
   CONNECTION_RETRY_DELAY_MS,
@@ -73,7 +74,7 @@ function triggerLayoutResize(): void {
             terminal.refresh(0, terminal.rows - 1);
           }
         } catch (err) {
-          console.warn(`[Terminal ${key}] Failed to refit on layout change:`, err);
+          logger.warn(`[Terminal ${key}] Failed to refit on layout change:`, err);
         }
       }
     });
@@ -183,7 +184,7 @@ function connect(
   // Bug 1 fix: Dispose any existing input handler before creating a new one
   const existingDisposable = inputDisposables.get(key);
   if (existingDisposable) {
-    console.log(`[Terminal ${key}] Disposing existing input handler`);
+    logger.debug(`[Terminal ${key}] Disposing existing input handler`);
     existingDisposable.dispose();
     inputDisposables.delete(key);
   }
@@ -224,7 +225,7 @@ function connect(
         ws.close();
         return;
       }
-      console.log(`[Terminal ${key}] WebSocket opened`);
+      logger.debug(`[Terminal ${key}] WebSocket opened`);
       setConnectionState(sessionId, terminalId, 'connected');
       setRetryMessage(sessionId, terminalId, null);
 
@@ -234,7 +235,7 @@ function connect(
       // Bug 1 fix: Dispose any existing input handler before creating a new one
       const existingDisposable = inputDisposables.get(key);
       if (existingDisposable) {
-        console.log(`[Terminal ${key}] Disposing existing input handler in onopen`);
+        logger.debug(`[Terminal ${key}] Disposing existing input handler in onopen`);
         existingDisposable.dispose();
         inputDisposables.delete(key);
       }
@@ -249,7 +250,7 @@ function connect(
 
       // Bug 1 fix: Store inputDisposable in the external Map for proper cleanup
       inputDisposables.set(key, inputDisposable);
-      console.log(`[Terminal ${key}] Created new input handler`);
+      logger.debug(`[Terminal ${key}] Created new input handler`);
 
       // Bug 5 fix: Send initial resize to sync PTY dimensions with xterm.js
       // Without this, PTY starts with default 80x24 but xterm.js may have different dimensions
@@ -258,7 +259,7 @@ function connect(
       const rows = terminal.rows;
       if (cols > 0 && rows > 0) {
         ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-        console.log(`[Terminal ${key}] Sent initial resize: ${cols}x${rows}`);
+        logger.debug(`[Terminal ${key}] Sent initial resize: ${cols}x${rows}`);
       }
 
       // Fix: After receiving replayed buffer, refresh terminal display
@@ -282,7 +283,7 @@ function connect(
         if (inAlternateScreen) {
           // Alternate screen: no buffer was replayed, just send resize to trigger SIGWINCH
           // The TUI app will redraw itself at the correct dimensions
-          console.log(`[Terminal ${key}] Alternate screen detected, sending resize for SIGWINCH`);
+          logger.debug(`[Terminal ${key}] Alternate screen detected, sending resize for SIGWINCH`);
           if (ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'resize', cols, rows }));
           }
@@ -301,14 +302,14 @@ function connect(
               terminal.refresh(0, terminal.rows - 1);
               // Send another resize to force PTY to update cursor position
               ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-              console.log(`[Terminal ${key}] Initial refresh completed (idle=${idleTime}ms, elapsed=${Date.now() - startTime}ms)`);
+              logger.debug(`[Terminal ${key}] Initial refresh completed (idle=${idleTime}ms, elapsed=${Date.now() - startTime}ms)`);
 
               // Second refresh after PTY processes resize - fixes cursor jumping to corner
               setTimeout(() => {
                 if (!cancelled && ws.readyState === WebSocket.OPEN) {
                   terminal.scrollToBottom();
                   terminal.refresh(0, terminal.rows - 1);
-                  console.log(`[Terminal ${key}] Secondary refresh completed`);
+                  logger.debug(`[Terminal ${key}] Secondary refresh completed`);
                 }
               }, TERMINAL_SECONDARY_REFRESH_DELAY_MS);
             }
@@ -328,7 +329,7 @@ function connect(
       } else if (typeof event.data === 'string') {
         messageData = event.data;
       } else {
-        console.warn('Unknown message type:', typeof event.data);
+        logger.warn('Unknown message type:', typeof event.data);
         return;
       }
 
@@ -343,7 +344,7 @@ function connect(
           if (msg.type === 'screen-state') {
             // Server tells us whether PTY is in alternate screen buffer (TUI apps)
             inAlternateScreen = msg.inAlternateScreen === true;
-            console.log(`[Terminal ${key}] Screen state: inAlternateScreen=${inAlternateScreen}`);
+            logger.debug(`[Terminal ${key}] Screen state: inAlternateScreen=${inAlternateScreen}`);
             return;
           }
         } catch {
@@ -356,13 +357,13 @@ function connect(
     };
 
     ws.onerror = (event) => {
-      console.error('WebSocket error:', event);
+      logger.error('WebSocket error:', event);
     };
 
     ws.onclose = (event) => {
       if (cancelled) return;
 
-      console.log(`[Terminal ${key}] WebSocket closed: code=${event.code}, reason=${event.reason}`);
+      logger.debug(`[Terminal ${key}] WebSocket closed: code=${event.code}, reason=${event.reason}`);
       connections.delete(key);
 
       // WS_CLOSE_ABNORMAL (1006) = abnormal closure (connection failed)
@@ -371,7 +372,7 @@ function connect(
       const shouldRetry = wasNeverConnected && attemptNumber < MAX_CONNECTION_RETRIES && event.code === WS_CLOSE_ABNORMAL;
 
       if (shouldRetry) {
-        console.log(`[Terminal ${key}] Retrying initial connection, attempt ${attemptNumber + 1}/${MAX_CONNECTION_RETRIES}`);
+        logger.debug(`[Terminal ${key}] Retrying initial connection, attempt ${attemptNumber + 1}/${MAX_CONNECTION_RETRIES}`);
         const timeout = setTimeout(() => {
           attemptConnection(attemptNumber + 1);
         }, CONNECTION_RETRY_DELAY_MS);
@@ -389,7 +390,7 @@ function connect(
         reconnectAttempts.set(key, nextAttempt);
 
         const reason = wasNeverConnected ? 'Initial retries exhausted' : 'Connection dropped';
-        console.log(`[Terminal ${key}] ${reason}, reconnecting (attempt ${nextAttempt}/${MAX_RECONNECT_ATTEMPTS})`);
+        logger.debug(`[Terminal ${key}] ${reason}, reconnecting (attempt ${nextAttempt}/${MAX_RECONNECT_ATTEMPTS})`);
         setConnectionState(sessionId, terminalId, 'connecting');
         setRetryMessage(sessionId, terminalId, `Reconnecting... (attempt ${nextAttempt}/${MAX_RECONNECT_ATTEMPTS})`);
 
@@ -402,7 +403,7 @@ function connect(
         retryTimeouts.set(key, timeout);
       } else {
         // Exhausted all reconnection attempts
-        console.log(`[Terminal ${key}] Max reconnection attempts reached, giving up`);
+        logger.warn(`[Terminal ${key}] Max reconnection attempts reached, giving up`);
         setConnectionState(sessionId, terminalId, wasNeverConnected ? 'error' : 'disconnected');
         setRetryMessage(sessionId, terminalId, null);
         reconnectAttempts.delete(key);
@@ -450,7 +451,7 @@ function disconnect(sessionId: string, terminalId: string): void {
   // Bug 1 fix: Dispose input handler before closing WebSocket
   const disposable = inputDisposables.get(key);
   if (disposable) {
-    console.log(`[Terminal ${key}] Disposing input handler in disconnect`);
+    logger.debug(`[Terminal ${key}] Disposing input handler in disconnect`);
     disposable.dispose();
     inputDisposables.delete(key);
   }
@@ -579,7 +580,7 @@ function reconnect(sessionId: string, terminalId: string, onError?: (error: stri
   const key = makeKey(sessionId, terminalId);
   const terminal = terminals.get(key);
   if (!terminal) {
-    console.error(`Cannot reconnect: no terminal for ${key}`);
+    logger.error(`Cannot reconnect: no terminal for ${key}`);
     return null;
   }
 

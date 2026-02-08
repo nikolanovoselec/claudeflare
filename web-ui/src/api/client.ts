@@ -1,4 +1,5 @@
 import type { Session, UserInfo, InitProgress, StartupStatusResponse } from '../types';
+import { logger } from '../lib/logger';
 import { STARTUP_POLL_INTERVAL_MS, SESSION_ID_DISPLAY_LENGTH, MAX_STARTUP_POLL_ERRORS, MAX_TERMINALS_PER_SESSION } from '../lib/constants';
 import { z } from 'zod';
 import {
@@ -151,12 +152,12 @@ export function startSession(
     } catch (err) {
       // If it's a server error (5xx), report it rather than silently continuing
       if (err instanceof ApiError && err.status >= 500) {
-        console.error('Container start failed:', err.status, err.message);
+        logger.error('Container start failed:', err.status, err.message);
         onError(`Container start failed: ${err.message}`);
         return;
       }
       // For other errors (409 conflict, network issues), the container might already be starting
-      console.log('Container start request (non-fatal):', err);
+      logger.debug('Container start request (non-fatal):', err);
       onError(`Container start failed: ${err instanceof Error ? err.message : String(err)}`);
       return;
     }
@@ -183,7 +184,7 @@ export function startSession(
         }
       } catch (err) {
         consecutiveErrors++;
-        console.error('Polling error:', err);
+        logger.error('Polling error:', err);
         if (consecutiveErrors >= MAX_STARTUP_POLL_ERRORS) {
           if (pollInterval) clearInterval(pollInterval);
           onError('Polling failed after too many consecutive errors');

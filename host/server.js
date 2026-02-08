@@ -627,31 +627,30 @@ wss.on('connection', (ws, req) => {
     const str = message.toString();
 
     // Try to parse as JSON for known control messages only
-    // Use specific prefixes to avoid intercepting terminal input that starts with '{'
-    if (str.startsWith('{"type":"resize"') || str.startsWith('{"type":"ping"') || str.startsWith('{"type":"data"')) {
+    // Length-gated: control messages are small; skip parsing for large terminal input
+    if (str.length < 200 && str.startsWith('{')) {
       try {
         const msg = JSON.parse(str);
 
-        switch (msg.type) {
-          case 'resize':
-            // Resize PTY
-            if (msg.cols && msg.rows) {
-              session.resize(msg.cols, msg.rows);
-            }
-            return;
-
-          case 'ping':
-            // Respond to ping - still use JSON for pong
-            ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
-            return;
-
-          case 'data':
-            // Legacy JSON-wrapped data - unwrap and write
-            session.write(msg.data);
-            return;
+        // Validate type field AND correct field types before acting
+        if (msg.type === 'resize' && typeof msg.cols === 'number' && typeof msg.rows === 'number') {
+          session.resize(msg.cols, msg.rows);
+          return;
         }
-      } catch (e) {
-        // Not valid JSON - treat as raw terminal input
+
+        if (msg.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
+          return;
+        }
+
+        if (msg.type === 'data' && typeof msg.data === 'string') {
+          session.write(msg.data);
+          return;
+        }
+
+        // Unknown type or wrong field types — fall through to raw input
+      } catch {
+        // Not valid JSON — treat as raw terminal input
       }
     }
 

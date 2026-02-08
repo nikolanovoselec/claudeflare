@@ -5,6 +5,7 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import { terminalStore } from '../stores/terminal';
 import { sessionStore } from '../stores/session';
+import { logger } from '../lib/logger';
 import { CSS_TRANSITION_DELAY_MS } from '../lib/constants';
 import { loadSettings, defaultSettings } from '../lib/settings';
 import InitProgress from './InitProgress';
@@ -113,7 +114,7 @@ const Terminal: Component<TerminalProps> = (props) => {
             terminal.paste(text);
           }
         }).catch((err) => {
-          console.warn('Clipboard read failed:', err);
+          logger.warn('Clipboard read failed:', err);
         });
         return false;
       }
@@ -160,7 +161,7 @@ const Terminal: Component<TerminalProps> = (props) => {
   createEffect(() => {
     const initializing = isInitializing();
     if (!initializing && terminal && !cleanup) {
-      console.log(`[Terminal ${props.sessionId}:${props.terminalId}] Session ready, connecting WebSocket`);
+      logger.debug(`[Terminal ${props.sessionId}:${props.terminalId}] Session ready, connecting WebSocket`);
       cleanup = terminalStore.connect(props.sessionId, props.terminalId, terminal, props.onError);
     }
   });

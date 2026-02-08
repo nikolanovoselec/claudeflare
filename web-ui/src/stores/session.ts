@@ -2,6 +2,7 @@ import { createStore, produce } from 'solid-js/store';
 import type { Session, SessionWithStatus, SessionStatus, InitProgress, InitStage, TerminalTab, SessionTerminals, TileLayout, TilingState } from '../types';
 import * as api from '../api/client';
 import { terminalStore } from './terminal';
+import { logger } from '../lib/logger';
 import { METRICS_POLL_INTERVAL_MS, STARTUP_POLL_INTERVAL_MS, MAX_STARTUP_POLL_ERRORS, MAX_TERMINALS_PER_SESSION } from '../lib/constants';
 
 // ============================================================================
@@ -27,7 +28,7 @@ function loadTerminalsFromStorage(): Record<string, SessionTerminals> {
       return JSON.parse(stored);
     }
   } catch (err) {
-    console.warn('[SessionStore] Failed to load terminals from storage:', err);
+    logger.warn('[SessionStore] Failed to load terminals from storage:', err);
   }
   return {};
 }
@@ -36,7 +37,7 @@ function saveTerminalsToStorage(terminalsPerSession: Record<string, SessionTermi
   try {
     localStorage.setItem(TERMINALS_STORAGE_KEY, JSON.stringify(terminalsPerSession));
   } catch (err) {
-    console.warn('[SessionStore] Failed to save terminals to storage:', err);
+    logger.warn('[SessionStore] Failed to save terminals to storage:', err);
   }
 }
 
@@ -132,7 +133,9 @@ function startPollingStartupStatus(sessionId: string): void {
   });
 }
 
-// Generation counter to detect stale closures when concurrent loadSessions calls overlap
+// Generation counter: prevents stale polling responses from overwriting fresh state.
+// Each loadSessions() call increments the counter; callbacks bail out if their
+// captured generation doesn't match the current one (optimistic concurrency control).
 let loadSessionsGeneration = 0;
 
 // Load sessions from API
@@ -409,7 +412,7 @@ async function fetchMetricsForSession(sessionId: string): Promise<void> {
       }));
     }
   } catch (err) {
-    console.warn('[SessionStore] Failed to fetch metrics:', err);
+    logger.warn('[SessionStore] Failed to fetch metrics:', err);
   }
 }
 
@@ -434,7 +437,7 @@ function stopMetricsPolling(sessionId: string): void {
   if (interval) {
     clearInterval(interval);
     metricsPollingIntervals.delete(sessionId);
-    console.log(`[SessionStore] Stopped metrics polling for session ${sessionId}`);
+    logger.debug(`[SessionStore] Stopped metrics polling for session ${sessionId}`);
   }
 }
 
@@ -442,13 +445,13 @@ function stopMetricsPolling(sessionId: string): void {
 function stopAllMetricsPolling(): void {
   metricsPollingIntervals.forEach((interval, sessionId) => {
     clearInterval(interval);
-    console.log(`[SessionStore] Stopped metrics polling for session ${sessionId}`);
+    logger.debug(`[SessionStore] Stopped metrics polling for session ${sessionId}`);
   });
   metricsPollingIntervals.clear();
 
   for (const [sessionId, cleanup] of startupCleanups) {
     cleanup();
-    console.log(`[SessionStore] Stopped startup polling for session ${sessionId}`);
+    logger.debug(`[SessionStore] Stopped startup polling for session ${sessionId}`);
   }
   startupCleanups.clear();
 }
@@ -515,18 +518,21 @@ function addTerminalTab(sessionId: string): string | null {
 
   if (!newId) return null;
 
+  // newId is guaranteed non-null after the for-loop and the guard above
+  const tabId = newId;
+
   setState(
     produce((s) => {
       s.terminalsPerSession[sessionId].tabs.push({
-        id: newId!,
+        id: tabId,
         createdAt: new Date().toISOString(),
       });
-      s.terminalsPerSession[sessionId].activeTabId = newId!;
+      s.terminalsPerSession[sessionId].activeTabId = tabId;
       // Add to tabOrder (at the end)
       if (!s.terminalsPerSession[sessionId].tabOrder) {
         s.terminalsPerSession[sessionId].tabOrder = s.terminalsPerSession[sessionId].tabs.map(t => t.id);
       } else {
-        s.terminalsPerSession[sessionId].tabOrder.push(newId!);
+        s.terminalsPerSession[sessionId].tabOrder.push(tabId);
       }
     })
   );
