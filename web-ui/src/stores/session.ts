@@ -1,9 +1,8 @@
 import { createStore, produce } from 'solid-js/store';
-import { createSignal, createEffect } from 'solid-js';
-import type { Session, SessionWithStatus, SessionStatus, InitProgress, TerminalTab, SessionTerminals, TileLayout, TilingState } from '../types';
+import type { Session, SessionWithStatus, SessionStatus, InitProgress, InitStage, TerminalTab, SessionTerminals, TileLayout, TilingState } from '../types';
 import * as api from '../api/client';
 import { terminalStore } from './terminal';
-import { METRICS_POLL_INTERVAL_MS, MAX_TERMINALS_PER_SESSION } from '../lib/constants';
+import { METRICS_POLL_INTERVAL_MS, STARTUP_POLL_INTERVAL_MS, MAX_STARTUP_POLL_ERRORS, MAX_TERMINALS_PER_SESSION } from '../lib/constants';
 
 // ============================================================================
 // Session Metrics Type
@@ -11,7 +10,6 @@ import { METRICS_POLL_INTERVAL_MS, MAX_TERMINALS_PER_SESSION } from '../lib/cons
 interface SessionMetrics {
   bucketName: string;
   syncStatus: 'pending' | 'syncing' | 'success' | 'failed' | 'skipped';
-  terminalPid?: number;
   cpu?: string;
   mem?: string;
   hdd?: string;
@@ -28,8 +26,8 @@ function loadTerminalsFromStorage(): Record<string, SessionTerminals> {
     if (stored) {
       return JSON.parse(stored);
     }
-  } catch (e) {
-    console.warn('[SessionStore] Failed to load terminals from storage:', e);
+  } catch (err) {
+    console.warn('[SessionStore] Failed to load terminals from storage:', err);
   }
   return {};
 }
@@ -37,8 +35,8 @@ function loadTerminalsFromStorage(): Record<string, SessionTerminals> {
 function saveTerminalsToStorage(terminalsPerSession: Record<string, SessionTerminals>): void {
   try {
     localStorage.setItem(TERMINALS_STORAGE_KEY, JSON.stringify(terminalsPerSession));
-  } catch (e) {
-    console.warn('[SessionStore] Failed to save terminals to storage:', e);
+  } catch (err) {
+    console.warn('[SessionStore] Failed to save terminals to storage:', err);
   }
 }
 
@@ -67,31 +65,92 @@ const [state, setState] = createStore<SessionState>({
   sessionMetrics: {},
 });
 
-// Derived signals
-const [isLoading, setIsLoading] = createSignal(false);
-
 // Get active session
 function getActiveSession(): SessionWithStatus | undefined {
   return state.sessions.find((s) => s.id === state.activeSessionId);
 }
 
-// Track if loadSessions is in progress to prevent concurrent calls
-let loadSessionsInProgress = false;
+// Track startup polling cleanup functions per session
+const startupCleanups = new Map<string, () => void>();
+
+// Poll startup status for a session that's already starting (used by loadSessions)
+function startPollingStartupStatus(sessionId: string): void {
+  // Don't start duplicate polling
+  if (startupCleanups.has(sessionId)) return;
+
+  let cancelled = false;
+  let consecutiveErrors = 0;
+
+  const pollInterval = setInterval(async () => {
+    if (cancelled) return;
+
+    try {
+      const status = await api.getStartupStatus(sessionId);
+      consecutiveErrors = 0;
+
+      if (status.stage === 'ready') {
+        clearInterval(pollInterval);
+        startupCleanups.delete(sessionId);
+        updateSessionStatus(sessionId, 'running');
+        initializeTerminalsForSession(sessionId);
+        // Keep init progress visible until user dismisses
+      } else if (status.stage === 'error' || status.stage === 'stopped') {
+        clearInterval(pollInterval);
+        startupCleanups.delete(sessionId);
+        updateSessionStatus(sessionId, status.stage === 'error' ? 'error' : 'stopped');
+        setState(produce((s) => {
+          delete s.initializingSessionIds[sessionId];
+          delete s.initProgressBySession[sessionId];
+        }));
+      } else {
+        // Still starting - update progress
+        setState(produce((s) => {
+          s.initProgressBySession[sessionId] = {
+            stage: status.stage,
+            progress: status.progress,
+            message: status.message,
+          };
+        }));
+      }
+    } catch {
+      consecutiveErrors++;
+      if (consecutiveErrors >= MAX_STARTUP_POLL_ERRORS) {
+        clearInterval(pollInterval);
+        startupCleanups.delete(sessionId);
+        updateSessionStatus(sessionId, 'error');
+        setState(produce((s) => {
+          delete s.initializingSessionIds[sessionId];
+          delete s.initProgressBySession[sessionId];
+        }));
+      }
+    }
+  }, STARTUP_POLL_INTERVAL_MS);
+
+  startupCleanups.set(sessionId, () => {
+    cancelled = true;
+    clearInterval(pollInterval);
+  });
+}
+
+// Generation counter to detect stale closures when concurrent loadSessions calls overlap
+let loadSessionsGeneration = 0;
 
 // Load sessions from API
 async function loadSessions(): Promise<void> {
-  // Debounce: prevent concurrent loadSessions calls that cause race conditions
-  if (loadSessionsInProgress) {
-    console.log('[SessionStore] loadSessions already in progress, skipping');
-    return;
-  }
-  loadSessionsInProgress = true;
+  const thisGen = ++loadSessionsGeneration;
 
   setState('loading', true);
   setState('error', null);
 
   try {
-    const sessions = await api.getSessions();
+    // Fetch session list and batch status in parallel (2 calls instead of 1+N+M)
+    const [sessions, batchStatuses] = await Promise.all([
+      api.getSessions(),
+      api.getBatchSessionStatus().catch(() => ({} as Record<string, { status: string; ptyActive: boolean; startupStage?: string }>)),
+    ]);
+
+    // Bail out if a newer call has started
+    if (thisGen !== loadSessionsGeneration) return;
 
     // Preserve existing status for sessions we already know about
     // This prevents the "flash to stopped" issue
@@ -106,61 +165,46 @@ async function loadSessions(): Promise<void> {
     }));
     setState('sessions', sessionsWithStatus);
 
-    // Check status for each session
-    await Promise.all(
-      sessionsWithStatus.map(async (session) => {
-        try {
-          // First check KV status (source of truth)
-          const kvStatus = await api.getSessionStatus(session.id);
+    // Apply batch statuses using batch data directly (no per-session API calls)
+    for (const session of sessionsWithStatus) {
+      if (thisGen !== loadSessionsGeneration) return;
 
-          // If KV says running, verify with live container status
-          // This fixes stale KV data when page is refreshed
-          if (kvStatus.status === 'running') {
-            try {
-              const liveStatus = await api.getStartupStatus(session.id);
-              if (liveStatus.stage === 'ready') {
-                updateSessionStatus(session.id, 'running');
-                initializeTerminalsForSession(session.id);
-              } else if (liveStatus.stage === 'error') {
-                updateSessionStatus(session.id, 'error');
-              } else if (liveStatus.stage === 'stopped') {
-                updateSessionStatus(session.id, 'stopped');
-              } else {
-                // Container starting/syncing - mark as initializing
-                updateSessionStatus(session.id, 'initializing');
-                // Store init progress so UI shows the progress bar
-                setState(
-                  produce((s) => {
-                    s.initializingSessionIds[session.id] = true;
-                    s.initProgressBySession[session.id] = {
-                      stage: liveStatus.stage,
-                      progress: liveStatus.progress,
-                      message: liveStatus.message,
-                    };
-                  })
-                );
-              }
-            } catch {
-              // Container not reachable but KV says running
-              // Trust KV - container might be slow to respond or temporarily unreachable
-              // DON'T mark as stopped - this was causing zombie flickering
-              console.warn(`[SessionStore] Container ${session.id} unreachable, keeping KV status: running`);
-              updateSessionStatus(session.id, 'running');
-              initializeTerminalsForSession(session.id);
-            }
-          } else {
-            updateSessionStatus(session.id, kvStatus.status as SessionStatus);
-          }
-        } catch {
-          // Session might not have status endpoint yet, ignore
-        }
-      })
-    );
-  } catch (e) {
-    setState('error', e instanceof Error ? e.message : 'Failed to load sessions');
+      const batchStatus = batchStatuses[session.id];
+      if (!batchStatus) {
+        // No batch status available - keep existing or default
+        continue;
+      }
+
+      if (batchStatus.status === 'running' && batchStatus.startupStage === 'ready') {
+        // Container running and fully ready
+        updateSessionStatus(session.id, 'running');
+        initializeTerminalsForSession(session.id);
+      } else if (batchStatus.status === 'running') {
+        // Container running but not ready (startupStage is 'verifying' or missing)
+        updateSessionStatus(session.id, 'initializing');
+        setState(
+          produce((s) => {
+            s.initializingSessionIds[session.id] = true;
+            s.initProgressBySession[session.id] = {
+              stage: (batchStatus.startupStage || 'verifying') as InitStage,
+              progress: 50,
+              message: 'Container starting...',
+            };
+          })
+        );
+        // Start polling to track startup progress
+        startPollingStartupStatus(session.id);
+      } else {
+        updateSessionStatus(session.id, batchStatus.status as SessionStatus);
+      }
+    }
+  } catch (err) {
+    if (thisGen !== loadSessionsGeneration) return;
+    setState('error', err instanceof Error ? err.message : 'Failed to load sessions');
   } finally {
-    setState('loading', false);
-    loadSessionsInProgress = false;
+    if (thisGen === loadSessionsGeneration) {
+      setState('loading', false);
+    }
   }
 }
 
@@ -178,8 +222,8 @@ async function createSession(name: string): Promise<SessionWithStatus | null> {
       })
     );
     return sessionWithStatus;
-  } catch (e) {
-    setState('error', e instanceof Error ? e.message : 'Failed to create session');
+  } catch (err) {
+    setState('error', err instanceof Error ? err.message : 'Failed to create session');
     return null;
   }
 }
@@ -187,6 +231,12 @@ async function createSession(name: string): Promise<SessionWithStatus | null> {
 // Delete session
 async function deleteSession(id: string): Promise<void> {
   try {
+    // Cancel startup polling if in progress
+    const startupCleanup = startupCleanups.get(id);
+    if (startupCleanup) {
+      startupCleanup();
+      startupCleanups.delete(id);
+    }
     // Clean up metrics polling and terminal state before deleting
     stopMetricsPolling(id);
     cleanupTerminalsForSession(id);
@@ -201,8 +251,8 @@ async function deleteSession(id: string): Promise<void> {
         delete s.sessionMetrics[id];
       })
     );
-  } catch (e) {
-    setState('error', e instanceof Error ? e.message : 'Failed to delete session');
+  } catch (err) {
+    setState('error', err instanceof Error ? err.message : 'Failed to delete session');
   }
 }
 
@@ -232,6 +282,7 @@ function startSession(id: string): Promise<void> {
       () => {
         // Don't clear initializingSessionId or initProgress here
         // User will dismiss via dismissInitProgress()
+        startupCleanups.delete(id);
         updateSessionStatus(id, 'running');
         // Initialize terminals for this session (creates first terminal tab)
         initializeTerminalsForSession(id);
@@ -239,6 +290,7 @@ function startSession(id: string): Promise<void> {
       },
       // onError
       (error) => {
+        startupCleanups.delete(id);
         // Clear per-session state on error
         setState(
           produce((s) => {
@@ -252,14 +304,20 @@ function startSession(id: string): Promise<void> {
       }
     );
 
-    // Store cleanup function in case we need to cancel
-    // For now, we don't expose cancel functionality
+    // Store cleanup function so we can cancel polling on stop/delete
+    startupCleanups.set(id, cleanup);
   });
 }
 
 // Stop session
 async function stopSession(id: string): Promise<void> {
   try {
+    // Cancel startup polling if in progress
+    const startupCleanup = startupCleanups.get(id);
+    if (startupCleanup) {
+      startupCleanup();
+      startupCleanups.delete(id);
+    }
     // Clear initialization state if in progress (allows stopping stuck sessions)
     setState(
       produce((s) => {
@@ -271,10 +329,10 @@ async function stopSession(id: string): Promise<void> {
     stopMetricsPolling(id);
     await api.stopSession(id);
     updateSessionStatus(id, 'stopped');
-    // Clean up terminal state for this session
-    cleanupTerminalsForSession(id);
-  } catch (e) {
-    setState('error', e instanceof Error ? e.message : 'Failed to stop session');
+    // Disconnect terminals but preserve tab layout for restart
+    terminalStore.disposeSession(id);
+  } catch (err) {
+    setState('error', err instanceof Error ? err.message : 'Failed to stop session');
   }
 }
 
@@ -344,50 +402,55 @@ async function fetchMetricsForSession(sessionId: string): Promise<void> {
         s.sessionMetrics[sessionId] = {
           bucketName: status.details?.bucketName || '...',
           syncStatus: (status.details?.syncStatus as 'pending' | 'syncing' | 'success' | 'failed' | 'skipped') || 'pending',
-          terminalPid: status.details?.terminalPid,
           cpu: status.details?.cpu || '...',
           mem: status.details?.mem || '...',
           hdd: status.details?.hdd || '...',
         };
       }));
     }
-  } catch (e) {
-    console.warn('[SessionStore] Failed to fetch metrics:', e);
+  } catch (err) {
+    console.warn('[SessionStore] Failed to fetch metrics:', err);
   }
 }
 
 // Auto-fetch metrics for running sessions (called after session becomes running)
-let metricsPollingIntervals: Record<string, ReturnType<typeof setInterval>> = {};
+const metricsPollingIntervals = new Map<string, ReturnType<typeof setInterval>>();
 
 function startMetricsPolling(sessionId: string): void {
   // Don't start if already polling
-  if (metricsPollingIntervals[sessionId]) return;
+  if (metricsPollingIntervals.has(sessionId)) return;
 
   // Fetch immediately
   fetchMetricsForSession(sessionId);
 
   // Poll at regular intervals
-  metricsPollingIntervals[sessionId] = setInterval(() => {
+  metricsPollingIntervals.set(sessionId, setInterval(() => {
     fetchMetricsForSession(sessionId);
-  }, METRICS_POLL_INTERVAL_MS);
+  }, METRICS_POLL_INTERVAL_MS));
 }
 
 function stopMetricsPolling(sessionId: string): void {
-  const interval = metricsPollingIntervals[sessionId];
+  const interval = metricsPollingIntervals.get(sessionId);
   if (interval) {
     clearInterval(interval);
-    delete metricsPollingIntervals[sessionId];
+    metricsPollingIntervals.delete(sessionId);
     console.log(`[SessionStore] Stopped metrics polling for session ${sessionId}`);
   }
 }
 
-// Stop all metrics polling (useful for cleanup)
+// Stop all metrics polling and startup polling (useful for cleanup)
 function stopAllMetricsPolling(): void {
-  Object.entries(metricsPollingIntervals).forEach(([sessionId, interval]) => {
+  metricsPollingIntervals.forEach((interval, sessionId) => {
     clearInterval(interval);
     console.log(`[SessionStore] Stopped metrics polling for session ${sessionId}`);
   });
-  metricsPollingIntervals = {};
+  metricsPollingIntervals.clear();
+
+  for (const [sessionId, cleanup] of startupCleanups) {
+    cleanup();
+    console.log(`[SessionStore] Stopped startup polling for session ${sessionId}`);
+  }
+  startupCleanups.clear();
 }
 
 // Get metrics for a specific session
@@ -472,20 +535,13 @@ function addTerminalTab(sessionId: string): string | null {
   return newId;
 }
 
+// Minimum tab counts required for each tiling layout
+const LAYOUT_MIN_TABS: Record<TileLayout, number> = { tabbed: 1, '2-split': 2, '3-split': 3, '4-grid': 4 };
+
 // Helper to check if layout is compatible with tab count
 function isLayoutCompatible(layout: TileLayout, tabCount: number): boolean {
-  switch (layout) {
-    case 'tabbed':
-      return true;
-    case '2-split':
-      return tabCount >= 2;
-    case '3-split':
-      return tabCount >= 3;
-    case '4-grid':
-      return tabCount >= 4;
-    default:
-      return false;
-  }
+  const minTabs = LAYOUT_MIN_TABS[layout];
+  return minTabs !== undefined && tabCount >= minTabs;
 }
 
 // Remove a terminal tab (can't remove last one)
@@ -657,7 +713,6 @@ export const sessionStore = {
   getInitProgressForSession,
 
   // Session metrics
-  fetchMetricsForSession,
   getMetricsForSession,
   stopMetricsPolling,
   stopAllMetricsPolling,

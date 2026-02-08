@@ -4,21 +4,27 @@ import type { DurableObjectStub } from '@cloudflare/workers-types';
 import { getContainer } from '@cloudflare/containers';
 import { SESSION_ID_PATTERN, MAX_HEALTH_CHECK_ATTEMPTS, HEALTH_CHECK_INTERVAL_MS } from './constants';
 import { containerHealthCB } from './circuit-breakers';
+import { toErrorMessage, ValidationError } from './error-types';
+import { createLogger } from './logger';
 
 // Type for context variables set by container middleware
 type ContainerVariables = {
   bucketName: string;
 };
 
-export function getSessionIdFromRequest(c: Context): string {
+/** Extracts sessionId from query param (?sessionId=) or X-Session-Id header. Used by container routes. Session CRUD routes use Hono path params (c.req.param('id')) instead. */
+export function getSessionIdFromQueryOrHeader(c: Context): string {
   const sessionId = c.req.query('sessionId') || c.req.header('X-Browser-Session');
-  if (!sessionId) throw new Error('Missing sessionId parameter');
+  if (!sessionId) throw new ValidationError('Missing sessionId parameter');
+  if (!SESSION_ID_PATTERN.test(sessionId)) {
+    throw new ValidationError('Invalid sessionId format');
+  }
   return sessionId;
 }
 
 export function getContainerId(bucketName: string, sessionId: string): string {
   if (!sessionId || !SESSION_ID_PATTERN.test(sessionId)) {
-    throw new Error(`Invalid sessionId: ${sessionId}`);
+    throw new ValidationError('Invalid sessionId format');
   }
   return `${bucketName}-${sessionId}`;
 }
@@ -27,7 +33,7 @@ export function getContainerContext<V extends ContainerVariables>(
   c: Context<{ Bindings: Env; Variables: V }>
 ) {
   const bucketName = c.get('bucketName');
-  const sessionId = getSessionIdFromRequest(c);
+  const sessionId = getSessionIdFromQueryOrHeader(c);
   const containerId = getContainerId(bucketName, sessionId);
   const container = getContainer(c.env.CONTAINER, containerId);
   return { bucketName, sessionId, containerId, container };
@@ -37,6 +43,7 @@ export function getContainerContext<V extends ContainerVariables>(
 // Health Check Utilities
 // ============================================================================
 
+/** @internal Test utility — not used in production */
 export interface HealthCheckOptions {
   maxAttempts?: number;
   delayMs?: number;
@@ -44,16 +51,23 @@ export interface HealthCheckOptions {
 }
 
 export interface HealthData {
-  status: string;
-  cpu?: number;
-  memory?: number;
-  disk?: number;
+  status?: string;
+  syncStatus?: string;
+  syncError?: string | null;
+  userPath?: string;
+  cpu?: string;
+  mem?: string;
+  hdd?: string;
 }
 
 /**
+ * @internal Test utility — not used in production
+ *
  * Wait for a container to become healthy by polling the health endpoint.
  * Returns ok:true with health data on success, ok:false on failure after all attempts.
  */
+const healthLogger = createLogger('container-health');
+
 export async function waitForContainerHealth(
   container: DurableObjectStub,
   options?: HealthCheckOptions
@@ -71,7 +85,7 @@ export async function waitForContainerHealth(
         return { ok: true, data };
       }
     } catch (error) {
-      console.log(`Health check attempt ${attempt}/${maxAttempts} failed:`, error);
+      healthLogger.info('Health check attempt failed', { attempt, maxAttempts });
     }
 
     if (attempt < maxAttempts) {
@@ -87,6 +101,8 @@ export async function waitForContainerHealth(
 // ============================================================================
 
 /**
+ * @internal Test utility — not used in production
+ *
  * Verify that a container is configured with the expected bucket name.
  * Throws an error if the bucket names don't match.
  */
@@ -109,7 +125,7 @@ export async function ensureBucketName(
 // Circuit Breaker Health Check
 // ============================================================================
 
-export interface ContainerHealthResult {
+interface ContainerHealthResult {
   healthy: boolean;
   data?: HealthData;
   error?: string;
@@ -140,7 +156,7 @@ export async function checkContainerHealth(
   } catch (error) {
     return {
       healthy: false,
-      error: error instanceof Error ? error.message : 'Unknown error'
+      error: toErrorMessage(error)
     };
   }
 }

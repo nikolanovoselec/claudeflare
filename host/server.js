@@ -19,7 +19,10 @@ import { parse as parseUrl } from 'url';
 import { parse as parseQuery } from 'querystring';
 import fs from 'fs';
 import os from 'os';
-import { execSync } from 'child_process';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+
+const execFileAsync = promisify(execFile);
 
 // Start time for uptime calculation
 const SERVER_START_TIME = Date.now();
@@ -34,17 +37,27 @@ function getSyncStatus() {
   }
 }
 
-// Helper to get Claude autostart status
-function getClaudeAutostartStatus() {
-  try {
-    return fs.readFileSync('/tmp/claude-autostart-status.txt', 'utf8').trim();
-  } catch (e) {
-    return 'not_configured';
+// Cached disk metrics to avoid shelling out on every health check
+let cachedDiskMetrics = { value: '...', lastUpdated: 0 };
+const DISK_CACHE_TTL = 30000; // 30 seconds
+
+async function getDiskMetrics() {
+  if (Date.now() - cachedDiskMetrics.lastUpdated < DISK_CACHE_TTL) {
+    return cachedDiskMetrics.value;
   }
+  try {
+    const { stdout } = await execFileAsync('df', ['-h', '/home/user']);
+    const lines = stdout.trim().split('\n');
+    if (lines.length >= 2) {
+      const fields = lines[1].split(/\s+/);
+      cachedDiskMetrics = { value: `${fields[2]}/${fields[1]}`, lastUpdated: Date.now() };
+    }
+  } catch (e) { /* keep cached value */ }
+  return cachedDiskMetrics.value;
 }
 
 // Helper to get system metrics (CPU, MEM, HDD)
-function getSystemMetrics() {
+async function getSystemMetrics() {
   const metrics = { cpu: '...', mem: '...', hdd: '...' };
   try {
     const loadAvg = os.loadavg()[0];
@@ -59,10 +72,7 @@ function getSystemMetrics() {
     const totalGB = (totalMem / 1024 / 1024 / 1024).toFixed(1);
     metrics.mem = usedGB + '/' + totalGB + 'G';
   } catch (e) { /* ignore */ }
-  try {
-    const dfOutput = execSync("df -h /home/user 2>/dev/null | tail -1 | awk '{print $3\"/\"$2}'", { encoding: 'utf8' }).trim();
-    metrics.hdd = dfOutput || '...';
-  } catch (e) { /* ignore */ }
+  metrics.hdd = await getDiskMetrics();
   return metrics;
 }
 
@@ -71,7 +81,7 @@ const PORT = process.env.TERMINAL_PORT || 8080;
 // The .bashrc has claude auto-start logic that only works in interactive login shells
 const TERMINAL_COMMAND = process.env.TERMINAL_COMMAND || '/bin/bash';
 const TERMINAL_ARGS = process.env.TERMINAL_ARGS || '-l';  // Login shell flag
-const WORKSPACE_DEFAULT = process.env.WORKSPACE || '/mnt/r2/workspace';
+const WORKSPACE_DEFAULT = process.env.WORKSPACE || '/home/user/workspace';
 
 // PTY persistence settings
 const PTY_KEEPALIVE_MS = parseInt(process.env.PTY_KEEPALIVE_MS || '1800000', 10); // 30 minutes - matches container sleepAfter
@@ -97,13 +107,11 @@ const activityTracker = {
   // Call this whenever PTY produces output
   recordPtyOutput() {
     this.lastPtyOutputTimestamp = Date.now();
-    console.log(`[ActivityTracker] PTY output recorded`);
   },
 
   // Call this whenever WebSocket activity occurs
   recordWsActivity() {
     this.lastWsActivityTimestamp = Date.now();
-    console.log(`[ActivityTracker] WebSocket activity recorded`);
   },
 
   // Get activity info for the /activity endpoint
@@ -135,6 +143,7 @@ class Session {
     this.clients = new Set(); // WebSocket clients attached to this session
     this.buffer = ''; // Buffer for reconnection (last 10KB)
     this.bufferMaxSize = 10 * 1024;
+    this.inAlternateScreen = false; // Track if PTY is in alternate screen buffer (TUI apps)
     this.createdAt = new Date().toISOString();
     this.lastAccessedAt = this.createdAt;
     this.disconnectedAt = null; // Timestamp when last client disconnected
@@ -181,6 +190,14 @@ class Session {
       // Bug 3 fix: Record PTY activity for smart hibernation
       activityTracker.recordPtyOutput();
 
+      // Track alternate screen buffer transitions (TUI apps like htop, lazygit, yazi)
+      if (data.includes('\x1b[?1049h') || data.includes('\x1b[?47h') || data.includes('\x1b[?1047h')) {
+        this.inAlternateScreen = true;
+      }
+      if (data.includes('\x1b[?1049l') || data.includes('\x1b[?47l') || data.includes('\x1b[?1047l')) {
+        this.inAlternateScreen = false;
+      }
+
       // Add to buffer for reconnection
       this.buffer += data;
       if (this.buffer.length > this.bufferMaxSize) {
@@ -204,6 +221,7 @@ class Session {
         }
       }
       this.ptyProcess = null;
+      this.inAlternateScreen = false;
     });
 
     console.log(`[Session ${this.id}] PTY started: pid=${this.ptyProcess.pid}`);
@@ -229,12 +247,17 @@ class Session {
       this.start();
     }
 
-    // Send buffered output for reconnection - raw data
-    if (this.buffer) {
+    // Send screen state info before any buffer data
+    // Frontend uses this to decide whether to replay buffer or trigger SIGWINCH
+    ws.send(JSON.stringify({ type: 'screen-state', inAlternateScreen: this.inAlternateScreen }));
+
+    // Only replay buffer for normal screen mode
+    // For alternate screen, SIGWINCH from resize will trigger full redraw by the TUI app
+    if (!this.inAlternateScreen && this.buffer) {
       ws.send(this.buffer);
     }
 
-    console.log(`[Session ${this.id}] Client attached. Total clients: ${this.clients.size}`);
+    console.log(`[Session ${this.id}] Client attached (altScreen=${this.inAlternateScreen}). Total clients: ${this.clients.size}`);
   }
 
   /**
@@ -455,7 +478,7 @@ class SessionManager {
 const sessionManager = new SessionManager();
 
 // Create HTTP server
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   const { pathname } = parseUrl(req.url);
   const method = req.method;
 
@@ -473,8 +496,7 @@ const server = http.createServer((req, res) => {
   // Health check with full metrics (consolidates separate health server)
   if (pathname === '/health' && method === 'GET') {
     const syncInfo = getSyncStatus();
-    const claudeAutostart = getClaudeAutostartStatus();
-    const sysMetrics = getSystemMetrics();
+    const sysMetrics = await getSystemMetrics();
 
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(
@@ -488,7 +510,6 @@ const server = http.createServer((req, res) => {
         cpu: sysMetrics.cpu,
         mem: sysMetrics.mem,
         hdd: sysMetrics.hdd,
-        claudeAutostart: claudeAutostart,
         timestamp: new Date().toISOString(),
       })
     );
@@ -498,7 +519,6 @@ const server = http.createServer((req, res) => {
   // Bug 3 fix: Activity endpoint for smart hibernation
   if (pathname === '/activity' && method === 'GET') {
     const activityInfo = activityTracker.getActivityInfo(sessionManager);
-    console.log(`[Terminal Server] Activity check: ${JSON.stringify(activityInfo)}`);
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(activityInfo));
     return;
@@ -513,11 +533,21 @@ const server = http.createServer((req, res) => {
 
   // Create session
   if (pathname === '/sessions' && method === 'POST') {
+    const MAX_BODY_SIZE = 64 * 1024; // 64KB
     let body = '';
+    let bodySize = 0;
     req.on('data', (chunk) => {
+      bodySize += chunk.length;
+      if (bodySize > MAX_BODY_SIZE) {
+        res.writeHead(413, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Request body too large' }));
+        req.destroy();
+        return;
+      }
       body += chunk;
     });
     req.on('end', () => {
+      if (bodySize > MAX_BODY_SIZE) return;
       try {
         const { id, name } = JSON.parse(body || '{}');
         if (!id) {
@@ -552,13 +582,26 @@ const server = http.createServer((req, res) => {
     return;
   }
 
+  // Sync log endpoint
+  if (pathname === '/sync-log' && method === 'GET') {
+    try {
+      const log = fs.readFileSync('/tmp/sync.log', 'utf8');
+      res.writeHead(200, { 'Content-Type': 'text/plain' });
+      res.end(log);
+    } catch {
+      res.writeHead(404);
+      res.end('No sync log found');
+    }
+    return;
+  }
+
   // 404 for unknown paths
   res.writeHead(404, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ error: 'Not found' }));
 });
 
 // Create WebSocket server
-const wss = new WebSocketServer({ server, path: '/terminal' });
+const wss = new WebSocketServer({ server, path: '/terminal', maxPayload: 64 * 1024 });
 
 wss.on('connection', (ws, req) => {
   const { query } = parseUrl(req.url, true);
@@ -583,8 +626,9 @@ wss.on('connection', (ws, req) => {
 
     const str = message.toString();
 
-    // Try to parse as JSON for control messages
-    if (str.startsWith('{')) {
+    // Try to parse as JSON for known control messages only
+    // Use specific prefixes to avoid intercepting terminal input that starts with '{'
+    if (str.startsWith('{"type":"resize"') || str.startsWith('{"type":"ping"') || str.startsWith('{"type":"data"')) {
       try {
         const msg = JSON.parse(str);
 
@@ -605,13 +649,9 @@ wss.on('connection', (ws, req) => {
             // Legacy JSON-wrapped data - unwrap and write
             session.write(msg.data);
             return;
-
-          default:
-            console.log(`[Session ${sessionId}] Unknown message type: ${msg.type}`);
-            return;
         }
       } catch (e) {
-        // Not valid JSON starting with { - treat as raw input
+        // Not valid JSON - treat as raw terminal input
       }
     }
 

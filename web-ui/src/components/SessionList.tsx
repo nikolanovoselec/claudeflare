@@ -19,7 +19,7 @@ interface SessionListProps {
   onStartSession: (id: string) => void;
   onStopSession: (id: string) => void;
   onDeleteSession: (id: string) => void;
-  onCreateSession: (name: string) => void;
+  onCreateSession: (name: string) => Promise<void> | void;
   onReconnect?: (id: string) => void;
 }
 
@@ -53,7 +53,7 @@ const SessionList: Component<SessionListProps> = (props) => {
 
     setIsCreating(true);
     try {
-      props.onCreateSession(name);
+      await props.onCreateSession(name);
       setNewSessionName('');
       setShowCreateInput(false);
     } finally {

@@ -2,7 +2,7 @@
 
 Browser-based Claude Code on Cloudflare Workers with per-session containers and R2 persistence.
 
-**Live URL:** https://claudeflare.your-subdomain.workers.dev (via Cloudflare Access)
+**Workers.dev URL:** `https://<CLOUDFLARE_WORKER_NAME>.<ACCOUNT_SUBDOMAIN>.workers.dev` — used only for initial setup. After the setup wizard configures a custom domain, all traffic should go through the custom domain (protected by CF Access). The workers.dev URL should then be gated behind one-click Access in the Cloudflare dashboard.
 
 ---
 
@@ -34,7 +34,7 @@ Browser Tab 1 (xterm.js)          Browser Tab 2 (xterm.js)
 
 | Decision | Rationale |
 |----------|-----------|
-| One container per SESSION | CPU isolation - each tab gets full 0.25 vCPU instead of sharing |
+| One container per SESSION | CPU isolation - each tab gets full 1 vCPU instead of sharing |
 | Container ID format | `{bucketName}-{sessionId}` (e.g., `claudeflare-user-example-com-abc12345`) |
 | Per-user R2 buckets | Bucket name derived from email, auto-created on first login |
 | rclone bisync | Bidirectional sync every 60s, local disk for all file operations |
@@ -71,17 +71,25 @@ if (wsMatch && upgradeHeader?.toLowerCase() === 'websocket') {
 
 **CORS Configuration:**
 ```typescript
-// Reads ALLOWED_ORIGINS from env (comma-separated) or falls back to DEFAULT_ALLOWED_ORIGINS
-function isAllowedOrigin(origin: string, env: Env): boolean {
-  const allowedPatterns = env.ALLOWED_ORIGINS
+// Checks static patterns from env.ALLOWED_ORIGINS + dynamic origins from KV (cached in memory)
+async function isAllowedOrigin(origin: string, env: Env): Promise<boolean> {
+  const staticPatterns = env.ALLOWED_ORIGINS
     ? env.ALLOWED_ORIGINS.split(',').map(s => s.trim())
     : DEFAULT_ALLOWED_ORIGINS;
-  return allowedPatterns.some(pattern => origin.endsWith(pattern));
+
+  if (staticPatterns.some(pattern => origin.endsWith(pattern))) {
+    return true;
+  }
+
+  // Check KV-stored origins (setup:custom_domain + setup:allowed_origins, cached per isolate)
+  const kvOrigins = await getKvOrigins(env);
+  return kvOrigins.some(pattern => origin.endsWith(pattern));
 }
 ```
 
 **Route Registration:**
 - `/api/user` - User info endpoints
+- `/api/users` - User management (add/remove allowed users)
 - `/api/container` - Container lifecycle (start, stop, destroy, health)
 - `/api/sessions` - Session CRUD
 - `/api/terminal` - WebSocket terminal proxy
@@ -108,6 +116,14 @@ export async function authMiddleware(
 
   if (!user.authenticated) {
     return c.json({ error: 'Not authenticated' }, 401);
+  }
+
+  // Check user allowlist in KV (skip in DEV_MODE)
+  if (c.env.DEV_MODE !== 'true') {
+    const userEntry = await c.env.KV.get(`user:${user.email}`);
+    if (!userEntry) {
+      return c.json({ error: 'Forbidden: user not in allowlist' }, 403);
+    }
   }
 
   const bucketName = getBucketName(user.email);
@@ -163,19 +179,11 @@ export function getContainerContext<V extends ContainerVariables>(
 
 ### 2.4 Error Handling
 
-**File:** `src/lib/errors.ts`
+**File:** `src/lib/error-types.ts`
 
-Standardized error response helpers for consistent API responses.
-
-```typescript
-export function errorResponse(c: Context, status: ContentfulStatusCode, message: string) {
-  return c.json({ error: message }, status);
-}
-
-export function successResponse<T extends object>(c: Context, data: T) {
-  return c.json({ success: true, ...data });
-}
-```
+Standardized error classes for consistent API responses (see section 2.7 for full hierarchy). Key utilities:
+- `toError(unknown)` -- safely convert catch clause values to Error instances
+- `toErrorMessage(unknown)` -- quick string extraction from unknown errors (used consistently across entire codebase)
 
 ### 2.5 Type Guards
 
@@ -184,11 +192,6 @@ export function successResponse<T extends object>(c: Context, data: T) {
 Runtime type validation to replace unsafe type casts.
 
 ```typescript
-export function isAdminRequest(data: unknown): data is { doId: string } {
-  return typeof data === 'object' && data !== null &&
-         'doId' in data && typeof (data as any).doId === 'string';
-}
-
 export function isBucketNameResponse(data: unknown): data is { bucketName: string | null } {
   return typeof data === 'object' && data !== null && 'bucketName' in data;
 }
@@ -198,7 +201,7 @@ export function isBucketNameResponse(data: unknown): data is { bucketName: strin
 
 **File:** `src/lib/constants.ts`
 
-Single source of truth for configuration values.
+Single source of truth for configuration values. Exports 16 constants:
 
 ```typescript
 // Port constants (single port architecture)
@@ -217,6 +220,31 @@ export const TERMINAL_REFRESH_DELAY_MS = 150;
 
 // Default CORS origins
 export const DEFAULT_ALLOWED_ORIGINS = ['.workers.dev'];
+
+// Idle timeout before container sleeps (30 minutes)
+export const IDLE_TIMEOUT_MS = 30 * 60 * 1000;
+
+// Delay after setting bucket name before proceeding
+export const BUCKET_NAME_SETTLE_DELAY_MS = 100;
+
+// Cloudflare R2 permission IDs
+export const R2_WRITE_PERMISSION_ID = 'e0d1f652c7d84d35a4e356734cad1c2b';
+export const R2_READ_PERMISSION_ID = 'f2bfce71c75a4c1b86e288eb50549efc';
+
+// Request ID display length
+export const REQUEST_ID_LENGTH = 8;
+
+// CORS max age in seconds
+export const CORS_MAX_AGE_SECONDS = '86400';
+
+// DO ID validation pattern
+export const DO_ID_PATTERN = /^[a-f0-9]{64}$/i;
+
+// Maximum session name length
+export const MAX_SESSION_NAME_LENGTH = 100;
+
+// Container ID display truncation length
+export const CONTAINER_ID_DISPLAY_LENGTH = 24;
 ```
 
 ### 2.7 Error Handling (AppError Hierarchy)
@@ -318,48 +346,38 @@ const reqLogger = logger.child({ requestId: 'req-123' });
 }
 ```
 
-### 2.11 Exponential Backoff
+### 2.11 JWT Verification
 
-**File:** `src/lib/backoff.ts`
+**File:** `src/lib/jwt.ts`
 
-Retry operations with increasing delays:
-
-```typescript
-import { withBackoff, MaxRetriesExceededError } from '../lib/backoff';
-
-const result = await withBackoff(
-  () => fetchFromExternalApi(),
-  {
-    initialDelayMs: 100,
-    maxDelayMs: 5000,
-    factor: 2,
-    maxAttempts: 5,
-    jitter: true,  // Prevents thundering herd
-  }
-);
-```
-
-### 2.12 Credential Encryption
-
-**File:** `src/lib/crypto.ts`
-
-AES-256-GCM encryption for credentials at rest:
+JWT verification for Cloudflare Access tokens using RS256:
 
 ```typescript
-import { encrypt, decrypt, importKeyFromBase64 } from '../lib/crypto';
+import { verifyAccessJWT } from '../lib/jwt';
 
-const key = await importKeyFromBase64(env.ENCRYPTION_KEY);
-const encrypted = await encrypt(JSON.stringify(credentials), key);
-const decrypted = await decrypt(encrypted, key);
+const payload = await verifyAccessJWT(token, authDomain, accessAud);
+// Returns email, exp, aud, etc.
 ```
 
-**Key generation:**
-```bash
-# Generate a new key (run once)
-node -e "import('./src/lib/crypto.js').then(m => m.generateEncryptionKey().then(k => m.exportKeyToBase64(k).then(console.log)))"
-# Store as secret
-echo "base64-key" | wrangler secret put ENCRYPTION_KEY
+**Features:**
+- JWKS fetched from `https://{authDomain}/cdn-cgi/access/certs`
+- JWKS cached per-isolate with `resetJWKSCache()` for invalidation
+- RS256 signature verification using Web Crypto API
+
+### 2.12 Cache Reset
+
+**File:** `src/lib/cache-reset.ts`
+
+Centralized cache invalidation for module-level caches:
+
+```typescript
+import { resetSetupCache } from '../lib/cache-reset';
+
+// Resets CORS + auth config + JWKS caches
+resetSetupCache();
 ```
+
+Called by setup wizard after configuration changes so subsequent requests pick up new KV values.
 
 ### 2.13 DEV_MODE Gating
 
@@ -380,7 +398,7 @@ app.use('*', async (c, next) => {
 });
 ```
 
-**Admin Routes:** Use `ADMIN_SECRET` authentication instead of DEV_MODE, allowing production access with proper authorization.
+**Admin Routes:** Use CF Access `authMiddleware` + `requireAdmin` for authentication, allowing production access with role-based authorization.
 
 ### 2.14 Session Route Architecture
 
@@ -438,16 +456,22 @@ export type SessionFromSchema = z.infer<typeof SessionSchema>;
 
 **File:** `web-ui/src/lib/constants.ts`
 
-Centralized magic numbers for frontend operations:
+Centralized magic numbers for frontend operations. Exports 13 constants:
 
 | Constant | Value | Purpose |
 |----------|-------|---------|
 | `STARTUP_POLL_INTERVAL_MS` | 1500 | Startup status polling interval |
 | `METRICS_POLL_INTERVAL_MS` | 5000 | Running session metrics polling |
 | `MAX_CONNECTION_RETRIES` | 45 | Initial WebSocket connection attempts |
+| `CONNECTION_RETRY_DELAY_MS` | 1500 | Delay between initial connection retries |
 | `MAX_RECONNECT_ATTEMPTS` | 5 | Dropped connection recovery attempts |
+| `RECONNECT_DELAY_MS` | 2000 | Delay between reconnection attempts |
+| `TERMINAL_REFRESH_DELAY_MS` | 150 | Terminal refresh delay after WebSocket connect |
+| `TERMINAL_SECONDARY_REFRESH_DELAY_MS` | 100 | Secondary refresh for cursor position fix |
 | `CSS_TRANSITION_DELAY_MS` | 50 | Layout transition settle time |
+| `WS_CLOSE_ABNORMAL` | 1006 | WebSocket close code for abnormal closure |
 | `MAX_TERMINALS_PER_SESSION` | 6 | Maximum terminal tabs per session |
+| `DURATION_REFRESH_INTERVAL_MS` | 60000 | Duration display refresh interval |
 | `SESSION_ID_DISPLAY_LENGTH` | 8 | Truncated session ID display |
 
 ### 2.17 Terminal Tab Configuration
@@ -502,7 +526,19 @@ override async destroy(): Promise<void> {
 ```
 
 **Environment Variables Injection:**
+
+R2 credentials flow from the Worker to the container process through two paths:
+
+1. **setBucketName path** (new containers, bucket updates): The Worker passes R2 credentials explicitly via `_internal/setBucketName` request body (`r2AccessKeyId`, `r2SecretAccessKey`, `r2AccountId`, `r2Endpoint`). This is the primary path and most reliable because the Worker definitely has the secrets.
+2. **Constructor path** (container restart): The DO reads from `this.env` (Worker secrets) + `getR2Config()` (account ID/endpoint from KV or API). This is a fallback for when the DO is reactivated without going through `setBucketName`.
+
 ```typescript
+// updateEnvVars() resolves with fallback chain:
+const accessKeyId = this._r2AccessKeyId || this.env.R2_ACCESS_KEY_ID || '';
+const secretAccessKey = this._r2SecretAccessKey || this.env.R2_SECRET_ACCESS_KEY || '';
+const accountId = this._r2AccountId || this.env.R2_ACCOUNT_ID || '';
+const endpoint = this._r2Endpoint || this.env.R2_ENDPOINT || '';
+
 this.envVars = {
   AWS_ACCESS_KEY_ID: accessKeyId,      // For rclone S3 compatibility
   AWS_SECRET_ACCESS_KEY: secretAccessKey,
@@ -511,14 +547,14 @@ this.envVars = {
   R2_ACCOUNT_ID: accountId,
   R2_BUCKET_NAME: bucketName,          // Per-user bucket
   R2_ENDPOINT: endpoint,
-  TERMINAL_PORT: '3000',
+  TERMINAL_PORT: '8080',
 };
 ```
 
-**Critical: envVars must be set in constructor**, not as a getter. Cloudflare Containers doesn't invoke property getters correctly.
+**Critical: envVars must be set as a property assignment**, not as a getter. Cloudflare Containers reads `this.envVars` as a plain property at `start()` time.
 
 **Internal Endpoints:**
-- `/_internal/setBucketName` - Set user's bucket name
+- `/_internal/setBucketName` - Set user's bucket name + R2 credentials (passed from Worker)
 - `/_internal/getBucketName` - Get stored bucket name
 - `/_internal/debugEnvVars` - Debug environment (masked secrets)
 
@@ -680,13 +716,13 @@ The status indicator is tied to the terminal store's WebSocket state management.
 
 ### 3.2 Nested Terminals (Multiple PTYs per Session)
 
-Each session supports up to 4 terminal tabs, allowing users to run multiple tools simultaneously within the same container.
+Each session supports up to 6 terminal tabs, allowing users to run multiple tools simultaneously within the same container.
 
 **Use Cases:**
 - Tab 1: Claude Code (AI assistant)
-- Tab 2: yazi (file manager)
-- Tab 3: htop/btop (system monitor)
-- Tab 4: lazygit (git UI)
+- Tab 2: htop (system monitor)
+- Tab 3: yazi (file manager)
+- Tab 4: plain bash terminal
 
 **UI Layout:**
 ```
@@ -712,7 +748,7 @@ Each session supports up to 4 terminal tabs, allowing users to run multiple tool
    terminalsPerSession: Record<string, SessionTerminals>
 
    interface SessionTerminals {
-     tabs: TerminalTab[];      // Max 4 tabs
+     tabs: TerminalTab[];      // Max 6 tabs
      activeTabId: string;      // Currently visible tab
    }
    ```
@@ -724,7 +760,7 @@ Each session supports up to 4 terminal tabs, allowing users to run multiple tool
 4. **Backend Route (`src/routes/terminal.ts`):**
    ```typescript
    // Parse compound session ID
-   const compoundMatch = fullSessionId.match(/^(.+)-([1-4])$/);
+   const compoundMatch = fullSessionId.match(/^(.+)-([1-6])$/);
    const baseSessionId = compoundMatch ? compoundMatch[1] : fullSessionId;
    const terminalId = compoundMatch ? compoundMatch[2] : '1';
 
@@ -736,7 +772,7 @@ Each session supports up to 4 terminal tabs, allowing users to run multiple tool
    - Each compound ID (e.g., `abc123-1`) creates a separate PTY
 
 **Tab Behavior:**
-- Click `+` to add new terminal (max 4)
+- Click `+` to add new terminal (max 6)
 - Click `x` to close terminal (can't close last one)
 - Click tab to switch active terminal
 - Each session remembers its terminals and active tab
@@ -769,8 +805,7 @@ Each session supports up to 4 terminal tabs, allowing users to run multiple tool
    b) Step 1: rclone sync R2 -> local (restore data)
    c) Step 2: rclone bisync --resync (establish baseline)
    d) Start bisync daemon (every 60s)
-   e) Start terminal server (port 8080)
-   f) Start health server (port 3000)
+   e) Start terminal server (port 8080, handles WebSocket + REST + health)
    |
 8. startup-status returns "ready" when terminal server /sessions responds
    |
@@ -841,17 +876,18 @@ rclone bisync "$HOME/" "r2:$BUCKET/" --resync --conflict-resolve newer
 
 ### rclone bisync Configuration
 
-```bash
-rclone bisync "$USER_HOME/" "r2:$R2_BUCKET_NAME/" \
-    --config "$RCLONE_CONFIG" \
-    --exclude ".config/rclone/**" \
-    --exclude ".cache/rclone/**" \
-    --exclude ".npm/**" \
-    --conflict-resolve newer \
-    --resilient \
-    --recover \
-    -v
-```
+Sync filters are controlled by `SYNC_MODE` env var (default: `full`):
+
+| Mode | Workspace Sync | Use Case |
+|------|---------------|----------|
+| `full` | Entire `workspace/` folder (minus `node_modules/`) | Persistent storage across stop/resume (Cloudflare Containers have ephemeral disk) |
+| `metadata` | Only `CLAUDE.md` and `.claude/` per repo | Lightweight sync, gitignored project context only |
+
+To switch: change `${SYNC_MODE:-full}` default in `entrypoint.sh` or add `ENV SYNC_MODE=metadata` to Dockerfile.
+
+Both modes always exclude: `.bashrc`, `.bash_profile`, `.config/rclone/`, `.cache/rclone/`, `.npm/`, `**/node_modules/`.
+
+All rclone commands use `--filter` flags (NOT `--include`/`--exclude`). See entrypoint.sh `RCLONE_FILTERS` array.
 
 **Flags Explained:**
 - `--conflict-resolve newer` - Newest file wins on conflicts
@@ -904,6 +940,9 @@ For API/CLI clients. Mapped to email via `SERVICE_TOKEN_EMAIL` env var.
 Request
    |
    v
+Edge-level redirect: GET / -> 302 /setup (if setup:complete not in KV)
+   |
+   v
 CORS Middleware (src/index.ts)
    |
    v
@@ -915,6 +954,9 @@ Auth Middleware (src/middleware/auth.ts)
    |   +-- cf-access-client-id? -> Service token auth
    |   +-- DEV_MODE=true? -> Test user bypass
    |   +-- None -> 401 Unauthorized
+   |
+   +-- Check user allowlist in KV (user:{email} key)
+   |   +-- Not found -> 403 Forbidden
    |
    +-- getBucketName() derives bucket from email
    |
@@ -979,26 +1021,67 @@ Error codes:
 - `CONTAINER_ERROR` - Container operation failed (500)
 - `AUTH_ERROR` - Authentication required (401)
 
-### Container Endpoints
+### Session Management
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/container/start` | Start container (non-blocking) |
-| POST | `/api/container/destroy` | Destroy container (SIGKILL) |
-| GET | `/api/container/state` | Get container state |
-| GET | `/api/container/health` | Check container health |
+| GET | `/api/sessions` | List sessions |
+| POST | `/api/sessions` | Create session (rate limited) |
+| GET | `/api/sessions/:id` | Get a specific session |
+| PATCH | `/api/sessions/:id` | Update session (e.g., rename) |
+| DELETE | `/api/sessions/:id` | Delete session and destroy its container |
+| POST | `/api/sessions/:id/touch` | Update lastAccessedAt timestamp |
+| GET | `/api/sessions/:id/start` | Start session container |
+| POST | `/api/sessions/:id/stop` | Stop session (kills PTY, container sleeps naturally) |
+| GET | `/api/sessions/:id/status` | Get session and container status |
+
+### Container Lifecycle
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/container/start` | Start a container (non-blocking) |
+| POST | `/api/container/explicit-start` | Explicitly start container (blocking) |
+| POST | `/api/container/destroy` | Destroy a container (SIGKILL) |
 | GET | `/api/container/startup-status` | Poll startup progress |
-| GET | `/api/container/sync-log` | Get rclone sync log |
-| GET | `/api/container/debug` | Debug info (bucket, envVars) |
+| GET | `/api/container/health` | Health check |
+| GET | `/api/container/state` | Get container state (DEV_MODE) |
+| GET | `/api/container/debug` | Debug info (DEV_MODE) |
+| GET | `/api/container/sync-log` | Get rclone sync log (DEV_MODE) |
+| GET | `/api/container/mount-test` | Test mount (DEV_MODE) |
 
-### Admin Endpoints
+### Terminal
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| POST | `/api/admin/destroy-by-id` | Kill zombie container by raw DO ID |
+| WS | `/api/terminal/:sessionId-:terminalId/ws` | Terminal WebSocket (compound ID) |
+| GET | `/api/terminal/:sessionId/status` | Terminal connection status |
 
-**Admin Endpoint Parameters:**
-- `secret` - Must match `ADMIN_SECRET` environment variable (query param or Bearer token)
+### User Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/user` | Get authenticated user info |
+| GET | `/api/users` | List allowed users |
+| POST | `/api/users` | Add allowed user |
+| DELETE | `/api/users/:email` | Remove allowed user |
+
+### Setup (No Auth Required)
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/setup/status` | Check setup status (`{ configured, tokenDetected }`) |
+| GET | `/api/setup/detect-token` | Auto-detect token from env |
+| POST | `/api/setup/configure` | Run configuration (`{ customDomain, allowedUsers, allowedOrigins? }`). After initial setup, requires admin role via CF Access. |
+| POST | `/api/setup/reset-for-tests` | Reset for E2E tests (DEV_MODE only) |
+| POST | `/api/setup/restore-for-tests` | Restore after E2E tests (DEV_MODE only) |
+
+### Admin
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/admin/destroy-by-id` | Kill zombie container by raw DO ID (requires admin role via CF Access) |
+
+**Admin Endpoint Authentication:** Requires CF Access authentication with admin role (`authMiddleware` + `requireAdmin`).
 - Body: `{ "doId": "<64-char-hex-do-id>" }`
 
 **Use case:** When a container becomes a zombie (alarm keeps restarting it), use this endpoint to forcibly destroy it by its DO ID visible in the Cloudflare dashboard.
@@ -1011,35 +1094,20 @@ Error codes:
 
 **CRITICAL:** Only `destroy-by-id` uses `idFromString()` which safely references EXISTING DOs. All `idFromName()` approaches CREATE new DOs if they don't exist - this is fundamental to how Cloudflare Durable Objects work.
 
-### Session Endpoints
+### Credentials (DEV_MODE)
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/sessions` | List sessions |
-| POST | `/api/sessions` | Create session |
-| DELETE | `/api/sessions/:id` | Delete session |
+| GET | `/api/credentials` | Check credential status |
+| POST | `/api/credentials` | Upload credentials |
+| DELETE | `/api/credentials` | Remove credentials |
 
-### Terminal Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| WS | `/api/terminal/:sessionId/ws` | WebSocket terminal connection |
-| WS | `/api/terminal/:sessionId-:terminalId/ws` | WebSocket for specific terminal tab |
-
-### User Endpoints
+### Health
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
-| GET | `/api/user` | Get authenticated user info |
-
-### Setup Endpoints (No Auth Required)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/setup/status` | Check if setup is complete |
-| POST | `/api/setup/verify-token` | Verify token permissions |
-| POST | `/api/setup/configure` | Run full configuration |
-| POST | `/api/setup/reset` | Reset setup state (requires ADMIN_SECRET) |
+| GET | `/health` | Worker health check |
+| GET | `/api/health` | API health check (with timestamp) |
 
 ### Examples
 
@@ -1081,27 +1149,27 @@ curl https://claudeflare.your-subdomain.workers.dev/api/container/startup-status
 | Variable | Purpose | Source |
 |----------|---------|--------|
 | `DEV_MODE` | "true" bypasses CF Access auth | wrangler.toml |
-| `SERVICE_TOKEN_EMAIL` | Email for service token auth | wrangler.toml |
+| `SERVICE_TOKEN_EMAIL` | Email for service token auth | Optional env var or .dev.vars |
 | `CLOUDFLARE_API_TOKEN` | R2 bucket creation | Wrangler secret |
 | `R2_ACCESS_KEY_ID` | R2 auth for containers | Wrangler secret |
 | `R2_SECRET_ACCESS_KEY` | R2 auth for containers | Wrangler secret |
-| `R2_ACCOUNT_ID` | R2 endpoint construction | wrangler.toml |
-| `R2_ENDPOINT` | S3-compatible endpoint | wrangler.toml |
+| `R2_ACCOUNT_ID` | R2 endpoint construction | Dynamic (env var with KV fallback via r2-config.ts) |
+| `R2_ENDPOINT` | S3-compatible endpoint | Dynamic (env var with KV fallback via r2-config.ts) |
 | `ALLOWED_ORIGINS` | CORS allowed origins (comma-separated patterns) | wrangler.toml |
-| `ADMIN_SECRET` | Admin endpoint authentication | Wrangler secret |
+| `ENCRYPTION_KEY` | AES-256 key for encrypting credentials at rest (DEPRECATED: crypto.ts removed) | Wrangler secret (optional) |
 
 ### Container Environment
 
-| Variable | Purpose |
-|----------|---------|
-| `R2_BUCKET_NAME` | User's personal bucket |
-| `R2_ACCESS_KEY_ID` | rclone auth |
-| `R2_SECRET_ACCESS_KEY` | rclone auth |
-| `R2_ACCOUNT_ID` | rclone endpoint |
-| `R2_ENDPOINT` | rclone endpoint |
-| `AWS_ACCESS_KEY_ID` | S3 compatibility |
-| `AWS_SECRET_ACCESS_KEY` | S3 compatibility |
-| `TERMINAL_PORT` | Always 3000 |
+| Variable | Purpose | Source |
+|----------|---------|--------|
+| `R2_BUCKET_NAME` | User's personal bucket | Worker → DO via `setBucketName` |
+| `R2_ACCESS_KEY_ID` | rclone auth | Worker → DO via `setBucketName` (preferred) or DO `this.env` fallback |
+| `R2_SECRET_ACCESS_KEY` | rclone auth | Worker → DO via `setBucketName` (preferred) or DO `this.env` fallback |
+| `R2_ACCOUNT_ID` | rclone endpoint | Worker → DO via `setBucketName` or `getR2Config()` fallback |
+| `R2_ENDPOINT` | rclone endpoint | Worker → DO via `setBucketName` or `getR2Config()` fallback |
+| `AWS_ACCESS_KEY_ID` | S3 compatibility | Mirrors `R2_ACCESS_KEY_ID` |
+| `AWS_SECRET_ACCESS_KEY` | S3 compatibility | Mirrors `R2_SECRET_ACCESS_KEY` |
+| `TERMINAL_PORT` | Always 8080 | Hardcoded in DO class |
 
 ---
 
@@ -1116,42 +1184,93 @@ claudeflare/
 |   +-- routes/
 |   |   +-- container/        # Container lifecycle API (split for maintainability)
 |   |   |   +-- index.ts      # Route aggregator (exports merged Hono app)
-|   |   |   +-- lifecycle.ts  # Start, destroy, stop endpoints
-|   |   |   +-- status.ts     # Health, state, startup-status, sync-log endpoints
-|   |   |   +-- debug.ts      # Debug endpoints (DEV_MODE gated)
-|   |   |   +-- shared.ts     # Shared types and container circuit breaker
+|   |   |   +-- lifecycle.ts  # Start, destroy, explicit-start endpoints
+|   |   |   +-- status.ts     # Health, startup-status endpoints
+|   |   |   +-- debug.ts      # Debug, state, sync-log, mount-test endpoints (DEV_MODE gated)
+|   |   |   +-- shared.ts     # Shared types, logger, and container circuit breakers
 |   |   +-- session/          # Session API (split for maintainability)
 |   |   |   +-- index.ts      # Route aggregator with shared auth middleware
 |   |   |   +-- crud.ts       # GET/POST/PATCH/DELETE session endpoints
-|   |   |   +-- lifecycle.ts  # start/stop/status session endpoints
+|   |   |   +-- lifecycle.ts  # start/stop/status/batch-status session endpoints
+|   |   +-- setup/            # Setup wizard API (split into modules)
+|   |   |   +-- index.ts      # Route aggregator (status, detect-token, configure)
+|   |   |   +-- handlers.ts   # Status, detect-token, reset/restore-for-tests
+|   |   |   +-- secrets.ts    # handleSetSecrets (R2 credentials, error 10215 fallback)
+|   |   |   +-- custom-domain.ts # handleConfigureCustomDomain (DNS, worker route)
+|   |   |   +-- access.ts     # handleCreateAccessApp (CF Access app + policy)
+|   |   |   +-- account.ts    # handleGetAccount (account ID resolution)
+|   |   |   +-- credentials.ts # handleDeriveR2Credentials (SHA-256 derivation)
+|   |   |   +-- shared.ts     # Shared: logger, rate limiter, helpers
 |   |   +-- admin.ts          # Admin-only endpoints (destroy-by-id)
-|   |   +-- terminal.ts       # WebSocket terminal proxy
-|   |   +-- user.ts           # User info
+|   |   +-- terminal.ts       # Terminal WebSocket proxy
+|   |   +-- user-profile.ts   # User info
+|   |   +-- users.ts          # User management API (GET/POST /api/users, DELETE /api/users/:email)
 |   |   +-- credentials.ts    # Credential management (DEV_MODE gated)
-|   |   +-- setup.ts          # Setup wizard API
 |   +-- middleware/
-|   |   +-- auth.ts           # Shared auth middleware (authMiddleware)
+|   |   +-- auth.ts           # Shared auth middleware (checks user allowlist in KV)
+|   |   +-- rate-limit.ts     # Per-user rate limiting middleware
 |   +-- lib/
 |   |   +-- access.ts         # CF Access auth helpers
-|   |   +-- r2-admin.ts       # R2 bucket API
+|   |   +-- access-policy.ts  # Shared user/Access operations helper
+|   |   +-- r2-admin.ts       # R2 bucket API (handles "already exists" race)
+|   |   +-- r2-config.ts      # R2 config resolution (env vars with KV fallback)
 |   |   +-- kv-keys.ts        # KV key utilities
-|   |   +-- constants.ts      # Centralized constants (ports, patterns, R2 IDs)
+|   |   +-- constants.ts      # Centralized constants (ports, patterns, R2 IDs, timeouts)
 |   |   +-- container-helpers.ts  # Container initialization helpers
-|   |   +-- errors.ts         # Standardized error responses
 |   |   +-- error-types.ts    # Centralized error classes (AppError hierarchy)
 |   |   +-- type-guards.ts    # Runtime type validation
 |   |   +-- circuit-breaker.ts  # Circuit breaker pattern for resilience
+|   |   +-- circuit-breakers.ts # Shared circuit breaker instances for container routes
+|   |   +-- cors-cache.ts     # In-memory CORS origins cache (shared between index.ts and setup)
+|   |   +-- cache-reset.ts    # Centralized cache reset (CORS + auth + JWKS)
+|   |   +-- jwt.ts            # JWT verification against CF Access JWKS (RS256)
 |   |   +-- logger.ts         # Structured JSON logging
-|   |   +-- backoff.ts        # Exponential backoff with jitter
 |   +-- container/
-|   |   +-- index.ts          # ClaudeflareContainer DO class
+|   |   +-- index.ts          # container DO class (extends Container)
 |   +-- __tests__/
+|       +-- index.test.ts     # Edge-level redirect tests
 |       +-- lib/              # Unit tests for lib modules
+|       |   +-- access.test.ts
+|       |   +-- access-policy.test.ts
+|       |   +-- circuit-breaker.test.ts
+|       |   +-- constants.test.ts
+|       |   +-- container-helpers.test.ts
+|       |   +-- error-types.test.ts
+|       |   +-- jwt.test.ts
+|       |   +-- logger.test.ts
+|       |   +-- r2-config.test.ts
+|       |   +-- type-guards.test.ts
+|       +-- middleware/       # Auth and rate-limit tests
+|       |   +-- auth.test.ts
+|       |   +-- rate-limit.test.ts
 |       +-- routes/           # Unit tests for route handlers
+|           +-- session.test.ts
+|           +-- setup.test.ts
+|           +-- setup-shared.test.ts
+|           +-- container-lifecycle.test.ts
+|           +-- container-status.test.ts
+|           +-- users.test.ts
 |
 +-- e2e/
-|   +-- setup.ts              # E2E test setup
+|   +-- config.ts             # E2E test configuration
+|   +-- setup.ts              # E2E test setup (BASE_URL, apiRequest helper)
 |   +-- api.test.ts           # E2E API tests
+|   +-- helpers/
+|   |   +-- test-utils.ts     # Cleanup utilities (cleanupAllSessions, restoreSetupComplete)
+|   +-- ui/                   # E2E UI tests (Puppeteer)
+|       +-- setup.ts          # Puppeteer helpers (launchBrowser, navigateTo)
+|       +-- helpers.ts        # UI test utilities (waitForSelector, click)
+|       +-- layout.test.ts
+|       +-- session-management.test.ts
+|       +-- terminal-interaction.test.ts
+|       +-- settings-panel.test.ts
+|       +-- setup-wizard.test.ts
+|       +-- session-card-enhancements.test.ts
+|       +-- tiling.test.ts
+|       +-- full-journey.test.ts
+|       +-- error-handling.test.ts
+|       +-- rate-limiting.test.ts
+|       +-- request-tracing.test.ts
 |
 +-- host/
 |   +-- server.js             # Terminal server (node-pty + WebSocket)
@@ -1160,14 +1279,34 @@ claudeflare/
 +-- web-ui/
 |   +-- src/
 |   |   +-- App.tsx           # Root component
+|   |   +-- index.tsx         # Entry point
+|   |   +-- index.css         # Global styles (imports design tokens)
+|   |   +-- types.ts          # Frontend types
 |   |   +-- components/
 |   |   |   +-- Terminal.tsx     # xterm.js wrapper
-|   |   |   +-- TerminalTabs.tsx # Tab bar UI
-|   |   |   +-- Layout.tsx       # Main layout
+|   |   |   +-- TerminalTabs.tsx # Tab bar UI with icons and animations
+|   |   |   +-- Layout.tsx       # Main layout (Header + AppSidebar + TerminalArea)
+|   |   |   +-- Header.tsx       # App header with logo and settings
+|   |   |   +-- StatusBar.tsx    # Connection status, sync time, shortcuts
 |   |   |   +-- AppSidebar.tsx   # Sidebar wrapper (extracted from Layout)
 |   |   |   +-- TerminalArea.tsx # Terminal section wrapper (extracted from Layout)
 |   |   |   +-- SessionList.tsx  # Session list with search
 |   |   |   +-- SessionCard.tsx  # Individual session card (extracted)
+|   |   |   +-- InitProgress.tsx # Session init progress modal
+|   |   |   +-- SettingsPanel.tsx # Slide-out settings panel (includes User Management)
+|   |   |   +-- TilingButton.tsx  # Tiling mode toggle button
+|   |   |   +-- TilingOverlay.tsx # Layout selection dropdown
+|   |   |   +-- TiledTerminalContainer.tsx # Multi-terminal grid renderer
+|   |   |   +-- TiledTerminalContainer.css # Tiled terminal grid styles
+|   |   |   +-- EmptyState.tsx    # Reusable empty state component
+|   |   |   +-- EmptyStateVariants.tsx  # Pre-built empty states
+|   |   |   +-- Icon.tsx          # SVG icon wrapper for MDI
+|   |   |   +-- ui/              # Base UI components
+|   |   |   |   +-- index.ts     # Barrel export
+|   |   |   |   +-- Button.tsx, Input.tsx
+|   |   |   +-- setup/           # Setup wizard steps (3-step flow)
+|   |   |       +-- SetupWizard.tsx, WelcomeStep.tsx
+|   |   |       +-- ConfigureStep.tsx, ProgressStep.tsx
 |   |   +-- stores/
 |   |   |   +-- terminal.ts   # WebSocket state
 |   |   |   +-- session.ts    # Session state
@@ -1178,10 +1317,46 @@ claudeflare/
 |   |   |   +-- constants.ts      # Frontend constants (intervals, timeouts)
 |   |   |   +-- schemas.ts        # Zod validation schemas
 |   |   |   +-- terminal-config.ts # Tab configuration (names, icons)
+|   |   |   +-- settings.ts      # Settings type, defaults, localStorage load/save
+|   |   |   +-- format.ts        # formatRelativeTime, formatUptime helpers
+|   |   |   +-- status-mapper.ts  # mapStartupDetailsToProgress
 |   |   +-- styles/
-|   |       +-- session-list.css   # Session list styles
-|   |       +-- init-progress.css  # Init progress modal styles
-|   |       +-- settings-panel.css # Settings panel styles
+|   |   |   +-- design-tokens.css  # 100+ CSS variables
+|   |   |   +-- animations.css     # Keyframes and animation utilities
+|   |   |   +-- components.css     # Shared component styles
+|   |   |   +-- app.css, layout.css, header.css, status-bar.css
+|   |   |   +-- terminal.css, terminal-tabs.css
+|   |   |   +-- tiling-button.css, tiling-overlay.css
+|   |   |   +-- session-list.css   # Session list styles
+|   |   |   +-- init-progress.css  # Init progress modal styles
+|   |   |   +-- settings-panel.css # Settings panel styles
+|   |   |   +-- empty-state.css, button.css, input.css, icon.css
+|   |   |   +-- setup-wizard.css, welcome-step.css
+|   |   |   +-- configure-step.css, progress-step.css
+|   |   +-- __tests__/            # Frontend unit tests
+|   |       +-- setup.ts          # Test setup
+|   |       +-- smoke.test.ts     # Smoke tests
+|   |       +-- utils/
+|   |       |   +-- mocks.ts     # Shared mocks
+|   |       +-- components/       # Component tests
+|   |       |   +-- Button.test.tsx, Input.test.tsx
+|   |       |   +-- Header.test.tsx, StatusBar.test.tsx, SettingsPanel.test.tsx
+|   |       |   +-- SessionList.test.tsx, EmptyState.test.tsx, InitProgress.test.tsx
+|   |       |   +-- Terminal.test.tsx, TerminalTabs.test.tsx
+|   |       |   +-- TilingButton.test.tsx, TilingOverlay.test.tsx
+|   |       |   +-- TiledTerminalContainer.test.tsx
+|   |       +-- stores/           # Store tests
+|   |       |   +-- terminal.test.ts
+|   |       |   +-- session.test.ts
+|   |       |   +-- session-tiling.test.ts
+|   |       |   +-- session-ready-detection.test.ts
+|   |       |   +-- setup.test.ts
+|   |       +-- lib/              # Lib tests
+|   |       |   +-- format.test.ts
+|   |       +-- api/              # API tests
+|   |           +-- client.test.ts
+|   |           +-- contract.test.ts
+|   +-- vitest.config.ts      # Vitest config for component tests
 |   +-- dist/                 # Built frontend (static assets)
 |
 +-- Dockerfile                # Container image
@@ -1189,8 +1364,6 @@ claudeflare/
 +-- wrangler.toml             # Cloudflare configuration
 +-- vitest.config.ts          # Unit test config
 +-- vitest.e2e.config.ts      # E2E test config
-+-- docs/
-    +-- STORAGE-EVOLUTION.md  # Storage architecture history
 ```
 
 ### Critical Paths Inside Container
@@ -1207,72 +1380,42 @@ claudeflare/
 
 ---
 
-## 10. Container Startup - Pure Polling Approach
+## 10. Container Startup - Polling with Safety Timeouts
 
 **File:** `entrypoint.sh`
 
-The container startup script uses **pure polling with no arbitrary timeouts**. This is critical for reliable startup.
+The container startup script uses **polling with safety timeouts**. This prefers early exit on success but prevents infinite blocking.
 
-### Why No Static Timeouts?
+### Why Polling with Safety Timeouts?
 
-**Problems with static timeouts:**
+**Problems with fixed timeouts only:**
 - If npm install takes 5 seconds but timeout is 60s → 55 seconds wasted
 - If npm install takes 90 seconds but timeout is 60s → premature failure
 - Network conditions vary → fixed timeouts are wrong in both directions
 
-**Pure polling approach:**
-- Poll until success OR the background process exits
+**Polling with safety timeouts approach:**
+- Poll until success OR the background process exits OR safety timeout expires
 - Exit immediately on success (no waiting)
-- No upper limit on wait time (if process is still running, keep waiting)
-
-### preseed_claude_yolo() Implementation
-
-```bash
-# Phase 1: Wait for npm install (version update)
-while kill -0 $PRESEED_PID 2>/dev/null; do  # Process still alive?
-    UPDATED=$(grep -oP ... "$PACKAGE_JSON")
-    if [ "$UPDATED" = "$LATEST_NPM" ]; then
-        break  # SUCCESS! Exit immediately
-    fi
-    sleep 1
-done
-
-# Phase 2: Wait for consent files
-while kill -0 $PRESEED_PID 2>/dev/null; do  # Process still alive?
-    if [ -f ".claude-yolo-consent" ] && [ -f "cli-yolo.mjs" ]; then
-        break  # SUCCESS! Exit immediately
-    fi
-    sleep 1
-done
-```
-
-**Key pattern:** `kill -0 $PID` returns success if process is running, failure if it exited.
-
-| Scenario | Old (60s timeout) | New (pure polling) |
-|----------|-------------------|-------------------|
-| npm install takes 5s | Waits 60s anyway | Exits after 5s ✓ |
-| npm install takes 90s | Fails at 60s ✗ | Waits 90s, succeeds ✓ |
-| claude-yolo crashes | Waits 60s anyway | Detects immediately ✓ |
+- Safety timeouts prevent infinite blocking if a process hangs:
+  - `SYNC_TIMEOUT=120` (2 min) for initial R2 sync
+  - `BISYNC_TIMEOUT=180` (3 min) for bisync baseline
+  - `MAX_NPM_WAIT=120` (2 min) for npm install
+  - `MAX_CONSENT_WAIT=30` (30 sec) for consent files
 
 ### Parallel Startup
 
-The entrypoint runs R2 sync and claude-yolo pre-seeding in parallel:
+The entrypoint runs R2 sync and claude-unleashed auto-update in parallel:
 
 ```
 Container Start
-├── preseed_claude_yolo() &     ← Background process #1
-├── initial_sync_from_r2() &    ← Background process #2
+├── initial_sync_from_r2() &    ← Background process
 ├── wait for R2 sync            ← Block until data restored
 ├── establish_bisync_baseline() &   ← Background (non-blocking)
 ├── configure_claude_autostart()
-├── wait $PRESEED_PID           ← Block until consent complete
-└── Start servers (ports 8080, 3000)
+└── Start terminal server (port 8080)
 ```
 
-This means:
-1. R2 sync and claude-yolo run simultaneously (saves time)
-2. Servers start only after BOTH complete (correct ordering)
-3. No fixed timeouts anywhere (pure polling throughout)
+Auto-update is disabled on tab 1 auto-start (`CLAUDE_UNLEASHED_SILENT=1 CLAUDE_UNLEASHED_NO_UPDATE=1` inline env vars) for fast container boot. Users can update manually by running `cu` or `claude-unleashed` in any terminal tab. No consent prompts in either mode (`CLAUDE_UNLEASHED_SKIP_CONSENT=1` set globally in Dockerfile).
 
 ---
 
@@ -1291,12 +1434,13 @@ Base: `node:22-alpine`
 | Editors | vim, neovim, nano |
 | Network | curl, wget, openssh-client |
 | Build | make, gcc, g++, python3, nodejs, npm |
-| Utilities | jq, ripgrep, fd, tree, btop, htop, tmux, yazi |
+| Utilities | jq, ripgrep, fd, tree, btop, htop, tmux, yazi, fzf, zoxide, bat |
+| Yazi preview dependencies | file, ffmpeg, p7zip, poppler-utils, imagemagick |
 | Terminal | ncurses, ncurses-terminfo |
 
 ### Global NPM Packages
 
-- `@anthropic-ai/claude-code` - Claude Code CLI
+- `claude-unleashed` - Claude Code CLI wrapper with unleashed mode support (wraps `@anthropic-ai/claude-code`)
 
 ### Build Process
 
@@ -1306,8 +1450,8 @@ RUN apk add --no-cache rclone git vim ... \
     && apk add --no-cache yazi --repository=http://dl-cdn.alpinelinux.org/alpine/edge/testing \
     && apk add --no-cache lazygit --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community
 
-# Install Claude Code
-RUN npm install -g @anthropic-ai/claude-code
+# Install claude-unleashed
+RUN npm install -g github:nikolanovoselec/claude-unleashed
 
 # Copy and install terminal server
 COPY host/package.json host/server.js /app/host/
@@ -1325,83 +1469,52 @@ ENTRYPOINT ["/entrypoint.sh"]
 
 ---
 
-## 12. Claude-YOLO Integration
+## 12. Claude-Unleashed Integration
 
-Claudeflare uses [claude-yolo](https://github.com/maxparez/claude-yolo) to enable `--dangerously-skip-permissions` when running as root inside containers.
+Claudeflare uses [claude-unleashed](https://github.com/nikolanovoselec/claude-unleashed) to enable `--dangerously-skip-permissions` when running as root inside containers.
 
-### Why Claude-YOLO?
+### Why Claude-Unleashed?
 
-Standard Claude Code CLI prevents combining:
-- `--dangerously-skip-permissions` flag (skips permission prompts)
-- Running as root user (detected via `process.getuid() === 0`)
-
-Since Cloudflare Containers run as root, the standard Claude CLI would reject YOLO mode. Claude-yolo wraps the official CLI and bypasses these restrictions by patching runtime checks.
+Standard Claude Code CLI prevents combining `--dangerously-skip-permissions` with running as root (detected via `process.getuid() === 0`). Since Cloudflare Containers run as root, claude-unleashed wraps the official CLI and bypasses these restrictions.
 
 ### How It Works
 
-1. **Runtime patching:**
-   - Replaces `process.getuid() === 0` checks with `false`
-   - Replaces `getIsDocker()` calls with `true`
-   - Auto-adds `--dangerously-skip-permissions` to all invocations
-
-2. **Consent management:**
-   - First run requires interactive consent prompt
-   - Creates `.claude-yolo-consent` file to remember consent
-   - State stored in `~/.claude_yolo_state`
-
-3. **Auto-updating:**
-   - Checks for and installs latest Claude CLI version on startup
+1. Ships with Claude Code 2.1.25 baseline
+2. **Two separate updaters, two controls:**
+   - **claude-unleashed's updater**: checks npm for latest `@anthropic-ai/claude-code`. Disabled on auto-start via `CLAUDE_UNLEASHED_NO_UPDATE=1` (fast boot). Runs on manual `cu` (updates to latest).
+   - **Upstream CLI's internal auto-updater**: background process that checks for native builds. Always disabled via `DISABLE_AUTOUPDATER=1` (set by claude-unleashed) + source patch for `DISABLE_INSTALLATION_CHECKS`. Without this, causes 30s startup delay and "Auto-update failed" errors in containers.
+3. The `claude` wrapper in `/usr/local/bin/claude` delegates to `cu` (claude-unleashed)
+4. All configuration via Dockerfile ENV vars -- no CLI flags or consent prompts needed
 
 ### Container Configuration
 
-**Dockerfile installs claude-yolo:**
+**Dockerfile installs claude-unleashed:**
 ```dockerfile
-RUN npm install -g claude-yolo
+RUN npm install -g github:nikolanovoselec/claude-unleashed
 ```
-
-**Consent pre-configuration (Dockerfile):**
-```dockerfile
-RUN CLAUDE_CODE_DIR=$(npm root -g)/claude-yolo/node_modules/@anthropic-ai/claude-code && \
-    echo "consent-given" > "$CLAUDE_CODE_DIR/.claude-yolo-consent"
-```
-
-**Wrapper script for transparent usage:**
-```dockerfile
-RUN echo '#!/bin/bash' > /usr/local/bin/claude && \
-    echo 'export IS_SANDBOX=1' >> /usr/local/bin/claude && \
-    echo 'export DISABLE_INSTALLATION_CHECKS=1' >> /usr/local/bin/claude && \
-    echo 'exec /usr/local/bin/claude-yolo "$@"' >> /usr/local/bin/claude && \
-    chmod +x /usr/local/bin/claude
-```
-
-### Entrypoint Pre-seeding
-
-The `preseed_claude_yolo()` function in `entrypoint.sh` handles automatic consent and updates:
-
-```bash
-# Run claude-yolo with "yes" piped to auto-answer consent prompt
-echo "yes" | claude-yolo &
-PRESEED_PID=$!
-
-# Poll until consent files appear OR process exits
-while kill -0 $PRESEED_PID 2>/dev/null; do
-    if [ -f ".claude-yolo-consent" ] && [ -f "cli-yolo.mjs" ]; then
-        kill $PRESEED_PID 2>/dev/null
-        break
-    fi
-    sleep 1
-done
-```
-
-This runs during container init (before terminal opens), so users never see consent prompts.
 
 ### Environment Variables
 
+**Global (Dockerfile ENV -- always active):**
+
 | Variable | Purpose | Value |
 |----------|---------|-------|
-| `IS_SANDBOX` | Tells claude-yolo this is a sandbox environment | `1` |
-| `DISABLE_INSTALLATION_CHECKS` | Skips PATH checks that fail in sudo/root contexts | `1` |
-| `DEBUG` | Enable verbose debug output from claude-yolo | `1` (optional) |
+| `CLAUDE_UNLEASHED_SKIP_CONSENT` | Skip consent prompt | `1` |
+| `IS_SANDBOX` | Sandbox mode | `1` |
+
+**Auto-start only (exported in `.bashrc`, unset after `cu` exits):**
+
+| Variable | Purpose | Value |
+|----------|---------|-------|
+| `CLAUDE_UNLEASHED_SILENT` | Suppress banners | `1` |
+| `CLAUDE_UNLEASHED_NO_UPDATE` | Skip claude-unleashed's updater (fast boot) | `1` |
+
+**Set internally by claude-unleashed (always, before importing CLI):**
+
+| Variable | Purpose | Value |
+|----------|---------|-------|
+| `DISABLE_INSTALLATION_CHECKS` | Suppress upstream CLI deprecation warnings | `1` |
+| `DISABLE_AUTOUPDATER` | Disable upstream CLI background auto-updater | `1` |
 
 ### Security Considerations
 
@@ -1411,40 +1524,26 @@ This runs during container init (before terminal opens), so users never see cons
 - Container destruction cleans up all state
 - Users explicitly chose to use this service
 
-**What YOLO mode bypasses:**
+**What unleashed mode bypasses:**
 - File read/write permission prompts
 - Shell command execution prompts
 - Network access prompts
 
+Global Dockerfile ENV sets `CLAUDE_UNLEASHED_SKIP_CONSENT` and `IS_SANDBOX`. claude-unleashed internally sets `DISABLE_INSTALLATION_CHECKS` and `DISABLE_AUTOUPDATER` before importing the upstream CLI (always active, including manual runs). Auto-start exports `CLAUDE_UNLEASHED_SILENT` and `CLAUDE_UNLEASHED_NO_UPDATE` in `.bashrc`, then unsets them after `cu` exits -- so manual re-runs get full output and auto-update. The `claude` wrapper in `/usr/local/bin/claude` delegates to `cu`.
+
 ### Troubleshooting
 
-**claude-yolo not found:**
+**claude-unleashed not found:**
 ```bash
-npm list -g claude-yolo
-ls -la $(npm root -g)/claude-yolo
-```
-
-**Consent file missing:**
-```bash
-CLAUDE_CODE_DIR=$(npm root -g)/claude-yolo/node_modules/@anthropic-ai/claude-code
-ls -la "$CLAUDE_CODE_DIR/.claude-yolo-consent"
-```
-
-**YOLO mode not activating:**
-```bash
-cat ~/.claude_yolo_state
-# Should output: YOLO
+which cu
+npm list -g claude-unleashed
 ```
 
 ---
 
-## 13. Testing
+## 13. Test Infrastructure
 
-### Unit Tests
-
-**Configuration:** `vitest.config.ts`
-
-Uses `@cloudflare/vitest-pool-workers` for testing Worker code.
+**Backend:** `vitest.config.ts` uses `@cloudflare/vitest-pool-workers` -- tests execute in a real Workers runtime, not Node.js.
 
 ```typescript
 import { defineWorkersConfig } from '@cloudflare/vitest-pool-workers/config';
@@ -1460,38 +1559,257 @@ export default defineWorkersConfig({
 });
 ```
 
-**Test Files:** `src/__tests__/lib/`
-- `constants.test.ts` - Port and pattern validation
-- `container-helpers.test.ts` - Container ID generation
-- `type-guards.test.ts` - Runtime type validation
+**Frontend:** `web-ui/vitest.config.ts` uses jsdom + SolidJS Testing Library.
 
-**Run:** `npm test`
+**E2E:** `vitest.e2e.config.ts` with 30s timeouts. Tests run against the deployed worker.
 
-### E2E Tests
-
-**Configuration:** `vitest.e2e.config.ts`
-
-```typescript
-export default defineConfig({
-  test: {
-    include: ['e2e/**/*.test.ts'],
-    testTimeout: 30000,
-    hookTimeout: 30000,
-  },
-});
-```
-
-**Test Files:** `e2e/`
-- `setup.ts` - Base URL and API request helper
-- `api.test.ts` - API endpoint tests
-
-**Run:** `npm run test:e2e`
-
-**Environment:** Tests run against the deployed worker. Set `E2E_BASE_URL` to override.
+For full test coverage details, commands, and E2E setup, see [Section 16: Testing](#16-testing).
 
 ---
 
-## 14. Troubleshooting
+## 14. Development Setup
+
+### Prerequisites
+
+- Node.js 22+
+- Docker (for container image builds)
+- npm
+
+### Local Development
+
+```bash
+# Install dependencies
+npm install
+cd web-ui && npm install && cd ..
+
+# Run locally (requires Docker)
+npm run dev
+
+# Type checking
+npm run typecheck
+
+# Run unit tests
+npm test
+
+# Run E2E tests (against deployed worker)
+npm run test:e2e
+```
+
+### Web UI Development
+
+```bash
+cd web-ui
+npm run dev       # Start dev server
+npm run build     # Build for production
+npm run typecheck # Type check frontend
+npm test          # Run ~542 component/store/API tests
+```
+
+### Commands Reference
+
+| Command | Description |
+|---------|-------------|
+| `npm run typecheck` | Type check backend |
+| `npm run deploy` | Deploy to Cloudflare (requires Docker) |
+| `npm run deploy:docker` | Build container image and deploy |
+| `npm test` | Run backend unit tests (Vitest with Workers pool) |
+| `npm run test:e2e` | Run E2E API tests against deployed worker |
+| `npm run test:e2e:ui` | Run E2E UI tests with Puppeteer |
+
+---
+
+## 15. CI/CD (GitHub Actions)
+
+| Workflow | Trigger | What it does |
+|----------|---------|-------------|
+| `deploy.yml` | Manual (`workflow_dispatch`) | Full deploy: tests + typecheck + Docker build + wrangler deploy + set CLOUDFLARE_API_TOKEN secret |
+| `test.yml` | Pull requests | Tests + typecheck only (no deploy) |
+| `e2e.yml` | Manual | E2E tests against a deployed worker |
+
+### GitHub Secrets and Variables
+
+**Secrets** (Settings > Secrets and variables > Actions > Secrets):
+
+| Secret | Description |
+|--------|-------------|
+| `CLOUDFLARE_API_TOKEN` | The Cloudflare API token |
+| `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID |
+
+**Variables** (Settings > Secrets and variables > Actions > Variables):
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `CLOUDFLARE_WORKER_NAME` | No | Custom worker name (defaults to `claudeflare`) |
+| `ACCOUNT_SUBDOMAIN` | For E2E tests | Your account subdomain (Workers & Pages > Overview) |
+
+### Deploy Workflow Details
+
+The deploy workflow (`deploy.yml`) uses `wrangler-action@v3` with `--name ${{ vars.CLOUDFLARE_WORKER_NAME || 'claudeflare' }}`, so forks can override the worker name. After deploy, it sets `CLOUDFLARE_API_TOKEN` as a worker secret so the setup wizard can auto-detect it. Only `deploy.yml` builds the container image (requires Docker, available on GH runners).
+
+---
+
+## 16. Testing
+
+### Backend Unit Tests
+
+Located in `src/__tests__/`. Uses Vitest with `@cloudflare/vitest-pool-workers` -- tests execute in a real Workers runtime, not Node.js.
+
+```bash
+npm test
+```
+
+**~317 tests** across 19 test files covering:
+- Constants validation (ports, session ID patterns, R2 permission IDs)
+- Container helper functions (getContainerId, waitForContainerHealth)
+- Type guards (isBucketNameResponse)
+- Error types (AppError hierarchy including RateLimitError, CircuitBreakerOpenError)
+- Circuit breaker pattern
+- JWT verification (RS256 against CF Access JWKS)
+- R2 config resolution (env vars with KV fallback)
+- CF Access auth helpers
+- Rate limiting middleware
+- Auth middleware (user allowlist checks in KV)
+- Structured logging
+- Edge-level redirect (GET / -> 302 /setup when not configured)
+- Route tests: setup, setup-shared, session CRUD/lifecycle/batch-status, container lifecycle/status, user management
+
+**Shared mock:** `src/__tests__/helpers/mock-kv.ts` exports `createMockKV()` -- a Map-backed KV mock. All tests use in-memory mocks (no real KV binding).
+
+### Frontend Unit Tests
+
+Located in `web-ui/src/__tests__/`. Uses Vitest with SolidJS Testing Library + jsdom.
+
+```bash
+cd web-ui && npm test
+```
+
+**~542 tests** across 22 test files covering:
+- Base UI components (Button, Input)
+- Layout components (Header, StatusBar, SettingsPanel)
+- Feature components (SessionList, SessionCard, TerminalTabs, InitProgress, EmptyState)
+- Tiling components (TilingButton, TilingOverlay, TiledTerminalContainer)
+- Terminal component tests
+- Lib tests (format.ts helpers)
+- Terminal store -- WebSocket state, compound keys, reconnection
+- Session store -- CRUD, tiling, metrics polling, ready detection
+- Setup store -- wizard state, validation, persistence
+- API client -- request handling, error mapping, retry logic, sessionId validation
+- API contract -- Zod schema validation, type safety
+
+**Frontend test setup:** `web-ui/src/__tests__/setup.ts` is auto-loaded. Mocks `localStorage`, `WebSocket` (with `_simulateMessage`/`_simulateError` helpers), and `ResizeObserver`.
+
+### E2E API Tests
+
+Located in `e2e/`. Tests API endpoints against the deployed worker.
+
+```bash
+ACCOUNT_SUBDOMAIN=your-subdomain npm run test:e2e
+
+# With a custom worker name
+ACCOUNT_SUBDOMAIN=your-subdomain CLOUDFLARE_WORKER_NAME=my-worker npm run test:e2e
+```
+
+### E2E UI Tests
+
+Located in `e2e/ui/`. Uses Puppeteer against the deployed worker to test user journeys.
+
+```bash
+ACCOUNT_SUBDOMAIN=your-subdomain npm run test:e2e:ui
+```
+
+**132 Puppeteer tests** covering: layout, session management, terminal interactions, settings panel, setup wizard, tiling, error handling, rate limiting, and request tracing.
+
+### E2E Requirements
+
+1. `DEV_MODE = "true"` deployed to the worker (bypasses internal auth)
+2. **No Cloudflare Access on the workers.dev domain** -- if one-click Access is enabled, E2E requests will be blocked at the edge
+3. Re-deploy with `DEV_MODE = "false"` after testing
+
+### E2E Cleanup
+
+Tests include automatic cleanup via `afterAll` hooks:
+- `cleanupAllSessions()` deletes all test sessions
+- `restoreSetupComplete()` restores the `setup:complete` KV flag
+
+If tests fail before cleanup runs, manually restore:
+```bash
+npx wrangler kv key put "setup:complete" "true" --namespace-id 359e06b11d094813ace300d96b6a2f5f --remote
+```
+
+---
+
+## 17. API Token Permissions
+
+Each permission is actively used -- none are optional.
+
+### Account Permissions
+
+| Permission | Access | Why |
+|-----------|--------|-----|
+| Account Settings | Read | Discovers account ID and verifies the token during setup |
+| Workers Scripts | Edit | Sets worker secrets (R2 credentials) during setup. Used by `wrangler deploy` for CI/CD |
+| Workers KV Storage | Edit | Creates the KV namespace (`claudeflare-kv`) during deployment |
+| Workers R2 Storage | Edit | Creates per-user R2 buckets on container start, deletes them on user removal |
+| Containers | Edit | Full container lifecycle -- start, stop, destroy, health checks |
+| Access: Apps and Policies | Edit | Creates the CF Access app and syncs user allowlist policy |
+
+### Zone Permissions
+
+| Permission | Access | Why |
+|-----------|--------|-----|
+| Zone | Read | Resolves zone ID from root domain during custom domain setup |
+| DNS | Edit | Creates proxied CNAME record pointing custom domain to workers.dev |
+| Workers Routes | Edit | Creates worker route mapping `{customDomain}/*` to the worker |
+
+Zone permissions are only used during setup when configuring a custom domain. Account permissions are required for core functionality.
+
+---
+
+## 18. Configuration
+
+### Secrets
+
+All secrets are set automatically by the deploy workflow (`CLOUDFLARE_API_TOKEN`) and the setup wizard (`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`).
+
+No optional manual secrets are required. (`ENCRYPTION_KEY` was previously optional for credential encryption; `crypto.ts` has been removed.)
+
+### Environment Variables (wrangler.toml)
+
+| Variable | Description |
+|----------|-------------|
+| `DEV_MODE` | Set to `"true"` to bypass Access auth (dev only) |
+| `ALLOWED_ORIGINS` | Static CORS origin patterns (defaults to `".workers.dev"`). Additional origins managed dynamically via setup wizard and stored in KV. |
+
+### CORS
+
+CORS origins are managed dynamically. During setup, the wizard automatically adds your custom domain and `.workers.dev` to the allowed origins list (stored in KV). The `ALLOWED_ORIGINS` env var in `wrangler.toml` serves as a static fallback.
+
+`R2_ACCOUNT_ID` and `R2_ENDPOINT` are resolved dynamically at runtime (env vars with KV fallback). For local dev, set them in `.dev.vars`.
+
+---
+
+## 19. Container Specs
+
+| Spec | Value |
+|------|-------|
+| Instance type | Custom (1 vCPU, 3 GiB RAM, 4 GB disk) |
+| Base image | Node.js 22 Alpine |
+| Cost | ~$56/container/month while running |
+
+### Included Tools
+
+| Category | Packages |
+|----------|----------|
+| AI | claude-unleashed (wraps @anthropic-ai/claude-code) |
+| Sync | rclone |
+| Version Control | git, gh, lazygit |
+| Editors | vim, neovim, nano |
+| Build | make, gcc, g++, python3, nodejs, npm |
+| Utilities | jq, ripgrep, fd, tree, btop, htop, tmux, yazi, fzf, zoxide, bat |
+
+---
+
+## 20. Troubleshooting
 
 ### Bisync Empty Listing Error
 
@@ -1520,6 +1838,16 @@ constructor(ctx, env) {
 }
 ```
 
+### R2 Sync Skipped — DO Missing Worker Secrets
+
+**Symptom:** Container starts but shows "sync skipped: R2_ACCESS_KEY_ID not set" (or similar).
+
+**Cause:** The DO's `this.env` may not reliably have Worker secrets (`R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`). This can happen if secrets aren't set or if the DO env doesn't include all Worker bindings.
+
+**Fix (implemented):** The Worker now passes R2 credentials to the DO via the `_internal/setBucketName` request body. The DO uses Worker-provided credentials first, falling back to `this.env` only if not provided. The startup-status endpoint now includes the specific `syncError` for 'skipped' status so you can see which env var is missing.
+
+**Diagnosis:** Check the startup-status response `details.syncError` field — it names the exact missing variable.
+
 ### Container Stuck at "Waiting for Services"
 
 **Symptom:** Startup progress stuck at 20%.
@@ -1532,21 +1860,42 @@ curl /api/container/sync-log?sessionId=xxx
 ```
 
 **Common Issues:**
-- Missing R2 credentials
+- Missing R2 credentials (check startup-status `details.syncError`)
 - Bucket doesn't exist
 - Network timeout to R2
 
-### Slow Sync Despite Workspace Exclusion
+### R2 Sync Transfers 0 Files — rclone Filter Order
 
-**Symptom:** Container startup slow even with workspace excluded.
+**Symptom:** Sync log shows `"Using --filter is recommended instead of both --include and --exclude as the order they are parsed in is indeterminate"` and `"There was nothing to transfer"` despite many files listed.
 
-**Cause:** Workspace data already exists in R2 from before exclusions were added. `--exclude` prevents new uploads but doesn't delete existing data.
+**Cause:** Mixing `--include` and `--exclude` rclone flags makes filter processing order indeterminate. rclone may process all excludes before includes, effectively blocking everything.
 
-**Fix:** Manually delete from R2:
+**Fix:** Use `--filter` flags instead. `--filter "- pattern"` for exclude, `--filter "+ pattern"` for include. Order is guaranteed with `--filter`.
+
+**Correct pattern:**
 ```bash
-rclone delete r2:claudeflare-<user-bucket>/workspace/ -v
-rclone delete r2:claudeflare-<user-bucket>/.npm/ -v
+rclone sync "r2:$BUCKET/" "$HOME/" \
+    --filter "- .config/rclone/**" \
+    --filter "- .cache/rclone/**" \
+    --filter "- .npm/**" \
+    --filter "- **/node_modules/**" \
+    --filter "+ workspace/**/CLAUDE.md" \
+    --filter "+ workspace/**/.claude/**" \
+    --filter "- workspace/**"
 ```
+
+**Diagnosis:** Check `/tmp/sync.log` inside the container for the indeterminate order warning.
+
+### Slow Sync With Full Workspace Mode
+
+**Symptom:** Container startup slow with `SYNC_MODE=full` (default).
+
+**Cause:** Full workspace sync downloads all workspace data from R2 on startup. Large repos with many files will slow initial sync.
+
+**Options:**
+1. Switch to metadata-only sync: set `SYNC_MODE=metadata` in entrypoint.sh or Dockerfile
+2. Manually clean large repos from R2: `rclone delete r2:claudeflare-<user-bucket>/workspace/<repo>/ -v`
+3. Clean caches: `rclone delete r2:claudeflare-<user-bucket>/.npm/ -v`
 
 ### WebSocket Connection Failures
 
@@ -1572,7 +1921,7 @@ import { switchPort } from '@cloudflare/containers';
 
 const request = switchPort(
   new Request('http://container/health'),
-  3000  // Target port
+  8080  // Target port
 );
 ```
 
@@ -1590,11 +1939,11 @@ override async destroy(): Promise<void> {
 }
 ```
 
-**Recovery:** Use admin endpoint to kill zombie:
+**Recovery:** Use admin endpoint to kill zombie (requires CF Access admin auth):
 ```bash
-curl -X POST "/api/admin/destroy-by-id" \
-  -H "Authorization: Bearer ADMIN_SECRET" \
+curl -X POST "https://claude.example.com/api/admin/destroy-by-id" \
   -H "Content-Type: application/json" \
+  -H "Cookie: CF_Authorization=<your-cf-access-jwt>" \
   -d '{"doId":"<DO_ID_FROM_DASHBOARD>"}'
 ```
 
@@ -1616,7 +1965,7 @@ function connect() {
 
 ### Secrets Lost After Worker Deletion
 
-**Symptom:** After running `wrangler delete`, worker redeploys with missing secrets (R2 credentials, admin secret, etc.).
+**Symptom:** After running `wrangler delete`, worker redeploys with missing secrets (R2 credentials, etc.).
 
 **Cause:** `wrangler delete` nukes the entire worker including all stored secrets. They are NOT restored on redeployment.
 
@@ -1625,7 +1974,6 @@ function connect() {
 wrangler secret put CLOUDFLARE_API_TOKEN
 wrangler secret put R2_ACCESS_KEY_ID
 wrangler secret put R2_SECRET_ACCESS_KEY
-wrangler secret put ADMIN_SECRET
 ```
 
 Verify with:
@@ -1661,7 +2009,7 @@ function getContainerId(bucketName: string, sessionId: string): string {
 
 ---
 
-## 15. Debugging Guide
+## 21. Debugging Guide
 
 ### Container Status via API
 
@@ -1675,9 +2023,13 @@ curl -H "CF-Access-Client-Id: <id>" \
 **Response:**
 ```json
 {
-  "state": "running",
-  "startTime": 1234567890,
-  "stopTime": null
+  "success": true,
+  "containerId": "claudeflare-user-example-com-abc12345",
+  "state": {
+    "status": "running",
+    "startTime": 1234567890,
+    "stopTime": null
+  }
 }
 ```
 
@@ -1691,10 +2043,15 @@ curl -H "CF-Access-Client-Id: <id>" \
 **Response:**
 ```json
 {
-  "healthy": true,
-  "terminalServer": "ok",
-  "healthServer": "ok",
-  "lastCheck": "2026-02-02T10:30:00Z"
+  "success": true,
+  "containerId": "claudeflare-user-example-com-abc12345",
+  "container": {
+    "status": "ok",
+    "syncStatus": "success",
+    "cpu": "12%",
+    "mem": "45%",
+    "hdd": "2.1G/4.0G"
+  }
 }
 ```
 
@@ -1710,7 +2067,6 @@ wrangler secret list
 # CLOUDFLARE_API_TOKEN
 # R2_ACCESS_KEY_ID
 # R2_SECRET_ACCESS_KEY
-# ADMIN_SECRET
 ```
 
 **If missing after `wrangler delete`:**
@@ -1720,7 +2076,6 @@ wrangler secret put CLOUDFLARE_API_TOKEN
 
 wrangler secret put R2_ACCESS_KEY_ID
 wrangler secret put R2_SECRET_ACCESS_KEY
-wrangler secret put ADMIN_SECRET
 ```
 
 ### Monitor with wrangler tail
@@ -1803,27 +2158,27 @@ curl -H "CF-Access-Client-Id: <id>" \
 
 ---
 
-## 16. Cost
+## 22. Cost
 
 ### Per-Container Pricing
 
 | Resource | Tier | Specs | Monthly Cost |
 |----------|------|-------|--------------|
-| Container | Basic | 0.25 vCPU, 1GB RAM, 4GB disk | ~$14 |
+| Container | Custom | 1 vCPU, 3 GiB RAM, 4 GB disk | ~$56 |
 
 ### Scaling Model
 
 - **Cost scales per ACTIVE SESSION** - each browser tab = dedicated container
-- **Idle containers hibernate** after 30 minutes (configurable via `sleepAfter`)
+- **Idle containers hibernate** via DO alarm-based hibernation with `IDLE_TIMEOUT_MS` (30 min). The DO polls `/activity` every 5 minutes and destroys the container when no WebSocket connections AND no PTY output for 30 minutes.
 - **Hibernated containers** don't incur CPU costs, only storage
 
 ### Example Monthly Costs
 
 | Usage | Containers | Estimated Cost |
 |-------|------------|----------------|
-| Single session | 1 | ~$14 |
-| 3 concurrent sessions | 3 | ~$42 |
-| 10 concurrent sessions | 10 | ~$140 |
+| Single session | 1 | ~$56 |
+| 3 concurrent sessions | 3 | ~$168 |
+| 10 concurrent sessions | 10 | ~$560 |
 
 ### R2 Storage
 
@@ -1833,7 +2188,7 @@ curl -H "CF-Access-Client-Id: <id>" \
 
 ---
 
-## 17. Lessons Learned
+## 23. Lessons Learned
 
 1. **rclone bisync > s3fs FUSE** - FUSE mounts are fragile and slow. Periodic bisync with local disk is faster and more reliable.
 
@@ -1875,11 +2230,11 @@ curl -H "CF-Access-Client-Id: <id>" \
 
 20. **Configurable CORS** - Allow CORS origins to be configured via environment variable (`ALLOWED_ORIGINS`) rather than hardcoding domains.
 
-21. **Pure polling over static timeouts** - Never use fixed timeouts (e.g., `while [ $WAITED -lt 60 ]`) for process synchronization. Instead, poll with `kill -0 $PID` to check if process is still running, and exit immediately on success. This handles both fast and slow scenarios correctly.
+21. **Polling with safety timeouts over fixed timeouts** - Never use only fixed timeouts (e.g., `while [ $WAITED -lt 60 ]`) for process synchronization. Instead, poll with `kill -0 $PID` to check if process is still running, exit immediately on success, and use safety timeouts (e.g., `MAX_NPM_WAIT=120`, `MAX_CONSENT_WAIT=30`) to prevent infinite blocking if a process hangs.
 
 22. **Zombie prevention with _destroyed flag** - In Cloudflare Durable Objects, calling ANY method (including `getState()`) wakes up a hibernated DO. When `destroy()` is called, a pre-scheduled alarm may still fire and resurrect the zombie. The fix: (1) set a `_destroyed` flag in DO storage BEFORE calling `super.destroy()`, (2) in `alarm()`, check the flag FIRST using only `ctx.storage.get()` (which doesn't wake the DO), and (3) if destroyed, clear all storage and exit without calling Container methods.
 
-23. **Kill early health server before full health server** - The entrypoint.sh starts two health servers sequentially: an early one (minimal, for startup diagnostics) and a full one (with cpu/mem/hdd metrics). Both listen on port 3000. If the early server isn't killed before the full server starts, the early server holds the port and metrics are never returned.
+23. **Single port architecture eliminates port conflicts** - All container services (WebSocket, health, metrics) are consolidated on port 8080. Earlier multi-port designs had issues with the early health server holding port 3000 and preventing the full server from starting. Single port eliminates this class of bugs entirely.
 
 24. **idFromName() CREATES DOs, idFromString() references existing** - Cloudflare Durable Objects are "Virtual Actors" that always exist conceptually. Calling `idFromName(name)` + `get()` + ANY method (fetch, destroy, getState) **CREATES** a new DO if it doesn't exist. The ONLY safe way to reference an existing DO without creating it is via `idFromString(hexId)` with a known 64-character hex ID. Admin endpoints that tried to "nuke" containers by name were actually CREATING zombies because they used `idFromName()`. The only way to truly DELETE DOs is to delete the entire class via migration (`deleted_classes` in wrangler.toml).
 
@@ -1952,6 +2307,3 @@ Backend `startup-status` endpoint now returns cpu/mem/hdd metrics in ALL stages 
 
 Frontend types updated with optional `cpu`, `mem`, `hdd` fields in `StartupStatusResponse.details`.
 
----
-
-*Generated: 2026-02-04 (updated: DO zombie prevention, removed broken admin endpoints)*

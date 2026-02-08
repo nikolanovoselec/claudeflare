@@ -1,18 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { getR2Config } from '../../lib/r2-config';
-
-// Mock KV helper (same pattern as setup.test.ts)
-function createMockKV() {
-  const store = new Map<string, string>();
-  return {
-    get: vi.fn(async (key: string) => store.get(key) || null),
-    put: vi.fn(async (key: string, value: string) => { store.set(key, value); }),
-    delete: vi.fn(async (key: string) => { store.delete(key); }),
-    list: vi.fn(async () => ({ keys: [] })),
-    _store: store,
-    _clear: () => store.clear(),
-  };
-}
+import { createMockKV } from '../helpers/mock-kv';
 
 describe('getR2Config', () => {
   let mockKV: ReturnType<typeof createMockKV>;
@@ -64,9 +52,9 @@ describe('getR2Config', () => {
     expect(config.endpoint).toBe('https://abc123.r2.cloudflarestorage.com');
   });
 
-  it('throws when neither env nor KV has account ID', async () => {
+  it('throws when no env, KV, or API token available', async () => {
     const env = createEnv({});
-    await expect(getR2Config(env)).rejects.toThrow();
+    await expect(getR2Config(env)).rejects.toThrow(/R2 account ID/i);
   });
 
   it('prefers env over KV when both exist', async () => {
@@ -105,5 +93,45 @@ describe('getR2Config', () => {
   it('throws descriptive error message', async () => {
     const env = createEnv({});
     await expect(getR2Config(env)).rejects.toThrow(/R2 account ID/i);
+  });
+
+  it('self-heals from API token when env and KV are empty', async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        success: true,
+        result: [{ id: 'api-resolved-account' }],
+      }))
+    );
+    vi.stubGlobal('fetch', mockFetch);
+
+    const env = createEnv({ CLOUDFLARE_API_TOKEN: 'test-token' });
+    const config = await getR2Config(env);
+
+    expect(config.accountId).toBe('api-resolved-account');
+    expect(config.endpoint).toBe('https://api-resolved-account.r2.cloudflarestorage.com');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/accounts'),
+      expect.objectContaining({
+        headers: { 'Authorization': 'Bearer test-token' },
+      })
+    );
+
+    // Verify KV was populated for next time
+    expect(mockKV._store.get('setup:account_id')).toBe('api-resolved-account');
+    expect(mockKV._store.get('setup:r2_endpoint')).toBe('https://api-resolved-account.r2.cloudflarestorage.com');
+
+    vi.unstubAllGlobals();
+  });
+
+  it('throws when API token is present but API call fails', async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: false }))
+    );
+    vi.stubGlobal('fetch', mockFetch);
+
+    const env = createEnv({ CLOUDFLARE_API_TOKEN: 'bad-token' });
+    await expect(getR2Config(env)).rejects.toThrow(/R2 account ID/i);
+
+    vi.unstubAllGlobals();
   });
 });

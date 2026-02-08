@@ -1,11 +1,13 @@
 /**
  * Available log levels in order of severity
  */
+/** @internal */
 export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 
 /**
  * Structure of a log entry
  */
+/** @internal */
 export interface LogEntry {
   /** ISO 8601 timestamp */
   timestamp: string;
@@ -31,6 +33,7 @@ export interface LogEntry {
 
 /**
  * Logger interface
+ * @internal
  */
 export interface Logger {
   /** Log a debug message (not output by default) */
@@ -57,9 +60,17 @@ const LOG_LEVELS: Record<LogLevel, number> = {
 
 /**
  * Minimum log level to output
- * Could be configured via environment variable
+ * Configurable at runtime via setLogLevel()
  */
-const MIN_LOG_LEVEL: LogLevel = 'info';
+let minLogLevel: LogLevel = 'info';
+
+/**
+ * Set the minimum log level at runtime.
+ * Call early in the request lifecycle (e.g., from env.LOG_LEVEL).
+ */
+export function setLogLevel(level: LogLevel): void {
+  minLogLevel = level;
+}
 
 /**
  * Create a structured JSON logger
@@ -112,7 +123,7 @@ export function createLogger(module: string, context?: Record<string, unknown>):
     data?: Record<string, unknown>,
     error?: Error
   ): void {
-    if (LOG_LEVELS[level] < LOG_LEVELS[MIN_LOG_LEVEL]) {
+    if (LOG_LEVELS[level] < LOG_LEVELS[minLogLevel]) {
       return;
     }
 

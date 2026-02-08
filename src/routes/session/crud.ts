@@ -3,16 +3,20 @@
  * Handles GET/POST/PATCH/DELETE operations for sessions
  */
 import { Hono } from 'hono';
+import { z } from 'zod';
 import { getContainer } from '@cloudflare/containers';
 import type { Env, Session } from '../../types';
-import { getSessionKey, getSessionPrefix, generateSessionId } from '../../lib/kv-keys';
+import { getSessionKey, getSessionPrefix, generateSessionId, getSessionOrThrow, listAllKvKeys, sanitizeSessionName } from '../../lib/kv-keys';
 import { AuthVariables } from '../../middleware/auth';
 import { createRateLimiter } from '../../middleware/rate-limit';
 import { MAX_SESSION_NAME_LENGTH } from '../../lib/constants';
 import { getContainerId } from '../../lib/container-helpers';
 import { createLogger } from '../../lib/logger';
 import { containerSessionsCB } from '../../lib/circuit-breakers';
-import { ValidationError, NotFoundError } from '../../lib/error-types';
+import { ValidationError } from '../../lib/error-types';
+
+const CreateSessionBody = z.object({ name: z.string().max(MAX_SESSION_NAME_LENGTH).optional() }).strict();
+const UpdateSessionBody = z.object({ name: z.string().max(MAX_SESSION_NAME_LENGTH).optional() }).strict();
 
 const logger = createLogger('session-crud');
 
@@ -36,11 +40,11 @@ app.get('/', async (c) => {
   const bucketName = c.get('bucketName');
   const prefix = getSessionPrefix(bucketName);
 
-  // List all sessions for this user from KV
-  const list = await c.env.KV.list({ prefix });
+  // List all sessions for this user from KV (with pagination for >1000 keys)
+  const keys = await listAllKvKeys(c.env.KV, prefix);
 
   // Fetch session data for each key (parallel for better performance)
-  const sessionPromises = list.keys.map(key => c.env.KV.get<Session>(key.name, 'json'));
+  const sessionPromises = keys.map(key => c.env.KV.get<Session>(key.name, 'json'));
   const sessionResults = await Promise.all(sessionPromises);
   const sessions: Session[] = sessionResults.filter((s): s is Session => s !== null);
 
@@ -61,15 +65,14 @@ app.get('/', async (c) => {
  */
 app.post('/', sessionCreateRateLimiter, async (c) => {
   const bucketName = c.get('bucketName');
-  const body = await c.req.json<{ name?: string }>();
-
-  // Validate session name
-  let sessionName = body.name?.trim() || 'Terminal';
-  if (sessionName.length > MAX_SESSION_NAME_LENGTH) {
-    throw new ValidationError(`Session name too long (max ${MAX_SESSION_NAME_LENGTH} characters)`);
+  const raw = await c.req.json();
+  const parsed = CreateSessionBody.safeParse(raw);
+  if (!parsed.success) {
+    throw new ValidationError(parsed.error.errors[0].message);
   }
-  // Sanitize: remove potentially dangerous characters
-  sessionName = sessionName.replace(/[<>&"']/g, '');
+
+  let sessionName = parsed.data.name?.trim() || 'Terminal';
+  sessionName = sanitizeSessionName(sessionName);
 
   const sessionId = generateSessionId();
   const now = new Date().toISOString();
@@ -98,11 +101,7 @@ app.get('/:id', async (c) => {
   const sessionId = c.req.param('id');
   const key = getSessionKey(bucketName, sessionId);
 
-  const session = await c.env.KV.get<Session>(key, 'json');
-
-  if (!session) {
-    throw new NotFoundError('Session');
-  }
+  const session = await getSessionOrThrow(c.env.KV, key);
 
   return c.json({ session });
 });
@@ -116,17 +115,17 @@ app.patch('/:id', async (c) => {
   const sessionId = c.req.param('id');
   const key = getSessionKey(bucketName, sessionId);
 
-  const session = await c.env.KV.get<Session>(key, 'json');
+  const session = await getSessionOrThrow(c.env.KV, key);
 
-  if (!session) {
-    throw new NotFoundError('Session');
+  const raw = await c.req.json();
+  const parsed = UpdateSessionBody.safeParse(raw);
+  if (!parsed.success) {
+    throw new ValidationError(parsed.error.errors[0].message);
   }
 
-  const body = await c.req.json<{ name?: string }>();
-
   // Update fields
-  if (body.name) {
-    session.name = body.name;
+  if (parsed.data.name) {
+    session.name = sanitizeSessionName(parsed.data.name);
   }
   session.lastAccessedAt = new Date().toISOString();
 
@@ -141,17 +140,13 @@ app.patch('/:id', async (c) => {
  * Delete a session
  */
 app.delete('/:id', async (c) => {
-  const reqLogger = logger.child({ requestId: c.req.header('X-Request-ID') });
+  const reqLogger = logger.child({ requestId: c.get('requestId') });
   const bucketName = c.get('bucketName');
   const sessionId = c.req.param('id');
   const key = getSessionKey(bucketName, sessionId);
 
   // Check if session exists
-  const session = await c.env.KV.get<Session>(key, 'json');
-
-  if (!session) {
-    throw new NotFoundError('Session');
-  }
+  await getSessionOrThrow(c.env.KV, key);
 
   const containerId = getContainerId(bucketName, sessionId);
   const container = getContainer(c.env.CONTAINER, containerId);
@@ -166,9 +161,9 @@ app.delete('/:id', async (c) => {
         })
       )
     );
-  } catch (error) {
+  } catch (err) {
     // Container might not be running, that's okay
-    reqLogger.warn('Could not notify container about session deletion', { sessionId, error: String(error) });
+    reqLogger.warn('Could not notify container about session deletion', { sessionId, error: String(err) });
   }
 
   // Delete from KV
@@ -178,8 +173,8 @@ app.delete('/:id', async (c) => {
   try {
     await container.destroy();
     reqLogger.info('Destroyed container', { containerId });
-  } catch (error) {
-    reqLogger.warn('Could not destroy container', { containerId, error: String(error) });
+  } catch (err) {
+    reqLogger.warn('Could not destroy container', { containerId, error: String(err) });
   }
 
   return c.json({ deleted: true, id: sessionId });
@@ -194,11 +189,7 @@ app.post('/:id/touch', async (c) => {
   const sessionId = c.req.param('id');
   const key = getSessionKey(bucketName, sessionId);
 
-  const session = await c.env.KV.get<Session>(key, 'json');
-
-  if (!session) {
-    throw new NotFoundError('Session');
-  }
+  const session = await getSessionOrThrow(c.env.KV, key);
 
   session.lastAccessedAt = new Date().toISOString();
   await c.env.KV.put(key, JSON.stringify(session));

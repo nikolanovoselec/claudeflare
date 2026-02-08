@@ -4,14 +4,11 @@
  * All routes require DEV_MODE to be enabled
  */
 import { Hono } from 'hono';
-import { switchPort } from '@cloudflare/containers';
 import type { Env } from '../../types';
 import { getContainerContext } from '../../lib/container-helpers';
-import { HEALTH_SERVER_PORT } from '../../lib/constants';
 import { AuthVariables } from '../../middleware/auth';
-import { isBucketNameResponse } from '../../lib/type-guards';
-import { ContainerError, AuthError } from '../../lib/error-types';
-import { containerLogger, containerHealthCB, containerInternalCB } from './shared';
+import { ContainerError, AuthError, toError, toErrorMessage } from '../../lib/error-types';
+import { containerLogger, containerHealthCB, containerInternalCB, getStoredBucketName } from './shared';
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
@@ -31,28 +28,13 @@ app.use('*', async (c, next) => {
  * Debug endpoint to check DO stored bucket name and container env vars
  */
 app.get('/debug', async (c) => {
-  const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
+  const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
 
   try {
     const { bucketName, containerId, container } = getContainerContext(c);
 
     // Get stored bucket name from DO
-    let storedBucketName: string | null = null;
-    try {
-      const getBucketResp = await containerInternalCB.execute(() =>
-        container.fetch(
-          new Request('http://container/_internal/getBucketName', { method: 'GET' })
-        )
-      );
-      const data = await getBucketResp.json();
-      if (isBucketNameResponse(data)) {
-        storedBucketName = data.bucketName;
-      } else {
-        storedBucketName = 'error: invalid response';
-      }
-    } catch (error) {
-      storedBucketName = `error: ${error}`;
-    }
+    const storedBucketName = await getStoredBucketName(container, reqLogger);
 
     // Get envVars debug info from DO
     let envVarsDebug: Record<string, unknown> = {};
@@ -63,25 +45,22 @@ app.get('/debug', async (c) => {
         )
       );
       envVarsDebug = await envVarsResp.json() as Record<string, unknown>;
-    } catch (error) {
-      envVarsDebug = { error: String(error) };
+    } catch (err) {
+      envVarsDebug = { error: String(err) };
     }
 
     // Get container state
     let containerState;
     try {
       containerState = await container.getState();
-    } catch (error) {
-      containerState = { status: 'unknown', error: String(error) };
+    } catch (err) {
+      containerState = { status: 'unknown', error: String(err) };
     }
 
-    // Get health from port 8081 (has mount status)
+    // Get health status
     let healthData: Record<string, unknown> = {};
     try {
-      const healthRequest = switchPort(
-        new Request('http://container/health', { method: 'GET' }),
-        HEALTH_SERVER_PORT
-      );
+      const healthRequest = new Request('http://container/health', { method: 'GET' });
       const healthRes = await containerHealthCB.execute(() => container.fetch(healthRequest));
       if (healthRes.ok) {
         healthData = await healthRes.json() as Record<string, unknown>;
@@ -94,8 +73,8 @@ app.get('/debug', async (c) => {
           body: text.substring(0, 500)
         };
       }
-    } catch (error) {
-      healthData = { error: String(error) };
+    } catch (err) {
+      healthData = { error: String(err) };
     }
 
     reqLogger.info('Debug endpoint called', { containerId, bucketName });
@@ -109,8 +88,8 @@ app.get('/debug', async (c) => {
       containerState,
       healthData,
     });
-  } catch (error) {
-    throw new ContainerError('debug', error instanceof Error ? error.message : 'Unknown error');
+  } catch (err) {
+    throw new ContainerError('debug', toErrorMessage(err));
   }
 });
 
@@ -119,7 +98,7 @@ app.get('/debug', async (c) => {
  * Tests if the s3fs mount is working by writing and reading a file
  */
 app.get('/mount-test', async (c) => {
-  const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
+  const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
 
   try {
     const { containerId, container } = getContainerContext(c);
@@ -141,15 +120,9 @@ app.get('/mount-test', async (c) => {
       containerId,
       mountTest: result,
     });
-  } catch (error) {
-    reqLogger.error('Mount test error', error instanceof Error ? error : new Error(String(error)));
-    return c.json(
-      {
-        success: false,
-        error: error instanceof Error ? error.message : 'Unknown error',
-      },
-      500
-    );
+  } catch (err) {
+    reqLogger.error('Mount test error', toError(err));
+    throw new ContainerError('mount-test', toErrorMessage(err));
   }
 });
 
@@ -158,16 +131,13 @@ app.get('/mount-test', async (c) => {
  * Fetch the sync log from the container for debugging
  */
 app.get('/sync-log', async (c) => {
-  const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
+  const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
 
   try {
     const { containerId, container } = getContainerContext(c);
 
     // Fetch sync log via the health server (add endpoint to entrypoint.sh)
-    const logRequest = switchPort(
-      new Request('http://container/sync-log', { method: 'GET' }),
-      HEALTH_SERVER_PORT
-    );
+    const logRequest = new Request('http://container/sync-log', { method: 'GET' });
     const logRes = await containerHealthCB.execute(() => container.fetch(logRequest));
 
     if (!logRes.ok) {
@@ -184,9 +154,9 @@ app.get('/sync-log', async (c) => {
       containerId,
       log: logData.log,
     });
-  } catch (error) {
-    reqLogger.error('Sync log error', error instanceof Error ? error : new Error(String(error)));
-    throw new ContainerError('sync-log', error instanceof Error ? error.message : 'Unknown error');
+  } catch (err) {
+    reqLogger.error('Sync log error', toError(err));
+    throw new ContainerError('sync-log', toErrorMessage(err));
   }
 });
 
@@ -206,8 +176,8 @@ app.get('/state', async (c) => {
       containerId,
       state,
     });
-  } catch (error) {
-    throw new ContainerError('state', error instanceof Error ? error.message : 'Unknown error');
+  } catch (err) {
+    throw new ContainerError('state', toErrorMessage(err));
   }
 });
 

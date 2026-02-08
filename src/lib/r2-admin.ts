@@ -2,16 +2,12 @@
  * R2 bucket management via Cloudflare API
  */
 
-interface CreateBucketResponse {
-  success: boolean;
-  errors: Array<{ code: number; message: string }>;
-  messages: string[];
-  result?: {
-    name: string;
-    creation_date: string;
-    location: string;
-  };
-}
+import { createLogger } from './logger';
+import { r2AdminCB } from './circuit-breakers';
+import { CF_API_BASE } from './constants';
+import { parseCfResponse } from './cf-api';
+
+const logger = createLogger('r2-admin');
 
 /**
  * Check if a bucket exists
@@ -21,15 +17,17 @@ async function bucketExists(
   apiToken: string,
   bucketName: string
 ): Promise<boolean> {
-  const response = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/buckets/${bucketName}`,
-    {
-      method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${apiToken}`,
-        'Content-Type': 'application/json',
-      },
-    }
+  const response = await r2AdminCB.execute(() =>
+    fetch(
+      `${CF_API_BASE}/accounts/${accountId}/r2/buckets/${bucketName}`,
+      {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${apiToken}`,
+          'Content-Type': 'application/json',
+        },
+      }
+    )
   );
 
   return response.ok;
@@ -47,33 +45,44 @@ export async function createBucketIfNotExists(
   // Check if bucket already exists
   const exists = await bucketExists(accountId, apiToken, bucketName);
   if (exists) {
-    console.log(`[R2Admin] Bucket ${bucketName} already exists`);
+    logger.info('Bucket already exists', { bucketName });
     return { success: true, created: false };
   }
 
   // Create the bucket
-  console.log(`[R2Admin] Creating bucket ${bucketName}...`);
+  logger.info('Creating bucket', { bucketName });
 
-  const response = await fetch(
-    `https://api.cloudflare.com/client/v4/accounts/${accountId}/r2/buckets`,
-    {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ name: bucketName }),
-    }
+  const response = await r2AdminCB.execute(() =>
+    fetch(
+      `${CF_API_BASE}/accounts/${accountId}/r2/buckets`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ name: bucketName }),
+      }
+    )
   );
 
-  const data = await response.json() as CreateBucketResponse;
+  const data = await parseCfResponse<{ name: string; creation_date: string; location: string }>(response);
 
   if (!response.ok || !data.success) {
+    // Treat "already exists" as success (race between bucketExists check and creation)
+    const alreadyExists = data.errors?.some(
+      e => e.message?.toLowerCase().includes('already exists')
+    );
+    if (alreadyExists) {
+      logger.info('Bucket already exists (detected via create error)', { bucketName });
+      return { success: true, created: false };
+    }
+
     const errorMsg = data.errors?.[0]?.message || `HTTP ${response.status}`;
-    console.error(`[R2Admin] Failed to create bucket: ${errorMsg}`);
+    logger.error('Failed to create bucket', new Error(errorMsg), { bucketName });
     return { success: false, error: errorMsg };
   }
 
-  console.log(`[R2Admin] Bucket ${bucketName} created successfully`);
+  logger.info('Bucket created successfully', { bucketName });
   return { success: true, created: true };
 }

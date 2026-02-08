@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { getContainerId, waitForContainerHealth, ensureBucketName } from '../../lib/container-helpers';
+import { getContainerId, getSessionIdFromQueryOrHeader, waitForContainerHealth, ensureBucketName } from '../../lib/container-helpers';
 import type { HealthCheckOptions, HealthData } from '../../lib/container-helpers';
+import { ValidationError } from '../../lib/error-types';
 
 describe('getContainerId', () => {
   it('creates valid container ID from bucket and session', () => {
@@ -22,6 +23,67 @@ describe('getContainerId', () => {
     expect(() => getContainerId('bucket', 'abcdefgh')).not.toThrow();
     expect(() => getContainerId('bucket', '12345678')).not.toThrow();
   });
+
+  it('throws ValidationError (not generic Error) on invalid input', () => {
+    expect(() => getContainerId('bucket', '../etc/passwd')).toThrow(ValidationError);
+    expect(() => getContainerId('bucket', '')).toThrow(ValidationError);
+  });
+
+  it('error message does not contain attacker input', () => {
+    const maliciousInput = '../../etc/passwd';
+    try {
+      getContainerId('bucket', maliciousInput);
+      expect.fail('should have thrown');
+    } catch (e) {
+      expect((e as Error).message).not.toContain(maliciousInput);
+    }
+  });
+});
+
+describe('getSessionIdFromQueryOrHeader', () => {
+  function createMockContext(query?: string, header?: string) {
+    return {
+      req: {
+        query: (name: string) => (name === 'sessionId' ? query : undefined),
+        header: (name: string) => (name === 'X-Browser-Session' ? header : undefined),
+      },
+    } as any;
+  }
+
+  it('throws ValidationError for path traversal attempt', () => {
+    const c = createMockContext('../../etc/passwd');
+    expect(() => getSessionIdFromQueryOrHeader(c)).toThrow(ValidationError);
+  });
+
+  it('throws ValidationError for empty string', () => {
+    const c = createMockContext('');
+    expect(() => getSessionIdFromQueryOrHeader(c)).toThrow(ValidationError);
+  });
+
+  it('throws ValidationError for string with spaces', () => {
+    const c = createMockContext('abc 12345');
+    expect(() => getSessionIdFromQueryOrHeader(c)).toThrow(ValidationError);
+  });
+
+  it('throws ValidationError for string with special characters', () => {
+    const c = createMockContext('abc!@#$%');
+    expect(() => getSessionIdFromQueryOrHeader(c)).toThrow(ValidationError);
+  });
+
+  it('throws ValidationError when sessionId is missing entirely', () => {
+    const c = createMockContext(undefined, undefined);
+    expect(() => getSessionIdFromQueryOrHeader(c)).toThrow(ValidationError);
+  });
+
+  it('returns valid sessionId from query parameter', () => {
+    const c = createMockContext('abc12345');
+    expect(getSessionIdFromQueryOrHeader(c)).toBe('abc12345');
+  });
+
+  it('falls back to X-Browser-Session header', () => {
+    const c = createMockContext(undefined, 'xyz98765');
+    expect(getSessionIdFromQueryOrHeader(c)).toBe('xyz98765');
+  });
 });
 
 describe('waitForContainerHealth', () => {
@@ -34,7 +96,7 @@ describe('waitForContainerHealth', () => {
   });
 
   it('returns ok:true with data when health check succeeds on first attempt', async () => {
-    const healthData: HealthData = { status: 'healthy', cpu: 10, memory: 50, disk: 30 };
+    const healthData: HealthData = { status: 'healthy', cpu: '10%', mem: '1.5/3.0G', hdd: '2.0/10.0G' };
     const mockContainer = {
       fetch: vi.fn().mockResolvedValue(
         new Response(JSON.stringify(healthData), { status: 200 })

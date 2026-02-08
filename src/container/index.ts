@@ -1,12 +1,10 @@
 import { Container } from '@cloudflare/containers';
 import type { DurableObjectState } from '@cloudflare/workers-types';
 import type { Env } from '../types';
-import { TERMINAL_SERVER_PORT, IDLE_TIMEOUT_MS } from '../lib/constants';
-
-/**
- * Bug 3 fix: Smart hibernation configuration
- */
-const ACTIVITY_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5 minutes
+import { TERMINAL_SERVER_PORT, IDLE_TIMEOUT_MS, ACTIVITY_POLL_INTERVAL_MS } from '../lib/constants';
+import { getR2Config } from '../lib/r2-config';
+import { toErrorMessage } from '../lib/error-types';
+import { createLogger } from '../lib/logger';
 
 /**
  * Storage key to mark a DO as destroyed - prevents zombie resurrection
@@ -19,7 +17,12 @@ const DESTROYED_FLAG_KEY = '_destroyed';
  * Each user gets one container that persists their workspace via s3fs mount to R2.
  * The container runs a terminal server that handles multiple PTY sessions.
  */
+// Class name must be lowercase 'container' to match wrangler.toml class_name
+// and existing DO migrations. Renaming would require a destructive migration
+// that risks losing all existing Durable Objects. See wrangler.toml migrations.
 export class container extends Container<Env> {
+  private logger = createLogger('container');
+
   // Port where the container's HTTP server listens
   // Terminal server handles all endpoints: WebSocket, health check, metrics
   defaultPort = 8080;
@@ -31,6 +34,8 @@ export class container extends Container<Env> {
   private _bucketName: string | null = null;
   private _r2AccountId: string | null = null;
   private _r2Endpoint: string | null = null;
+  private _r2AccessKeyId: string | null = null;
+  private _r2SecretAccessKey: string | null = null;
 
   // Bug 3 fix: Activity polling timer
   private _activityPollAlarm: boolean = false;
@@ -42,37 +47,33 @@ export class container extends Container<Env> {
       // Check if this DO was already destroyed - if so, self-destruct immediately
       const wasDestroyed = await this.ctx.storage.get<boolean>(DESTROYED_FLAG_KEY);
       if (wasDestroyed) {
-        console.log(`[container] ZOMBIE DETECTED in constructor - clearing storage`);
+        this.logger.warn('Zombie detected in constructor, clearing storage');
         await this.ctx.storage.deleteAll();
         return; // Don't initialize anything else
       }
 
       this._bucketName = await this.ctx.storage.get<string>('bucketName') || null;
 
-      // Resolve R2 config: prefer env vars, fall back to KV
-      if (this.env.R2_ACCOUNT_ID) {
-        this._r2AccountId = this.env.R2_ACCOUNT_ID;
-        this._r2Endpoint = this.env.R2_ENDPOINT || `https://${this._r2AccountId}.r2.cloudflarestorage.com`;
-      } else {
-        try {
-          const kvAccountId = await this.env.KV.get('setup:account_id');
-          if (kvAccountId) {
-            this._r2AccountId = kvAccountId;
-            this._r2Endpoint = `https://${kvAccountId}.r2.cloudflarestorage.com`;
-          }
-        } catch (e) {
-          console.error('[container] Failed to resolve R2 config from KV:', e);
-        }
-      }
-
       // If no bucket name stored, this is an orphan/zombie DO - self-destruct
       if (!this._bucketName) {
-        console.log(`[container] ORPHAN DO detected (no bucketName) - clearing storage`);
+        this.logger.warn('Orphan DO detected, no bucketName, clearing storage');
         await this.ctx.storage.deleteAll();
         return; // Don't initialize anything else
       }
 
-      console.log(`[container] Loaded bucket name from storage: ${this._bucketName}`);
+      // Resolve R2 config via shared helper (env vars first, KV fallback)
+      // Done AFTER zombie/orphan checks to avoid unnecessary KV reads for doomed DOs
+      try {
+        const r2Config = await getR2Config(this.env);
+        this._r2AccountId = r2Config.accountId;
+        this._r2Endpoint = r2Config.endpoint;
+      } catch (err) {
+        this.logger.warn('R2 config not available, will use empty values in envVars', {
+          error: toErrorMessage(err),
+        });
+      }
+
+      this.logger.info('Loaded bucket name from storage', { bucketName: this._bucketName });
       this.updateEnvVars();
     });
   }
@@ -80,11 +81,36 @@ export class container extends Container<Env> {
   /**
    * Set the bucket name for this container (called by worker on first access)
    */
-  async setBucketName(name: string): Promise<void> {
+  async setBucketName(name: string, r2Creds?: {
+    r2AccessKeyId?: string;
+    r2SecretAccessKey?: string;
+    r2AccountId?: string;
+    r2Endpoint?: string;
+  }): Promise<void> {
     this._bucketName = name;
     await this.ctx.storage.put('bucketName', name);
+
+    // Use Worker-provided R2 credentials (most reliable — Worker definitely has secrets)
+    if (r2Creds?.r2AccessKeyId) this._r2AccessKeyId = r2Creds.r2AccessKeyId;
+    if (r2Creds?.r2SecretAccessKey) this._r2SecretAccessKey = r2Creds.r2SecretAccessKey;
+    if (r2Creds?.r2AccountId) this._r2AccountId = r2Creds.r2AccountId;
+    if (r2Creds?.r2Endpoint) this._r2Endpoint = r2Creds.r2Endpoint;
+
+    // Fall back to getR2Config only if Worker didn't provide account ID
+    if (!this._r2AccountId) {
+      try {
+        const r2Config = await getR2Config(this.env);
+        this._r2AccountId = r2Config.accountId;
+        this._r2Endpoint = r2Config.endpoint;
+      } catch (err) {
+        this.logger.warn('R2 config not available in setBucketName', {
+          error: toErrorMessage(err),
+        });
+      }
+    }
+
     this.updateEnvVars();
-    console.log(`[container] Stored bucket name: ${name}`);
+    this.logger.info('Stored bucket name', { bucketName: name });
   }
 
   /**
@@ -100,18 +126,18 @@ export class container extends Container<Env> {
    */
   private updateEnvVars(): void {
     const bucketName = this._bucketName || 'unknown-bucket';
-    const accessKeyId = this.env.R2_ACCESS_KEY_ID || '';
-    const secretAccessKey = this.env.R2_SECRET_ACCESS_KEY || '';
+    const accessKeyId = this._r2AccessKeyId || this.env.R2_ACCESS_KEY_ID || '';
+    const secretAccessKey = this._r2SecretAccessKey || this.env.R2_SECRET_ACCESS_KEY || '';
     const accountId = this._r2AccountId || this.env.R2_ACCOUNT_ID || '';
     const endpoint = this._r2Endpoint || this.env.R2_ENDPOINT || '';
 
-    // Debug logging for env var status
-    console.log(`[container] updateEnvVars called:`);
-    console.log(`  R2_BUCKET_NAME: ${bucketName}`);
-    console.log(`  R2_ACCESS_KEY_ID: ${accessKeyId ? accessKeyId.substring(0, 4) + '...' : 'NOT SET'}`);
-    console.log(`  R2_SECRET_ACCESS_KEY: ${secretAccessKey ? 'SET (hidden)' : 'NOT SET'}`);
-    console.log(`  R2_ACCOUNT_ID: ${accountId || 'NOT SET'}`);
-    console.log(`  R2_ENDPOINT: ${endpoint || 'NOT SET'}`);
+    this.logger.info('R2 credentials configured', {
+      bucketName,
+      hasAccessKey: !!accessKeyId,
+      hasSecretKey: !!secretAccessKey,
+      hasAccountId: !!accountId,
+      hasEndpoint: !!endpoint,
+    });
 
     this.envVars = {
       // R2 credentials - using AWS naming convention for s3fs compatibility
@@ -137,9 +163,16 @@ export class container extends Container<Env> {
     // Handle internal bucket name setting endpoint
     if (url.pathname === '/_internal/setBucketName' && request.method === 'POST') {
       try {
-        const { bucketName } = await request.json() as { bucketName: string };
+        const { bucketName, r2AccessKeyId, r2SecretAccessKey, r2AccountId, r2Endpoint } =
+          await request.json() as {
+            bucketName: string;
+            r2AccessKeyId?: string;
+            r2SecretAccessKey?: string;
+            r2AccountId?: string;
+            r2Endpoint?: string;
+          };
         if (bucketName) {
-          await this.setBucketName(bucketName);
+          await this.setBucketName(bucketName, { r2AccessKeyId, r2SecretAccessKey, r2AccountId, r2Endpoint });
           return new Response(JSON.stringify({ success: true, bucketName }), {
             headers: { 'Content-Type': 'application/json' },
           });
@@ -148,8 +181,8 @@ export class container extends Container<Env> {
           status: 400,
           headers: { 'Content-Type': 'application/json' },
         });
-      } catch (e) {
-        return new Response(JSON.stringify({ error: String(e) }), {
+      } catch (err) {
+        return new Response(JSON.stringify({ error: toErrorMessage(err) }), {
           status: 500,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -163,8 +196,15 @@ export class container extends Container<Env> {
       });
     }
 
-    // Handle internal envVars debug endpoint (shows masked values)
+    // Handle internal envVars debug endpoint (shows masked values) - DEV_MODE only
     if (url.pathname === '/_internal/debugEnvVars' && request.method === 'GET') {
+      if (this.env.DEV_MODE !== 'true') {
+        return new Response(JSON.stringify({ error: 'Not found' }), {
+          status: 404,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
       const debugInfo = {
         bucketName: this._bucketName,
         resolvedR2Config: {
@@ -178,13 +218,13 @@ export class container extends Container<Env> {
           R2_BUCKET_NAME: this.envVars?.R2_BUCKET_NAME || 'NOT SET',
           R2_ENDPOINT: this.envVars?.R2_ENDPOINT || 'NOT SET',
           R2_ACCOUNT_ID: this.envVars?.R2_ACCOUNT_ID || 'NOT SET',
-          R2_ACCESS_KEY_ID: this.envVars?.R2_ACCESS_KEY_ID ? this.envVars.R2_ACCESS_KEY_ID.substring(0, 4) + '...' : 'NOT SET',
-          R2_SECRET_ACCESS_KEY: this.envVars?.R2_SECRET_ACCESS_KEY ? 'SET (hidden)' : 'NOT SET',
+          R2_ACCESS_KEY_ID: this.envVars?.R2_ACCESS_KEY_ID ? 'SET' : 'NOT SET',
+          R2_SECRET_ACCESS_KEY: this.envVars?.R2_SECRET_ACCESS_KEY ? 'SET' : 'NOT SET',
           TERMINAL_PORT: this.envVars?.TERMINAL_PORT || 'NOT SET',
         },
         workerEnv: {
-          R2_ACCESS_KEY_ID: this.env.R2_ACCESS_KEY_ID ? this.env.R2_ACCESS_KEY_ID.substring(0, 4) + '...' : 'NOT SET',
-          R2_SECRET_ACCESS_KEY: this.env.R2_SECRET_ACCESS_KEY ? 'SET (hidden)' : 'NOT SET',
+          R2_ACCESS_KEY_ID: this.env.R2_ACCESS_KEY_ID ? 'SET' : 'NOT SET',
+          R2_SECRET_ACCESS_KEY: this.env.R2_SECRET_ACCESS_KEY ? 'SET' : 'NOT SET',
           R2_ACCOUNT_ID: this.env.R2_ACCOUNT_ID || 'NOT SET',
           R2_ENDPOINT: this.env.R2_ENDPOINT || 'NOT SET',
         },
@@ -202,7 +242,7 @@ export class container extends Container<Env> {
    * Called when the container starts successfully
    */
   override onStart(): void {
-    console.log('[container] Container started successfully');
+    this.logger.info('Container started successfully');
 
     // Bug 3 fix: Start activity polling
     this.scheduleActivityPoll();
@@ -218,9 +258,9 @@ export class container extends Container<Env> {
       const nextPollTime = Date.now() + ACTIVITY_POLL_INTERVAL_MS;
       await this.ctx.storage.setAlarm(nextPollTime);
       this._activityPollAlarm = true;
-      console.log(`[container] Activity poll scheduled for ${new Date(nextPollTime).toISOString()}`);
-    } catch (e) {
-      console.error('[container] Failed to schedule activity poll:', e);
+      this.logger.info('Activity poll scheduled', { nextPollTime: new Date(nextPollTime).toISOString() });
+    } catch (err) {
+      this.logger.error('Failed to schedule activity poll', err instanceof Error ? err : new Error(toErrorMessage(err)));
     }
   }
 
@@ -232,7 +272,7 @@ export class container extends Container<Env> {
   private async checkDestroyedState(): Promise<boolean> {
     const wasDestroyed = await this.ctx.storage.get<boolean>(DESTROYED_FLAG_KEY);
     if (wasDestroyed) {
-      console.log(`[container] ZOMBIE PREVENTED: DO was destroyed, clearing alarm and storage`);
+      this.logger.warn('Zombie prevented: DO was destroyed, clearing alarm and storage');
       await this.ctx.storage.deleteAlarm();
       await this.ctx.storage.deleteAll();
       return true;
@@ -246,12 +286,12 @@ export class container extends Container<Env> {
    */
   private async checkOrphanState(): Promise<boolean> {
     if (!this._bucketName) {
-      console.log(`[container] ZOMBIE DETECTED: no bucketName stored, doId=${this.ctx.id.toString()}`);
+      this.logger.warn('Zombie detected: no bucketName stored', { doId: this.ctx.id.toString() });
       try {
         await this.ctx.storage.deleteAlarm();
         await this.ctx.storage.deleteAll();
-      } catch (e) {
-        console.error('[container] Failed to cleanup zombie:', e);
+      } catch (err) {
+        this.logger.error('Failed to cleanup zombie', err instanceof Error ? err : new Error(toErrorMessage(err)));
       }
       return true;
     }
@@ -266,13 +306,13 @@ export class container extends Container<Env> {
     try {
       const state = await this.getState();
       if (state.status === 'stopped' || state.status === 'stopped_with_code') {
-        console.log(`[container] Container is ${state.status}, DESTROYING to prevent zombie resurrection`);
+        this.logger.info('Container stopped, destroying to prevent zombie resurrection', { status: state.status });
         await this.cleanupAndDestroy();
         return true;
       }
       return false;
-    } catch (e) {
-      console.log('[container] Could not get state in alarm, DESTROYING as zombie:', e);
+    } catch (err) {
+      this.logger.warn('Could not get state in alarm, destroying as zombie', { error: toErrorMessage(err) });
       await this.cleanupAndDestroy();
       return true;
     }
@@ -286,19 +326,19 @@ export class container extends Container<Env> {
     const activityInfo = await this.getActivityInfo();
 
     if (!activityInfo) {
-      console.log(`[container] Could not get activity info, DESTROYING as zombie`);
+      this.logger.warn('Could not get activity info, destroying as zombie');
       await this.cleanupAndDestroy();
       return true;
     }
 
     const { hasActiveConnections, lastPtyOutputMs, lastWsActivityMs } = activityInfo;
-    const longestIdleMs = Math.min(lastPtyOutputMs, lastWsActivityMs);
+    const shortestIdleMs = Math.min(lastPtyOutputMs, lastWsActivityMs);
 
-    console.log(`[container] Activity check: connections=${hasActiveConnections}, ptyIdle=${lastPtyOutputMs}ms, wsIdle=${lastWsActivityMs}ms`);
+    this.logger.info('Activity check', { hasActiveConnections, lastPtyOutputMs, lastWsActivityMs });
 
     // Container can sleep when: no connections AND idle for IDLE_TIMEOUT_MS
-    if (!hasActiveConnections && longestIdleMs > IDLE_TIMEOUT_MS) {
-      console.log(`[container] Container idle for ${longestIdleMs}ms with no connections, DESTROYING`);
+    if (!hasActiveConnections && shortestIdleMs > IDLE_TIMEOUT_MS) {
+      this.logger.info('Container idle with no connections, destroying', { idleMs: shortestIdleMs });
       await this.cleanupAndDestroy();
       return true;
     }
@@ -332,7 +372,7 @@ export class container extends Container<Env> {
    */
   async alarm(): Promise<void> {
     this._activityPollAlarm = false;
-    console.log('[container] Activity poll alarm triggered');
+    this.logger.info('Activity poll alarm triggered');
 
     // Step 1: Check if DO was explicitly destroyed (uses only storage, not Container methods)
     if (await this.checkDestroyedState()) {
@@ -357,13 +397,13 @@ export class container extends Container<Env> {
 
       // Schedule next poll
       await this.scheduleActivityPoll();
-    } catch (e) {
-      console.error('[container] Error in activity poll:', e);
+    } catch (err) {
+      this.logger.error('Error in activity poll', err instanceof Error ? err : new Error(toErrorMessage(err)));
       // On error, destroy the container to prevent zombie
       try {
         await this.cleanupAndDestroy();
       } catch (destroyErr) {
-        console.error('[container] Failed to destroy zombie:', destroyErr);
+        this.logger.error('Failed to destroy zombie', destroyErr instanceof Error ? destroyErr : new Error(toErrorMessage(destroyErr)));
       }
     }
   }
@@ -416,18 +456,18 @@ export class container extends Container<Env> {
    * calling any Container methods that would resurrect it.
    */
   override async destroy(): Promise<void> {
-    console.log('[container] NUKING container - clearing ALL storage');
+    this.logger.info('Destroying container, clearing operational storage');
     try {
       // Clear the alarm first
       await this.ctx.storage.deleteAlarm();
       this._activityPollAlarm = false;
 
-      // NUKE: Delete ALL storage to make DO empty
-      // Cloudflare garbage collects empty DOs
-      await this.ctx.storage.deleteAll();
-      console.log('[container] Storage cleared - DO will be garbage collected');
-    } catch (e) {
-      console.error('[container] Failed to nuke storage:', e);
+      // Delete operational data but KEEP _destroyed flag
+      // If cleanupAndDestroy() set it, a stale alarm can still detect zombie state
+      await this.ctx.storage.delete('bucketName');
+      this.logger.info('Operational storage cleared');
+    } catch (err) {
+      this.logger.error('Failed to clear storage', err instanceof Error ? err : new Error(toErrorMessage(err)));
     }
     return super.destroy();
   }
@@ -436,14 +476,14 @@ export class container extends Container<Env> {
    * Called when the container stops
    */
   override onStop(): void {
-    console.log('[container] Container stopped');
+    this.logger.info('Container stopped');
   }
 
   /**
    * Called when the container encounters an error
    */
   override onError(error: unknown): void {
-    console.error('[container] Container error:', error);
+    this.logger.error('Container error', error instanceof Error ? error : new Error(toErrorMessage(error)));
   }
 
 }

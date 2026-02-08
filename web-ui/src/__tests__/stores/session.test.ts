@@ -12,6 +12,8 @@ vi.mock('../../stores/terminal', () => ({
 // Mock constants
 vi.mock('../../lib/constants', () => ({
   METRICS_POLL_INTERVAL_MS: 1000,
+  STARTUP_POLL_INTERVAL_MS: 1500,
+  MAX_STARTUP_POLL_ERRORS: 10,
   MAX_TERMINALS_PER_SESSION: 6,
 }));
 
@@ -20,7 +22,7 @@ vi.mock('../../api/client', () => ({
   getSessions: vi.fn().mockResolvedValue([]),
   createSession: vi.fn(),
   deleteSession: vi.fn(),
-  getSessionStatus: vi.fn(),
+  getBatchSessionStatus: vi.fn().mockResolvedValue({}),
   getStartupStatus: vi.fn(),
   startSession: vi.fn(),
   stopSession: vi.fn(),
@@ -34,7 +36,7 @@ import * as api from '../../api/client';
 const mockGetSessions = vi.mocked(api.getSessions);
 const mockCreateSession = vi.mocked(api.createSession);
 const mockDeleteSession = vi.mocked(api.deleteSession);
-const mockGetSessionStatus = vi.mocked(api.getSessionStatus);
+const mockGetBatchSessionStatus = vi.mocked(api.getBatchSessionStatus);
 const mockGetStartupStatus = vi.mocked(api.getStartupStatus);
 const mockStopSession = vi.mocked(api.stopSession);
 
@@ -46,7 +48,7 @@ describe('Session Store', () => {
 
     // Default mock implementations
     mockGetSessions.mockResolvedValue([]);
-    mockGetSessionStatus.mockResolvedValue({ status: 'stopped' });
+    mockGetBatchSessionStatus.mockResolvedValue({});
     mockGetStartupStatus.mockRejectedValue(new Error('Not found'));
   });
 
@@ -105,7 +107,7 @@ describe('Session Store', () => {
       expect(sessionStore.error).toBe('Network error');
     });
 
-    it('should check status for each session', async () => {
+    it('should use batch status endpoint', async () => {
       const mockSessions = [
         {
           id: 'session-1',
@@ -115,7 +117,9 @@ describe('Session Store', () => {
         },
       ];
       mockGetSessions.mockResolvedValue(mockSessions);
-      mockGetSessionStatus.mockResolvedValue({ status: 'running' });
+      mockGetBatchSessionStatus.mockResolvedValue({
+        'session-1': { status: 'running', ptyActive: true, startupStage: 'ready' },
+      });
       mockGetStartupStatus.mockResolvedValue({
         stage: 'ready',
         progress: 100,
@@ -129,7 +133,7 @@ describe('Session Store', () => {
 
       await sessionStore.loadSessions();
 
-      expect(mockGetSessionStatus).toHaveBeenCalledWith('session-1');
+      expect(mockGetBatchSessionStatus).toHaveBeenCalled();
     });
 
     it('should initialize terminals for running sessions', async () => {
@@ -142,7 +146,9 @@ describe('Session Store', () => {
         },
       ];
       mockGetSessions.mockResolvedValue(mockSessions);
-      mockGetSessionStatus.mockResolvedValue({ status: 'running' });
+      mockGetBatchSessionStatus.mockResolvedValue({
+        'session-1': { status: 'running', ptyActive: true, startupStage: 'ready' },
+      });
       mockGetStartupStatus.mockResolvedValue({
         stage: 'ready',
         progress: 100,
@@ -171,7 +177,9 @@ describe('Session Store', () => {
         },
       ];
       mockGetSessions.mockResolvedValue(mockSessions);
-      mockGetSessionStatus.mockResolvedValue({ status: 'running' });
+      mockGetBatchSessionStatus.mockResolvedValue({
+        'session-1': { status: 'running', ptyActive: false, startupStage: 'verifying' },
+      });
       mockGetStartupStatus.mockResolvedValue({
         stage: 'syncing',
         progress: 50,
@@ -188,22 +196,31 @@ describe('Session Store', () => {
       expect(sessionStore.isSessionInitializing('session-1')).toBe(true);
     });
 
-    it('should prevent concurrent loadSessions calls', async () => {
+    it('should discard stale results from concurrent loadSessions calls', async () => {
       let resolveFirst: (value: any) => void;
-      mockGetSessions.mockReturnValueOnce(
-        new Promise((resolve) => {
-          resolveFirst = resolve;
-        })
-      );
+      let resolveSecond: (value: any) => void;
+      mockGetSessions
+        .mockReturnValueOnce(new Promise((resolve) => { resolveFirst = resolve; }))
+        .mockReturnValueOnce(new Promise((resolve) => { resolveSecond = resolve; }));
+      mockGetBatchSessionStatus.mockResolvedValue({});
 
       const firstCall = sessionStore.loadSessions();
       const secondCall = sessionStore.loadSessions();
 
-      // Second call should return immediately without calling API again
-      expect(mockGetSessions).toHaveBeenCalledTimes(1);
+      // Both calls proceed (generation counter allows concurrent calls)
+      expect(mockGetSessions).toHaveBeenCalledTimes(2);
 
-      resolveFirst!([]);
-      await Promise.all([firstCall, secondCall]);
+      // Resolve second call first (newer generation wins)
+      resolveSecond!([{ id: 'session-new', name: 'New', createdAt: 'now', lastAccessedAt: 'now' }]);
+      await secondCall;
+
+      // Resolve first call later (stale generation, results discarded)
+      resolveFirst!([{ id: 'session-old', name: 'Old', createdAt: 'then', lastAccessedAt: 'then' }]);
+      await firstCall;
+
+      // Only the newer generation's sessions should be in state
+      expect(sessionStore.sessions.some(s => s.id === 'session-new')).toBe(true);
+      expect(sessionStore.sessions.some(s => s.id === 'session-old')).toBe(false);
     });
   });
 
@@ -299,7 +316,7 @@ describe('Session Store', () => {
           lastAccessedAt: new Date().toISOString(),
         },
       ]);
-      mockGetSessionStatus.mockResolvedValue({ status: 'running' });
+      mockGetBatchSessionStatus.mockResolvedValue({ 'session-1': { status: 'running', ptyActive: true, startupStage: 'ready' } });
       mockGetStartupStatus.mockResolvedValue({
         stage: 'ready',
         progress: 100,
@@ -322,12 +339,14 @@ describe('Session Store', () => {
       expect(session?.status).toBe('stopped');
     });
 
-    it('should clean up terminal state', async () => {
+    it('should preserve terminal state (dispose without cleanup)', async () => {
       mockStopSession.mockResolvedValue(undefined);
 
       await sessionStore.stopSession('session-1');
 
-      expect(sessionStore.getTerminalsForSession('session-1')).toBeNull();
+      // stopSession disposes WebSockets/xterm but preserves tab structure
+      // so tiling layout survives restart. Only deleteSession wipes terminal state.
+      expect(sessionStore.getTerminalsForSession('session-1')).not.toBeNull();
     });
 
     it('should clear initialization state if in progress', async () => {
@@ -448,17 +467,8 @@ describe('Session Store', () => {
           lastAccessedAt: new Date().toISOString(),
         },
       ]);
-      mockGetSessionStatus.mockResolvedValue({ status: 'running' });
-      mockGetStartupStatus.mockResolvedValue({
-        stage: 'syncing',
-        progress: 50,
-        message: 'Syncing...',
-        details: {
-          container: 'container-1',
-          bucketName: 'test-bucket',
-          path: '/workspace',
-        },
-      });
+      // Use 'verifying' so the session is marked as initializing (not ready)
+      mockGetBatchSessionStatus.mockResolvedValue({ 'session-1': { status: 'running', ptyActive: false, startupStage: 'verifying' } });
       await sessionStore.loadSessions();
 
       expect(sessionStore.isSessionInitializing('session-1')).toBe(true);
@@ -479,7 +489,7 @@ describe('Session Store', () => {
           lastAccessedAt: new Date().toISOString(),
         },
       ]);
-      mockGetSessionStatus.mockResolvedValue({ status: 'running' });
+      mockGetBatchSessionStatus.mockResolvedValue({ 'session-1': { status: 'running', ptyActive: true, startupStage: 'ready' } });
       mockGetStartupStatus.mockResolvedValue({
         stage: 'ready',
         progress: 100,
@@ -532,6 +542,40 @@ describe('Session Store', () => {
       expect(metrics).not.toBeNull();
       expect(metrics!.cpu).toBe('5%');
       expect(metrics!.mem).toBe('256MB');
+    });
+
+    it('should not start duplicate polling for same session', async () => {
+      await sessionStore.loadSessions();
+
+      // Clear mock to count only new calls
+      mockGetStartupStatus.mockClear();
+
+      // Advance one polling interval - should get exactly 1 poll
+      await vi.advanceTimersByTimeAsync(1000);
+      const callCount = mockGetStartupStatus.mock.calls.length;
+
+      // Should be 1 poll, not 2 (no duplicate interval)
+      expect(callCount).toBe(1);
+    });
+
+    it('stopAllMetricsPolling should stop all active polling intervals', async () => {
+      await sessionStore.loadSessions();
+      mockGetStartupStatus.mockClear();
+
+      sessionStore.stopAllMetricsPolling();
+
+      await vi.advanceTimersByTimeAsync(5000);
+
+      // No new polls should have happened
+      expect(mockGetStartupStatus.mock.calls.length).toBe(0);
+    });
+
+    it('stopMetricsPolling is idempotent (no error on double-stop)', async () => {
+      await sessionStore.loadSessions();
+
+      // Stop twice - should not throw
+      sessionStore.stopMetricsPolling('session-1');
+      sessionStore.stopMetricsPolling('session-1');
     });
   });
 

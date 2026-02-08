@@ -10,7 +10,6 @@ import {
   getSessions,
   createSession,
   deleteSession,
-  getSessionStatus,
   getStartupStatus,
   startSession,
   stopSession,
@@ -60,6 +59,74 @@ describe('API Client', () => {
       mockFetch.mockRejectedValueOnce(new TypeError('Network error'));
 
       await expect(getUser()).rejects.toThrow('Network error');
+    });
+  });
+
+  // ==========================================================================
+  // Q12 - JSON error extraction tests
+  // ==========================================================================
+  describe('JSON error body extraction (Q12)', () => {
+    it('extracts error message from JSON error body', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        text: () => Promise.resolve(JSON.stringify({ error: 'Invalid session name' })),
+      });
+
+      await expect(getUser()).rejects.toThrow('Invalid session name');
+    });
+
+    it('falls back to raw text when body is not JSON', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: () => Promise.resolve('Gateway Timeout'),
+      });
+
+      await expect(getUser()).rejects.toThrow('Gateway Timeout');
+    });
+
+    it('falls back to raw text when JSON has no error field', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        text: () => Promise.resolve(JSON.stringify({ message: 'something else' })),
+      });
+
+      // Should use the raw JSON text since parsed.error is falsy
+      await expect(getUser()).rejects.toThrow();
+    });
+
+    it('uses HTTP status code when body is completely empty', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 502,
+        text: () => Promise.resolve(''),
+      });
+
+      await expect(getUser()).rejects.toThrow('HTTP 502');
+    });
+  });
+
+  describe('non-JSON response handling', () => {
+    it('should throw ApiError with descriptive message for non-JSON response body', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve('Internal Server Error'),
+      });
+
+      await expect(getUser()).rejects.toThrow('Invalid JSON response from server');
+    });
+
+    it('should throw ApiError for HTML response body', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        text: () => Promise.resolve('<html><body>Error</body></html>'),
+      });
+
+      await expect(getUser()).rejects.toThrow('Invalid JSON response from server');
     });
   });
 
@@ -338,23 +405,6 @@ describe('API Client', () => {
           method: 'DELETE',
         })
       );
-    });
-  });
-
-  describe('getSessionStatus', () => {
-    it('should return session status', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        status: 200,
-        text: () => Promise.resolve(JSON.stringify({
-          status: 'running',
-          ptyActive: true,
-        })),
-      });
-
-      const status = await getSessionStatus('session-123');
-      expect(status.status).toBe('running');
-      expect(status.ptyActive).toBe(true);
     });
   });
 
@@ -656,7 +706,6 @@ describe('API Client', () => {
             email: 'user@example.com',
             containerStatus: 'running',
             syncStatus: 'success',
-            terminalPid: 12345,
             healthServerOk: true,
             terminalServerOk: true,
           },
@@ -702,7 +751,7 @@ describe('API Client', () => {
       );
       expect(terminalDetail).toEqual({
         key: 'Terminal',
-        value: 'Ready (PID 12345)',
+        value: 'Ready',
         status: 'ok',
       });
 
@@ -1004,14 +1053,15 @@ describe('API Client', () => {
           location: {
             protocol: 'https:',
             host: 'claudeflare.workers.dev',
+            href: 'https://claudeflare.workers.dev/',
           },
         },
         writable: true,
       });
 
-      const url = getTerminalWebSocketUrl('session-123', '2');
+      const url = getTerminalWebSocketUrl('session123abc', '2');
 
-      expect(url).toMatch(/^wss:\/\/claudeflare\.workers\.dev\/api\/terminal\/session-123-2\/ws\?browserSession=/);
+      expect(url).toBe('wss://claudeflare.workers.dev/api/terminal/session123abc-2/ws');
     });
 
     it('should use ws: protocol for http:', () => {
@@ -1020,14 +1070,15 @@ describe('API Client', () => {
           location: {
             protocol: 'http:',
             host: 'localhost:3000',
+            href: 'http://localhost:3000/',
           },
         },
         writable: true,
       });
 
-      const url = getTerminalWebSocketUrl('session-123', '1');
+      const url = getTerminalWebSocketUrl('session123abc', '1');
 
-      expect(url).toMatch(/^ws:\/\/localhost:3000\/api\/terminal\/session-123-1\/ws\?browserSession=/);
+      expect(url).toBe('ws://localhost:3000/api/terminal/session123abc-1/ws');
     });
 
     it('should default to terminal ID 1', () => {
@@ -1036,14 +1087,15 @@ describe('API Client', () => {
           location: {
             protocol: 'https:',
             host: 'claudeflare.workers.dev',
+            href: 'https://claudeflare.workers.dev/',
           },
         },
         writable: true,
       });
 
-      const url = getTerminalWebSocketUrl('session-123');
+      const url = getTerminalWebSocketUrl('session123abc');
 
-      expect(url).toMatch(/\/api\/terminal\/session-123-1\/ws/);
+      expect(url).toMatch(/\/api\/terminal\/session123abc-1\/ws/);
     });
   });
 });

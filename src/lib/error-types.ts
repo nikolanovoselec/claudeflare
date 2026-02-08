@@ -51,9 +51,9 @@ export class AuthError extends AppError {
   }
 }
 
-export class WebSocketUpgradeError extends AppError {
-  constructor() {
-    super('WS_UPGRADE_REQUIRED', 426, 'Expected WebSocket upgrade');
+export class ForbiddenError extends AppError {
+  constructor(message: string = 'Access denied') {
+    super('FORBIDDEN', 403, message, 'Access denied');
   }
 }
 
@@ -68,10 +68,14 @@ export class CredentialsError extends AppError {
   }
 }
 
+/**
+ * Error thrown exclusively from setup routes during initial configuration.
+ * Includes step-level progress reporting for the setup wizard UI.
+ */
 export class SetupError extends AppError {
   public steps: Array<{ step: string; status: string; error?: string }>;
 
-  constructor(step: string, message: string, steps: Array<{ step: string; status: string; error?: string }>) {
+  constructor(message: string, steps: Array<{ step: string; status: string; error?: string }>) {
     super('SETUP_ERROR', 400, message, 'Setup configuration failed');
     this.steps = steps;
   }
@@ -91,4 +95,14 @@ export class CircuitBreakerOpenError extends AppError {
   constructor(service: string) {
     super('CIRCUIT_BREAKER_OPEN', 503, `Service ${service} is temporarily unavailable`, 'Service temporarily unavailable. Please try again shortly.');
   }
+}
+
+/** Convert unknown catch values to Error instances */
+export function toError(error: unknown): Error {
+  return error instanceof Error ? error : new Error(String(error));
+}
+
+/** Extract error message from unknown catch values */
+export function toErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

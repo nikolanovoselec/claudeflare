@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createMockSession, createMockUserInfo, createMockTerminalConnection } from './utils/mocks';
+import { createMockSession, createMockUserInfo } from './utils/mocks';
 
 describe('Test Infrastructure Smoke Tests', () => {
   describe('Mock Factories', () => {
@@ -32,14 +32,6 @@ describe('Test Infrastructure Smoke Tests', () => {
       expect(userInfo.bucketName).toBeDefined();
     });
 
-    it('should create a mock terminal connection', () => {
-      const connection = createMockTerminalConnection();
-
-      expect(connection).toBeDefined();
-      expect(connection.sessionId).toBeDefined();
-      expect(connection.terminalId).toBe('1');
-      expect(connection.state).toBe('disconnected');
-    });
   });
 
   describe('Browser API Mocks', () => {

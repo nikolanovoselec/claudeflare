@@ -3,18 +3,26 @@
  * Handles GET /health, /state, /startup-status
  */
 import { Hono } from 'hono';
-import { switchPort } from '@cloudflare/containers';
 import type { Env } from '../../types';
-import { getContainerContext, checkContainerHealth } from '../../lib/container-helpers';
-import { TERMINAL_SERVER_PORT, HEALTH_SERVER_PORT } from '../../lib/constants';
+import { getContainerContext, checkContainerHealth, type HealthData } from '../../lib/container-helpers';
 import { AuthVariables } from '../../middleware/auth';
-import { ContainerError } from '../../lib/error-types';
+import { ContainerError, toError, toErrorMessage } from '../../lib/error-types';
 import {
   containerLogger,
   containerHealthCB,
   containerSessionsCB,
   fetchWithTimeout,
 } from './shared';
+
+/** Copy cpu/mem/hdd metrics from health data into the response details object */
+function populateMetrics(
+  details: Record<string, unknown>,
+  healthData: HealthData | null,
+): void {
+  if (healthData?.cpu !== undefined) details.cpu = healthData.cpu;
+  if (healthData?.mem !== undefined) details.mem = healthData.mem;
+  if (healthData?.hdd !== undefined) details.hdd = healthData.hdd;
+}
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
 
@@ -23,7 +31,7 @@ const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
  * Checks if the container is running and healthy
  */
 app.get('/health', async (c) => {
-  const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
+  const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
 
   try {
     const { containerId, container } = getContainerContext(c);
@@ -44,8 +52,8 @@ app.get('/health', async (c) => {
       containerId,
       container: healthResult.data,
     });
-  } catch (error) {
-    throw new ContainerError('health', error instanceof Error ? error.message : 'Unknown error');
+  } catch (err) {
+    throw new ContainerError('health', toErrorMessage(err));
   }
 });
 
@@ -63,54 +71,62 @@ app.get('/health', async (c) => {
  * 6. ready (100%) - All services ready
  */
 app.get('/startup-status', async (c) => {
-  const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
+  const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
+
+  /** Default response values — used to initialize `response` and as a clean base in catch */
+  const DEFAULTS = {
+    stage: 'stopped' as const,
+    progress: 0,
+    message: 'Container not running',
+    details: {
+      bucketName: '',
+      container: '',
+      path: '/home/user/workspace',
+      containerStatus: 'stopped',
+      syncStatus: 'pending',
+      healthServerOk: false,
+      terminalServerOk: false,
+    },
+  };
+
+  const response: {
+    stage: 'stopped' | 'starting' | 'syncing' | 'mounting' | 'verifying' | 'ready' | 'error';
+    progress: number;
+    message: string;
+    details: {
+      bucketName: string;
+      container: string;
+      path: string;
+      email?: string;
+      containerStatus?: string;
+      syncStatus?: string;
+      syncError?: string | null;
+      healthServerOk?: boolean;
+      terminalServerOk?: boolean;
+      cpu?: string;
+      mem?: string;
+      hdd?: string;
+    };
+    error?: string;
+  } = {
+    ...DEFAULTS,
+    details: { ...DEFAULTS.details },
+  };
 
   try {
     const user = c.get('user');
     const { bucketName, containerId, container } = getContainerContext(c);
 
-    // Default response structure
-    const response: {
-      stage: 'stopped' | 'starting' | 'syncing' | 'mounting' | 'verifying' | 'ready' | 'error';
-      progress: number;
-      message: string;
-      details: {
-        bucketName: string;
-        container: string;
-        path: string;
-        email?: string;
-        containerStatus?: string;
-        syncStatus?: string;
-        syncError?: string | null;
-        terminalPid?: number;
-        healthServerOk?: boolean;
-        terminalServerOk?: boolean;
-        cpu?: string;
-        mem?: string;
-        hdd?: string;
-      };
-      error?: string;
-    } = {
-      stage: 'stopped',
-      progress: 0,
-      message: 'Container not running',
-      details: {
-        bucketName,
-        container: `container-${containerId.substring(0, 24)}`,
-        path: '/home/user/workspace',
-        email: user.email,
-        containerStatus: 'stopped',
-        syncStatus: 'pending',
-        healthServerOk: false,
-        terminalServerOk: false,
-      },
-    };
+    // Populate response details now that we have context
+    response.details.bucketName = bucketName;
+    response.details.container = `container-${containerId.substring(0, 24)}`;
+    response.details.email = user.email;
 
     // Step 1: Check container state
     let containerState;
     try {
       containerState = await container.getState();
-    } catch (error) {
+    } catch (err) {
       // Container not available - stopped state
       return c.json(response);
     }
@@ -131,32 +147,20 @@ app.get('/startup-status', async (c) => {
 
     // Step 2: Check health server (port 8080) - now consolidated into terminal server
     // Returns sync status from /tmp/sync-status.json and system metrics (cpu/mem/hdd)
-    const healthRequest = switchPort(
-      new Request('http://container/health', { method: 'GET' }),
-      HEALTH_SERVER_PORT
-    );
+    const healthRequest = new Request('http://container/health', { method: 'GET' });
     const healthRes = await fetchWithTimeout(() =>
       containerHealthCB.execute(() => container.fetch(healthRequest))
     );
 
     // Parse health data if available (includes sync status and system metrics)
-    let healthData: {
-      status?: string;
-      syncStatus?: string;
-      syncError?: string | null;
-      userPath?: string;
-      terminalPid?: number;
-      cpu?: string;
-      mem?: string;
-      hdd?: string;
-    } = {};
+    let healthData: HealthData = {};
     let healthServerOk = false;
 
     if (healthRes && healthRes.ok) {
       try {
         healthData = await healthRes.json() as typeof healthData;
         healthServerOk = true;
-      } catch (error) {
+      } catch (err) {
         // Failed to parse - continue without health data
       }
     }
@@ -183,11 +187,7 @@ app.get('/startup-status', async (c) => {
       response.details.containerStatus = containerState?.status || 'running';
       response.details.syncStatus = syncStatus;
       response.details.healthServerOk = true;
-      response.details.terminalPid = healthData.terminalPid;
-      // Include metrics when health server provides them
-      response.details.cpu = healthData.cpu;
-      response.details.mem = healthData.mem;
-      response.details.hdd = healthData.hdd;
+      populateMetrics(response.details, healthData);
       return c.json(response);
     }
 
@@ -205,54 +205,11 @@ app.get('/startup-status', async (c) => {
     }
 
     // Sync complete (success or skipped) - now check terminal server
-    // Step 4: Check terminal server (port 8080) - THIS IS THE CRITICAL CHECK
-    const terminalHealthRequest = switchPort(
-      new Request('http://container/health', { method: 'GET' }),
-      TERMINAL_SERVER_PORT
-    );
-    const terminalHealthRes = await fetchWithTimeout(() =>
-      containerHealthCB.execute(() => container.fetch(terminalHealthRequest))
-    );
-
-    if (!terminalHealthRes) {
-      // Terminal server timed out - mounting stage (sync done but terminal not ready)
-      response.stage = 'mounting';
-      response.progress = 65;
-      response.message = 'Sync complete, starting terminal...';
-      response.details.containerStatus = containerState?.status || 'running';
-      response.details.syncStatus = syncStatus;
-      response.details.healthServerOk = true;
-      response.details.terminalServerOk = false;
-      response.details.terminalPid = healthData.terminalPid;
-      // Include metrics when health server provides them
-      response.details.cpu = healthData.cpu;
-      response.details.mem = healthData.mem;
-      response.details.hdd = healthData.hdd;
-      return c.json(response);
-    }
-
-    if (!terminalHealthRes.ok) {
-      // Terminal server not ready yet
-      response.stage = 'mounting';
-      response.progress = 70;
-      response.message = 'Terminal server starting...';
-      response.details.containerStatus = containerState?.status || 'running';
-      response.details.syncStatus = syncStatus;
-      response.details.healthServerOk = true;
-      response.details.terminalServerOk = false;
-      response.details.terminalPid = healthData.terminalPid;
-      // Include metrics when health server provides them
-      response.details.cpu = healthData.cpu;
-      response.details.mem = healthData.mem;
-      response.details.hdd = healthData.hdd;
-      return c.json(response);
-    }
+    // Step 4: Reuse health response from step 2 (same port 8080 /health endpoint)
+    // healthRes is guaranteed non-null and ok at this point (healthServerOk is true)
 
     // Terminal server is responding! Now verify sessions endpoint
-    const sessionsRequest = switchPort(
-      new Request('http://container/sessions', { method: 'GET' }),
-      TERMINAL_SERVER_PORT
-    );
+    const sessionsRequest = new Request('http://container/sessions', { method: 'GET' });
     const sessionsRes = await fetchWithTimeout(() =>
       containerSessionsCB.execute(() => container.fetch(sessionsRequest))
     );
@@ -265,11 +222,7 @@ app.get('/startup-status', async (c) => {
       response.details.syncStatus = syncStatus;
       response.details.healthServerOk = true;
       response.details.terminalServerOk = true;
-      response.details.terminalPid = healthData.terminalPid;
-      // Include metrics when health server provides them
-      response.details.cpu = healthData.cpu;
-      response.details.mem = healthData.mem;
-      response.details.hdd = healthData.hdd;
+      populateMetrics(response.details, healthData);
       return c.json(response);
     }
 
@@ -279,7 +232,9 @@ app.get('/startup-status', async (c) => {
     if (syncStatus === 'success') {
       response.message = 'Container ready (workspace synced)';
     } else if (syncStatus === 'skipped') {
-      response.message = 'Container ready (sync skipped - no R2 config)';
+      const syncError = healthData.syncError || 'R2 credentials not configured';
+      response.message = `Container ready (sync skipped: ${syncError})`;
+      response.details.syncError = syncError;
     } else {
       response.message = 'Container ready';
     }
@@ -287,24 +242,17 @@ app.get('/startup-status', async (c) => {
     response.details.syncStatus = syncStatus;
     response.details.healthServerOk = true;
     response.details.terminalServerOk = true;
-    response.details.terminalPid = healthData.terminalPid;
-    // System metrics
-    response.details.cpu = healthData.cpu;
-    response.details.mem = healthData.mem;
-    response.details.hdd = healthData.hdd;
+    populateMetrics(response.details, healthData);
     return c.json(response);
-  } catch (error) {
-    reqLogger.error('Startup status error', error instanceof Error ? error : new Error(String(error)));
+  } catch (err) {
+    reqLogger.error('Startup status error', toError(err));
     return c.json({
-      stage: 'error',
+      ...DEFAULTS,
+      details: { ...DEFAULTS.details },
+      stage: 'error' as const,
       progress: 0,
-      message: error instanceof Error ? error.message : 'Unknown error',
-      details: {
-        bucketName: '',
-        container: '',
-        path: '/home/user/workspace',
-      },
-      error: error instanceof Error ? error.message : 'Unknown error',
+      message: 'Container startup check failed',
+      error: 'Container startup check failed',
     });
   }
 });

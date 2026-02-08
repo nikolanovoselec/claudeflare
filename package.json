@@ -6,8 +6,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "build": "cd web-ui && npm install && npm run build",
-    "deploy": "npm run build && node scripts/deploy-no-docker.mjs",
-    "deploy:docker": "npm run build && wrangler deploy",
+    "deploy": "npm run build && wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -16,7 +15,8 @@
   },
   "dependencies": {
     "@cloudflare/containers": "^0.1.0",
-    "hono": "^4.7.0"
+    "hono": "^4.7.0",
+    "zod": "^3.25.0"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.8.0",

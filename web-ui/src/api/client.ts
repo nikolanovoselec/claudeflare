@@ -1,28 +1,16 @@
 import type { Session, UserInfo, InitProgress, StartupStatusResponse } from '../types';
-import { STARTUP_POLL_INTERVAL_MS, SESSION_ID_DISPLAY_LENGTH } from '../lib/constants';
+import { STARTUP_POLL_INTERVAL_MS, SESSION_ID_DISPLAY_LENGTH, MAX_STARTUP_POLL_ERRORS, MAX_TERMINALS_PER_SESSION } from '../lib/constants';
 import { z } from 'zod';
-import { SessionSchema, StartupStatusSchema, UserSchema } from '../lib/schemas';
+import {
+  UserResponseSchema,
+  SessionsResponseSchema,
+  CreateSessionResponseSchema,
+  StartupStatusResponseSchema,
+  BatchSessionStatusResponseSchema,
+} from '../lib/schemas';
+import { mapStartupDetailsToProgress } from '../lib/status-mapper';
 
 const BASE_URL = '/api';
-
-/**
- * Generate a unique browser session ID (8 alphanumeric chars)
- * Called once per browser tab
- */
-function generateSessionId(): string {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let result = '';
-  for (let i = 0; i < 8; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result;
-}
-
-/**
- * Unique session ID for this browser tab
- * Each tab gets its own container
- */
-const BROWSER_SESSION_ID = generateSessionId();
 
 class ApiError extends Error {
   constructor(
@@ -34,11 +22,13 @@ class ApiError extends Error {
   }
 }
 
+async function fetchApi<T>(endpoint: string, options: RequestInit, schema: z.ZodType<T>): Promise<T>;
+async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T | undefined>;
 async function fetchApi<T>(
   endpoint: string,
   options: RequestInit = {},
   schema?: z.ZodType<T>
-): Promise<T> {
+): Promise<T | undefined> {
   const url = `${BASE_URL}${endpoint}`;
   const response = await fetch(url, {
     ...options,
@@ -50,70 +40,42 @@ async function fetchApi<T>(
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new ApiError(response.status, errorText || `HTTP ${response.status}`);
+    let errorMessage = errorText || `HTTP ${response.status}`;
+    try {
+      const parsed = JSON.parse(errorText);
+      if (parsed.error) errorMessage = parsed.error;
+    } catch {
+      // Not JSON, use raw text
+    }
+    throw new ApiError(response.status, errorMessage);
   }
 
-  // Handle empty responses
+  // Handle empty responses (e.g., 204 No Content or empty 200).
+  // When a schema is provided, the caller expects structured data — throw
+  // so the error is surfaced rather than silently returning garbage.
+  // When no schema is provided, callers expect void so `undefined` is fine.
   const text = await response.text();
   if (!text) {
-    // For empty responses, validate against schema if provided
-    // Otherwise return empty object (caller must handle this case)
     if (schema) {
-      return schema.parse({});
+      throw new ApiError(response.status, 'Expected response body but received empty response');
     }
-    return {} as T;
+    return undefined;
   }
 
-  const data = JSON.parse(text);
+  let data: unknown;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    throw new ApiError(response.status, 'Invalid JSON response from server');
+  }
 
   // Validate against schema if provided
   if (schema) {
     return schema.parse(data);
   }
 
-  return data;
+  return data as T;
 }
-
-// Response schemas for API endpoints (exported for contract tests)
-export const UserResponseSchema = z.object({
-  email: z.string(),
-  authenticated: z.boolean(),
-  bucketName: z.string(),
-  bucketCreated: z.boolean().optional(),
-});
-
-export const SessionsResponseSchema = z.object({
-  sessions: z.array(SessionSchema),
-});
-
-export const CreateSessionResponseSchema = z.object({
-  session: SessionSchema,
-});
-
-// InitStage enum values from types.ts
-export const InitStageSchema = z.enum(['creating', 'starting', 'syncing', 'mounting', 'verifying', 'ready', 'error', 'stopped']);
-
-export const StartupStatusResponseSchema = z.object({
-  stage: InitStageSchema,
-  progress: z.number(),
-  message: z.string(),
-  details: z.object({
-    bucketName: z.string(),
-    container: z.string(),
-    path: z.string(),
-    email: z.string().optional(),
-    containerStatus: z.string().optional(),
-    syncStatus: z.string().optional(),
-    syncError: z.string().nullable().optional(),
-    terminalPid: z.number().optional(),
-    healthServerOk: z.boolean().optional(),
-    terminalServerOk: z.boolean().optional(),
-    cpu: z.string().optional(),
-    mem: z.string().optional(),
-    hdd: z.string().optional(),
-  }),
-  error: z.string().optional(),
-});
 
 // User API
 export async function getUser(): Promise<UserInfo> {
@@ -144,13 +106,12 @@ export async function deleteSession(id: string): Promise<void> {
 }
 
 /**
- * Get session and container status
- * @see src/routes/session.ts GET /:id/status for backend implementation
+ * Get status for all sessions in a single batch call
+ * Returns a map of sessionId -> { status, ptyActive, startupStage? }
  */
-export async function getSessionStatus(
-  id: string
-): Promise<{ status: string; ptyActive?: boolean }> {
-  return fetchApi(`/sessions/${id}/status`);
+export async function getBatchSessionStatus(): Promise<Record<string, { status: string; ptyActive: boolean; startupStage?: string }>> {
+  const response = await fetchApi('/sessions/batch-status', {}, BatchSessionStatusResponseSchema);
+  return response.statuses;
 }
 
 // Get container startup status (polling endpoint)
@@ -181,92 +142,30 @@ export function startSession(
 
       // Trigger container start with the actual session ID
       await fetchApi(`/container/start?sessionId=${id}`, { method: 'POST' });
-    } catch (e) {
+    } catch (err) {
       // If it's a server error (5xx), report it rather than silently continuing
-      if (e instanceof ApiError && e.status >= 500) {
-        console.error('Container start failed:', e.status, e.message);
-        onError(`Container start failed: ${e.message}`);
+      if (err instanceof ApiError && err.status >= 500) {
+        console.error('Container start failed:', err.status, err.message);
+        onError(`Container start failed: ${err.message}`);
         return;
       }
       // For other errors (409 conflict, network issues), the container might already be starting
-      console.log('Container start request (non-fatal):', e);
+      console.log('Container start request (non-fatal):', err);
+      onError(`Container start failed: ${err instanceof Error ? err.message : String(err)}`);
+      return;
     }
 
     // Start polling for status
+    let consecutiveErrors = 0;
+
     const poll = async () => {
       if (cancelled) return;
 
       try {
         const status = await getStartupStatus(id);
+        consecutiveErrors = 0;
 
-        // Convert status to InitProgress format with real-time details
-        const details: { key: string; value: string; status?: 'ok' | 'error' | 'pending' }[] = [];
-        if (status.details) {
-          // Container status - dynamic
-          const containerStatus = status.details.containerStatus || 'stopped';
-          details.push({
-            key: 'Container',
-            value: containerStatus === 'running' || containerStatus === 'healthy' ? 'Running' : containerStatus,
-            status: containerStatus === 'running' || containerStatus === 'healthy' ? 'ok' : 'pending',
-          });
-
-          // Sync status - dynamic
-          const syncStatus = status.details.syncStatus || 'pending';
-          let syncValue = syncStatus;
-          let syncStatusIndicator: 'ok' | 'error' | 'pending' = 'pending';
-          if (syncStatus === 'success') {
-            syncValue = 'Synced';
-            syncStatusIndicator = 'ok';
-          } else if (syncStatus === 'failed') {
-            syncValue = status.details.syncError || 'Failed';
-            syncStatusIndicator = 'error';
-          } else if (syncStatus === 'syncing') {
-            syncValue = 'Syncing...';
-            syncStatusIndicator = 'pending';
-          } else if (syncStatus === 'skipped') {
-            syncValue = 'Skipped';
-            syncStatusIndicator = 'ok';
-          } else {
-            syncValue = 'Pending';
-            syncStatusIndicator = 'pending';
-          }
-          details.push({
-            key: 'Sync',
-            value: syncValue,
-            status: syncStatusIndicator,
-          });
-
-          // Terminal status - dynamic
-          const terminalServerOk = status.details.terminalServerOk;
-          const terminalPid = status.details.terminalPid;
-          let terminalValue = 'Starting';
-          let terminalStatus: 'ok' | 'error' | 'pending' = 'pending';
-          if (terminalServerOk) {
-            terminalValue = terminalPid ? `Ready (PID ${terminalPid})` : 'Ready';
-            terminalStatus = 'ok';
-          } else if (status.details.healthServerOk) {
-            terminalValue = 'Starting...';
-            terminalStatus = 'pending';
-          }
-          details.push({
-            key: 'Terminal',
-            value: terminalValue,
-            status: terminalStatus,
-          });
-
-          // User email
-          if (status.details.email) {
-            details.push({ key: 'User', value: status.details.email, status: 'ok' });
-          }
-        }
-
-        const progress: InitProgress = {
-          stage: status.stage,
-          progress: status.progress,
-          message: status.message,
-          details,
-        };
-
+        const progress = mapStartupDetailsToProgress(status);
         onProgress(progress);
 
         if (status.stage === 'ready') {
@@ -276,9 +175,14 @@ export function startSession(
           if (pollInterval) clearInterval(pollInterval);
           onError(status.error || 'Container startup failed');
         }
-      } catch (e) {
-        console.error('Polling error:', e);
-        // Don't stop polling on network errors, just log
+      } catch (err) {
+        consecutiveErrors++;
+        console.error('Polling error:', err);
+        if (consecutiveErrors >= MAX_STARTUP_POLL_ERRORS) {
+          if (pollInterval) clearInterval(pollInterval);
+          onError('Polling failed after too many consecutive errors');
+          return;
+        }
       }
     };
 
@@ -289,7 +193,7 @@ export function startSession(
     pollInterval = setInterval(poll, STARTUP_POLL_INTERVAL_MS);
   };
 
-  startPolling();
+  startPolling().catch((err) => onError(err instanceof Error ? err.message : String(err)));
 
   // Return cleanup function
   return () => {
@@ -304,12 +208,111 @@ export async function stopSession(id: string): Promise<void> {
   });
 }
 
+// User management
+export interface UserEntry {
+  email: string;
+  addedBy: string;
+  addedAt: string;
+  role: 'admin' | 'user';
+}
+
+const UserEntrySchema = z.object({
+  email: z.string(),
+  addedBy: z.string(),
+  addedAt: z.string(),
+  role: z.enum(['admin', 'user']).default('user'),
+});
+
+const GetUsersResponseSchema = z.object({
+  users: z.array(UserEntrySchema),
+});
+
+const UserMutationResponseSchema = z.object({
+  success: z.boolean(),
+  email: z.string(),
+});
+
+export async function getUsers(): Promise<UserEntry[]> {
+  const data = await fetchApi('/users', {}, GetUsersResponseSchema);
+  return data.users;
+}
+
+export async function addUser(email: string, role: 'admin' | 'user' = 'user'): Promise<void> {
+  await fetchApi('/users', {
+    method: 'POST',
+    body: JSON.stringify({ email, role }),
+  }, UserMutationResponseSchema);
+}
+
+export async function removeUser(email: string): Promise<void> {
+  await fetchApi(`/users/${encodeURIComponent(email)}`, {
+    method: 'DELETE',
+  }, UserMutationResponseSchema);
+}
+
+// Setup API
+const SetupStatusResponseSchema = z.object({
+  configured: z.boolean(),
+  tokenDetected: z.boolean(),
+});
+
+export type SetupStatusResponse = z.infer<typeof SetupStatusResponseSchema>;
+
+export async function getSetupStatus(): Promise<SetupStatusResponse> {
+  return fetchApi('/setup/status', {}, SetupStatusResponseSchema);
+}
+
+const DetectTokenResponseSchema = z.object({
+  detected: z.boolean(),
+  valid: z.boolean().optional(),
+  account: z.object({ id: z.string(), name: z.string() }).optional(),
+  error: z.string().optional(),
+});
+
+export type DetectTokenResponse = z.infer<typeof DetectTokenResponseSchema>;
+
+export async function detectToken(): Promise<DetectTokenResponse> {
+  return fetchApi('/setup/detect-token', {}, DetectTokenResponseSchema);
+}
+
+const ConfigureResponseSchema = z.object({
+  success: z.boolean(),
+  steps: z.array(z.object({ step: z.string(), status: z.string(), error: z.string().optional() })).optional(),
+  error: z.string().optional(),
+  customDomainUrl: z.string().optional(),
+  accountId: z.string().optional(),
+});
+
+export type ConfigureResponse = z.infer<typeof ConfigureResponseSchema>;
+
+export async function configure(body: {
+  customDomain: string;
+  allowedUsers: string[];
+  adminUsers: string[];
+  allowedOrigins?: string[];
+}): Promise<ConfigureResponse> {
+  return fetchApi('/setup/configure', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }, ConfigureResponseSchema);
+}
+
+// Session ID format: 8-24 lowercase alphanumeric characters (matches backend SESSION_ID_PATTERN)
+const SESSION_ID_RE = /^[a-z0-9]{8,24}$/;
+
 // WebSocket URL helper - uses compound session ID for multiple terminals per session
 export function getTerminalWebSocketUrl(sessionId: string, terminalId: string = '1'): string {
-  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = window.location.host;
+  if (!SESSION_ID_RE.test(sessionId)) {
+    throw new Error(`Invalid sessionId "${sessionId}": must be 8-24 lowercase alphanumeric characters`);
+  }
+  const id = parseInt(terminalId, 10);
+  if (isNaN(id) || id < 1 || id > MAX_TERMINALS_PER_SESSION) {
+    throw new Error(`Invalid terminalId "${terminalId}": must be between 1 and ${MAX_TERMINALS_PER_SESSION}`);
+  }
   // Compound session ID: sessionId-terminalId (e.g., "abc123-1", "abc123-2")
   // Backend treats each as a unique PTY session within the same container
   const compoundSessionId = `${sessionId}-${terminalId}`;
-  return `${protocol}//${host}/api/terminal/${compoundSessionId}/ws?browserSession=${BROWSER_SESSION_ID}`;
+  const wsUrl = new URL(`/api/terminal/${compoundSessionId}/ws`, window.location.href);
+  wsUrl.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return wsUrl.toString();
 }

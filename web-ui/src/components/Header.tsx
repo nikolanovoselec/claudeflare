@@ -6,6 +6,7 @@ import {
   mdiLogout,
 } from '@mdi/js';
 import Icon from './Icon';
+import '../styles/header.css';
 
 export interface HeaderProps {
   userName?: string;
@@ -62,123 +63,6 @@ const Header: Component<HeaderProps> = (props) => {
         </button>
       </div>
 
-      <style>{`
-        .header {
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          height: var(--header-height);
-          padding: 0 var(--space-4);
-          background: var(--color-bg-surface);
-          border-bottom: 1px solid var(--color-border-subtle);
-          gap: var(--space-4);
-        }
-
-        /* Logo */
-        .header-logo {
-          display: flex;
-          align-items: center;
-          gap: var(--space-2);
-          flex-shrink: 0;
-        }
-
-        .header-logo-icon {
-          color: var(--color-accent);
-        }
-
-        .header-logo-text {
-          font-size: var(--text-lg);
-          font-weight: var(--font-semibold);
-          color: var(--color-text-primary);
-        }
-
-        /* Spacer to push actions to the right */
-        .header-spacer {
-          flex: 1;
-        }
-
-        /* Actions */
-        .header-actions {
-          display: flex;
-          align-items: center;
-          gap: var(--space-2);
-          flex-shrink: 0;
-        }
-
-        .header-user-menu {
-          display: flex;
-          align-items: center;
-          gap: var(--space-2);
-          padding: var(--space-1) var(--space-2);
-          border-radius: var(--radius-md);
-          color: var(--color-text-secondary);
-          cursor: pointer;
-          transition: background var(--transition-fast), color var(--transition-fast);
-        }
-
-        .header-user-menu:hover {
-          background: var(--color-bg-muted);
-          color: var(--color-text-primary);
-        }
-
-        .header-user-avatar {
-          flex-shrink: 0;
-        }
-
-        .header-user-name {
-          font-size: var(--text-sm);
-          max-width: 150px;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-
-        .header-settings-button {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          width: 36px;
-          height: 36px;
-          border-radius: var(--radius-md);
-          color: var(--color-text-secondary);
-          cursor: pointer;
-          transition: background var(--transition-fast), color var(--transition-fast);
-        }
-
-        .header-settings-button:hover {
-          background: var(--color-bg-muted);
-          color: var(--color-text-primary);
-        }
-
-        .header-settings-button:focus-visible {
-          outline: none;
-          box-shadow: var(--glow-accent);
-        }
-
-        .header-logout-button {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          width: 36px;
-          height: 36px;
-          border-radius: var(--radius-md);
-          color: var(--color-text-secondary);
-          cursor: pointer;
-          transition: background var(--transition-fast), color var(--transition-fast);
-        }
-
-        .header-logout-button:hover {
-          background: var(--color-bg-muted);
-          color: var(--color-text-primary);
-        }
-
-        .header-logout-button:focus-visible {
-          outline: none;
-          box-shadow: var(--glow-accent);
-        }
-
-        /* Settings cog rotation on hover is defined in animations.css */
-      `}</style>
     </header>
   );
 };

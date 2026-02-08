@@ -9,10 +9,12 @@ import {
   CONNECTION_RETRY_DELAY_MS,
   MAX_RECONNECT_ATTEMPTS,
   RECONNECT_DELAY_MS,
-  TERMINAL_REFRESH_DELAY_MS,
   TERMINAL_SECONDARY_REFRESH_DELAY_MS,
   CSS_TRANSITION_DELAY_MS,
   WS_CLOSE_ABNORMAL,
+  BUFFER_REPLAY_IDLE_THRESHOLD_MS,
+  BUFFER_REPLAY_MAX_WAIT_MS,
+  BUFFER_REPLAY_CHECK_INTERVAL_MS,
 } from '../lib/constants';
 
 // Helper to create compound key from sessionId and terminalId
@@ -70,8 +72,8 @@ function triggerLayoutResize(): void {
             terminal.scrollToBottom();
             terminal.refresh(0, terminal.rows - 1);
           }
-        } catch (e) {
-          console.warn(`[Terminal ${key}] Failed to refit on layout change:`, e);
+        } catch (err) {
+          console.warn(`[Terminal ${key}] Failed to refit on layout change:`, err);
         }
       }
     });
@@ -190,6 +192,8 @@ function connect(
   reconnectAttempts.delete(key);
 
   let cancelled = false;
+  let lastDataTime = Date.now();
+  let inAlternateScreen = false; // Set by screen-state message from server
 
   // Attempt connection with retries
   function attemptConnection(attemptNumber: number): void {
@@ -260,28 +264,62 @@ function connect(
       // Fix: After receiving replayed buffer, refresh terminal display
       // On page refresh, PTY replays its buffer with escape sequences for old dimensions
       // This causes cursor to appear at wrong position - double refresh with delay fixes it
-      setTimeout(() => {
-        if (!cancelled) {
-          terminal.scrollToBottom();
-          terminal.refresh(0, terminal.rows - 1);
-          // Send another resize to force PTY to update cursor position
-          ws.send(JSON.stringify({ type: 'resize', cols, rows }));
-          console.log(`[Terminal ${key}] Initial refresh completed`);
+      //
+      // For alternate screen (TUI apps like htop, lazygit, yazi):
+      //   Server skips buffer replay. We just need to send resize to trigger SIGWINCH,
+      //   which makes the TUI app redraw cleanly at the correct dimensions.
+      //
+      // For normal screen (shell):
+      //   Use data-driven idle detection: poll until no data received for
+      //   BUFFER_REPLAY_IDLE_THRESHOLD_MS (buffer replay done) or max wait exceeded.
+      //   Then do double refresh to fix cursor position.
 
-          // Second refresh after PTY processes resize - fixes cursor jumping to corner
-          setTimeout(() => {
-            if (!cancelled && ws.readyState === WebSocket.OPEN) {
+      // Small delay to allow the screen-state message to arrive and be processed
+      // before we check inAlternateScreen (screen-state is sent before buffer data)
+      setTimeout(() => {
+        if (cancelled) return;
+
+        if (inAlternateScreen) {
+          // Alternate screen: no buffer was replayed, just send resize to trigger SIGWINCH
+          // The TUI app will redraw itself at the correct dimensions
+          console.log(`[Terminal ${key}] Alternate screen detected, sending resize for SIGWINCH`);
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+          }
+        } else {
+          // Normal screen: wait for buffer replay to finish, then refresh
+          const startTime = Date.now();
+          const checkInterval = setInterval(() => {
+            if (cancelled) {
+              clearInterval(checkInterval);
+              return;
+            }
+            const idleTime = Date.now() - lastDataTime;
+            if (idleTime >= BUFFER_REPLAY_IDLE_THRESHOLD_MS || Date.now() - startTime >= BUFFER_REPLAY_MAX_WAIT_MS) {
+              clearInterval(checkInterval);
               terminal.scrollToBottom();
               terminal.refresh(0, terminal.rows - 1);
-              console.log(`[Terminal ${key}] Secondary refresh completed`);
+              // Send another resize to force PTY to update cursor position
+              ws.send(JSON.stringify({ type: 'resize', cols, rows }));
+              console.log(`[Terminal ${key}] Initial refresh completed (idle=${idleTime}ms, elapsed=${Date.now() - startTime}ms)`);
+
+              // Second refresh after PTY processes resize - fixes cursor jumping to corner
+              setTimeout(() => {
+                if (!cancelled && ws.readyState === WebSocket.OPEN) {
+                  terminal.scrollToBottom();
+                  terminal.refresh(0, terminal.rows - 1);
+                  console.log(`[Terminal ${key}] Secondary refresh completed`);
+                }
+              }, TERMINAL_SECONDARY_REFRESH_DELAY_MS);
             }
-          }, TERMINAL_SECONDARY_REFRESH_DELAY_MS);
+          }, BUFFER_REPLAY_CHECK_INTERVAL_MS);
         }
-      }, TERMINAL_REFRESH_DELAY_MS);
+      }, BUFFER_REPLAY_CHECK_INTERVAL_MS);
     };
 
     ws.onmessage = (event) => {
       if (cancelled) return;
+      lastDataTime = Date.now();
 
       // Server sends RAW terminal data - write directly to xterm
       let messageData: string;
@@ -294,12 +332,18 @@ function connect(
         return;
       }
 
-      // Check for pong response (only JSON message we expect from server)
+      // Check for JSON control messages from server (pong, screen-state)
       if (messageData.startsWith('{')) {
         try {
           const msg = JSON.parse(messageData);
           if (msg.type === 'pong') {
             // Ping response, ignore
+            return;
+          }
+          if (msg.type === 'screen-state') {
+            // Server tells us whether PTY is in alternate screen buffer (TUI apps)
+            inAlternateScreen = msg.inAlternateScreen === true;
+            console.log(`[Terminal ${key}] Screen state: inAlternateScreen=${inAlternateScreen}`);
             return;
           }
         } catch {
@@ -466,6 +510,29 @@ function disposeSession(sessionId: string): void {
     }
   }
 
+  // Clean up auxiliary Maps (mirrors disposeAll pattern)
+  for (const key of [...fitAddons.keys()]) {
+    if (key.startsWith(prefix)) {
+      fitAddons.delete(key);
+    }
+  }
+
+  for (const key of [...reconnectAttempts.keys()]) {
+    if (key.startsWith(prefix)) {
+      reconnectAttempts.delete(key);
+    }
+  }
+
+  for (const key of [...inputDisposables.keys()]) {
+    if (key.startsWith(prefix)) {
+      const disposable = inputDisposables.get(key);
+      if (disposable) {
+        disposable.dispose();
+      }
+      inputDisposables.delete(key);
+    }
+  }
+
   // Clean up state
   setState(produce((s) => {
     for (const key of Object.keys(s.connectionStates)) {
@@ -491,6 +558,20 @@ function disposeAll(): void {
     terminal.dispose();
   }
   terminals.clear();
+
+  // Clear auxiliary Maps that live outside the reactive store
+  for (const disposable of inputDisposables.values()) {
+    disposable.dispose();
+  }
+  inputDisposables.clear();
+
+  for (const timeout of retryTimeouts.values()) {
+    clearTimeout(timeout);
+  }
+  retryTimeouts.clear();
+
+  reconnectAttempts.clear();
+  fitAddons.clear();
 }
 
 // Reconnect to terminal WebSocket

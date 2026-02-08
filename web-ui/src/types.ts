@@ -8,6 +8,7 @@ export interface Session {
   name: string;
   createdAt: string;
   lastAccessedAt: string;
+  status?: 'stopped' | 'running';
 }
 
 /**
@@ -21,7 +22,7 @@ export interface Session {
  */
 export type SessionStatus = 'stopped' | 'initializing' | 'running' | 'error';
 
-export interface SessionWithStatus extends Session {
+export interface SessionWithStatus extends Omit<Session, 'status'> {
   status: SessionStatus;
 }
 
@@ -66,7 +67,6 @@ export interface StartupStatusResponse {
     containerStatus?: string;
     syncStatus?: string;
     syncError?: string | null;
-    terminalPid?: number;
     healthServerOk?: boolean;
     terminalServerOk?: boolean;
     // System metrics from health server
@@ -77,11 +77,12 @@ export interface StartupStatusResponse {
   error?: string;
 }
 
+// Note: Backend Session includes `userId` which is not exposed to the frontend
 export interface UserInfo {
   email: string;
   authenticated: boolean;
   bucketName: string;
-  bucketCreated?: boolean;
+  role?: 'admin' | 'user';
 }
 
 // Terminal connection state
@@ -90,13 +91,6 @@ export type TerminalConnectionState =
   | 'connecting'
   | 'connected'
   | 'error';
-
-export interface TerminalConnection {
-  sessionId: string;
-  terminalId: string;
-  state: TerminalConnectionState;
-  ws?: WebSocket;
-}
 
 // Terminal tab within a session (multiple terminals per container)
 export interface TerminalTab {

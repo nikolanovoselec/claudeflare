@@ -1,41 +1,61 @@
 /**
  * Container lifecycle routes
- * Handles POST /start, /explicit-start, /destroy, /destroy-by-id
+ * Handles POST /start, /destroy
  */
 import { Hono } from 'hono';
 import { getContainer } from '@cloudflare/containers';
-import type { Env } from '../../types';
+import type { Env, Session } from '../../types';
 import { createBucketIfNotExists } from '../../lib/r2-admin';
 import { getR2Config } from '../../lib/r2-config';
-import { getContainerContext, getSessionIdFromRequest, getContainerId } from '../../lib/container-helpers';
+import { getContainerContext, getSessionIdFromQueryOrHeader, getContainerId } from '../../lib/container-helpers';
 import { AuthVariables } from '../../middleware/auth';
-import { isBucketNameResponse } from '../../lib/type-guards';
-import { ContainerError, AuthError, ValidationError } from '../../lib/error-types';
+import { createRateLimiter } from '../../middleware/rate-limit';
+import { AppError, ContainerError, NotFoundError, ValidationError, toError, toErrorMessage } from '../../lib/error-types';
 import { BUCKET_NAME_SETTLE_DELAY_MS, CONTAINER_ID_DISPLAY_LENGTH } from '../../lib/constants';
-import { containerLogger, containerInternalCB } from './shared';
+import { getSessionKey } from '../../lib/kv-keys';
+import { containerLogger, containerInternalCB, getStoredBucketName } from './shared';
 
 const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
+
+/**
+ * Rate limiter for container start endpoint
+ * Limits to 5 start requests per minute per user
+ */
+const containerStartRateLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 5,
+  keyPrefix: 'container-start',
+});
 
 /**
  * POST /api/container/start
  * Kicks off container start and returns immediately (non-blocking)
  * Use GET /api/container/startup-status to poll for readiness
  */
-app.post('/start', async (c) => {
+app.post('/start', containerStartRateLimiter, async (c) => {
+  const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
   try {
     const bucketName = c.get('bucketName');
-    const sessionId = getSessionIdFromRequest(c);
+    const sessionId = getSessionIdFromQueryOrHeader(c);
+
+    // Verify session exists in KV before creating a container DO
+    const sessionKey = getSessionKey(bucketName, sessionId);
+    const sessionData = await c.env.KV.get<Session>(sessionKey, 'json');
+    if (!sessionData) {
+      throw new NotFoundError('Session', sessionId);
+    }
+
     const containerId = getContainerId(bucketName, sessionId);
     const shortContainerId = containerId.substring(0, CONTAINER_ID_DISPLAY_LENGTH);
 
     // CRITICAL: Create R2 bucket BEFORE starting container
     // Container sync will fail if bucket doesn't exist
+    const r2Config = await getR2Config(c.env);
     const bucketResult = await createBucketIfNotExists(
-      (await getR2Config(c.env)).accountId,
+      r2Config.accountId,
       c.env.CLOUDFLARE_API_TOKEN,
       bucketName
     );
-    const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
 
     if (!bucketResult.success) {
       reqLogger.error('Failed to create bucket', new Error(bucketResult.error || 'Unknown error'), { bucketName });
@@ -48,18 +68,7 @@ app.post('/start', async (c) => {
 
     // Check if bucket name needs to be set/updated
     // If container is running with wrong bucket name, we need to restart it
-    let storedBucketName: string | null = null;
-    try {
-      const getBucketResp = await container.fetch(
-        new Request('http://container/_internal/getBucketName', { method: 'GET' })
-      );
-      const data = await getBucketResp.json();
-      if (isBucketNameResponse(data)) {
-        storedBucketName = data.bucketName;
-      }
-    } catch (error) {
-      // DO might not exist yet, that's ok
-    }
+    const storedBucketName = await getStoredBucketName(container, reqLogger);
 
     // If bucket name is different or not set, update it
     const needsBucketUpdate = storedBucketName !== bucketName;
@@ -70,7 +79,13 @@ app.post('/start', async (c) => {
             new Request('http://container/_internal/setBucketName', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ bucketName }),
+              body: JSON.stringify({
+                bucketName,
+                r2AccessKeyId: c.env.R2_ACCESS_KEY_ID,
+                r2SecretAccessKey: c.env.R2_SECRET_ACCESS_KEY,
+                r2AccountId: r2Config.accountId,
+                r2Endpoint: r2Config.endpoint,
+              }),
             })
           )
         );
@@ -78,7 +93,8 @@ app.post('/start', async (c) => {
         await new Promise(resolve => setTimeout(resolve, BUCKET_NAME_SETTLE_DELAY_MS));
         reqLogger.info('Set bucket name', { bucketName, previousBucketName: storedBucketName });
       } catch (error) {
-        reqLogger.error('Failed to set bucket name', error instanceof Error ? error : new Error(String(error)));
+        reqLogger.error('Failed to set bucket name', toError(error));
+        throw new ContainerError('set_bucket_name', toErrorMessage(error));
       }
     }
 
@@ -87,6 +103,8 @@ app.post('/start', async (c) => {
     try {
       currentState = await container.getState();
     } catch (error) {
+      // Expected: container may not exist yet, treat as needing start
+      reqLogger.debug('Could not get container state, treating as unknown');
       currentState = { status: 'unknown' };
     }
 
@@ -98,8 +116,14 @@ app.post('/start', async (c) => {
         // Container will be started below
         currentState = { status: 'stopped' };
       } catch (error) {
-        reqLogger.error('Failed to destroy container', error instanceof Error ? error : new Error(String(error)));
+        reqLogger.error('Failed to destroy container', toError(error));
       }
+    }
+
+    // Mark session as running in KV so batch-status can include it
+    if (sessionData.status !== 'running') {
+      sessionData.status = 'running';
+      await c.env.KV.put(sessionKey, JSON.stringify(sessionData));
     }
 
     // If container is already running/healthy with correct bucket, return immediately
@@ -121,7 +145,7 @@ app.post('/start', async (c) => {
           await container.startAndWaitForPorts();
           reqLogger.info('Container started and ports ready', { containerId: shortContainerId });
         } catch (error) {
-          reqLogger.error('Failed to start container', error instanceof Error ? error : new Error(String(error)), { containerId: shortContainerId });
+          reqLogger.error('Failed to start container', toError(error), { containerId: shortContainerId });
         }
       })()
     );
@@ -134,51 +158,11 @@ app.post('/start', async (c) => {
       message: 'Container start initiated. Poll /api/container/startup-status for progress.',
     });
   } catch (error) {
-    const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
-    reqLogger.error('Container start error', error instanceof Error ? error : new Error(String(error)));
-    if (error instanceof ContainerError) {
+    reqLogger.error('Container start error', toError(error));
+    if (error instanceof AppError) {
       throw error;
     }
     throw new ContainerError('start');
-  }
-});
-
-/**
- * POST /api/container/explicit-start
- * Explicitly start the container using start() method
- */
-app.post('/explicit-start', async (c) => {
-  const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
-
-  try {
-    const { containerId, container } = getContainerContext(c);
-
-    // Step 1: Get current state
-    const stateBefore = await container.getState();
-    reqLogger.info('State before start', { containerId, state: stateBefore });
-
-    // Step 2: Start container and wait for requiredPorts [8080, 8081]
-    try {
-      await container.startAndWaitForPorts();
-      reqLogger.info('startAndWaitForPorts() completed', { containerId });
-    } catch (startError) {
-      reqLogger.error('start() failed', startError instanceof Error ? startError : new Error(String(startError)), { containerId });
-    }
-
-    // Step 3: Get state after start
-    const stateAfter = await container.getState();
-    reqLogger.info('State after start', { containerId, state: stateAfter });
-
-    return c.json({
-      success: true,
-      containerId,
-      stateBefore,
-      stateAfter,
-      message: 'Container start attempted',
-    });
-  } catch (error) {
-    reqLogger.error('Explicit container start error', error instanceof Error ? error : new Error(String(error)));
-    throw new ContainerError('explicit-start', error instanceof Error ? error.message : 'Unknown error');
   }
 });
 
@@ -187,32 +171,30 @@ app.post('/explicit-start', async (c) => {
  * Destroy the container (SIGKILL) - used to force restart with new image
  */
 app.post('/destroy', async (c) => {
-  const reqLogger = containerLogger.child({ requestId: c.req.header('X-Request-ID') });
+  const reqLogger = containerLogger.child({ requestId: c.get('requestId') });
 
   try {
     const { containerId, container } = getContainerContext(c);
 
-    // Get state before destroy
-    const stateBefore = await container.getState();
-
     // Destroy the container
+    // Note: Do NOT call getState() before destroy() — it wakes up hibernated DOs (gotcha #6)
     await container.destroy();
 
-    // Get state after destroy
-    const stateAfter = await container.getState();
+    reqLogger.info('Container destroyed', { containerId });
 
-    reqLogger.info('Container destroyed', { containerId, stateBefore, stateAfter });
-
-    return c.json({
-      success: true,
-      containerId,
-      stateBefore,
-      stateAfter,
-      message: 'Container destroyed',
-    });
+    // Don't call getState() after destroy() — it resurrects the DO (gotcha #6)
+    return c.json({ success: true, message: 'Container destroyed' });
   } catch (error) {
-    reqLogger.error('Container destroy error', error instanceof Error ? error : new Error(String(error)));
-    throw new ContainerError('destroy', error instanceof Error ? error.message : 'Unknown error');
+    if (error instanceof AppError) {
+      throw error;
+    }
+    const err = toError(error);
+    if (err.message.includes('not found') || err.message.includes('does not exist')) {
+      reqLogger.debug('Container not found during destroy', { error: err.message });
+    } else {
+      reqLogger.error('Container destroy error', err);
+    }
+    throw new ContainerError('destroy', toErrorMessage(error));
   }
 });
 

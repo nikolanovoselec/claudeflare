@@ -3,31 +3,34 @@
  * Handles admin-only endpoints like destroy-by-id
  */
 import { Hono } from 'hono';
+import { z } from 'zod';
 import type { Env } from '../types';
-import { isAdminRequest } from '../lib/type-guards';
 import { DO_ID_PATTERN } from '../lib/constants';
-import { AuthError, ValidationError } from '../lib/error-types';
+import { AppError, AuthError, ValidationError, toError, toErrorMessage } from '../lib/error-types';
+import { authMiddleware, requireAdmin, type AuthVariables } from '../middleware/auth';
+import { createRateLimiter } from '../middleware/rate-limit';
 import { createLogger } from '../lib/logger';
+
+const DestroyByIdSchema = z.object({
+  doId: z.string().regex(DO_ID_PATTERN, 'Invalid DO ID format - must be 64 hex characters'),
+});
 
 const logger = createLogger('admin');
 
-const app = new Hono<{ Bindings: Env }>();
+const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
+
+// All admin routes require authenticated admin user
+app.use('*', authMiddleware);
 
 /**
- * Verify admin authentication
- * Accepts secret from Authorization header (preferred) or query param (legacy)
+ * Rate limiter for admin endpoints
+ * Limits to 10 requests per minute per user
  */
-function verifyAdminAuth(c: { env: Env; req: { header: (name: string) => string | undefined; query: (name: string) => string | undefined } }): void {
-  const adminSecret = c.env.ADMIN_SECRET;
-  const authHeader = c.req.header('Authorization');
-  const providedSecret = authHeader?.startsWith('Bearer ')
-    ? authHeader.slice(7)
-    : c.req.query('secret');
-
-  if (!adminSecret || !providedSecret || adminSecret !== providedSecret) {
-    throw new AuthError('Unauthorized');
-  }
-}
+const adminRateLimiter = createRateLimiter({
+  windowMs: 60 * 1000,
+  maxRequests: 10,
+  keyPrefix: 'admin',
+});
 
 /**
  * POST /api/admin/destroy-by-id
@@ -36,21 +39,16 @@ function verifyAdminAuth(c: { env: Env; req: { header: (name: string) => string 
  * CRITICAL: Uses idFromString to reference EXISTING DOs.
  * DO NOT use idFromName - it creates NEW DOs!
  */
-app.post('/destroy-by-id', async (c) => {
-  const reqLogger = logger.child({ requestId: c.req.header('X-Request-ID') });
+app.post('/destroy-by-id', requireAdmin, adminRateLimiter, async (c) => {
+  const reqLogger = logger.child({ requestId: c.get('requestId') });
 
   try {
-    verifyAdminAuth(c);
-
     const data = await c.req.json();
-    if (!isAdminRequest(data)) {
-      throw new ValidationError('Invalid request - missing doId');
+    const parsed = DestroyByIdSchema.safeParse(data);
+    if (!parsed.success) {
+      throw new ValidationError(parsed.error.errors[0].message);
     }
-    const { doId } = data;
-
-    if (!DO_ID_PATTERN.test(doId)) {
-      throw new ValidationError('Invalid DO ID format - must be 64 hex characters');
-    }
+    const { doId } = parsed.data;
 
     // CRITICAL: Use idFromString to get the ACTUAL existing DO by its hex ID
     // DO NOT use idFromName - it creates a NEW DO with the hex as its name!
@@ -68,17 +66,14 @@ app.post('/destroy-by-id', async (c) => {
       doId,
       message: 'Container destroyed via raw DO ID',
     });
-  } catch (error) {
-    reqLogger.error('Admin destroy-by-id error', error instanceof Error ? error : new Error(String(error)));
+  } catch (err) {
+    reqLogger.error('Admin destroy-by-id error', toError(err));
 
-    if (error instanceof AuthError || error instanceof ValidationError) {
-      throw error;
+    if (err instanceof AuthError || err instanceof ValidationError) {
+      throw err;
     }
 
-    return c.json({
-      success: false,
-      error: error instanceof Error ? error.message : 'Unknown error',
-    }, 500);
+    throw new AppError('ADMIN_ERROR', 500, toErrorMessage(err), 'Admin operation failed. Please try again.');
   }
 });
 

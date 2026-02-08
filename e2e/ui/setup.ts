@@ -2,9 +2,9 @@ import puppeteer, { Browser, Page, LaunchOptions } from 'puppeteer';
 
 /**
  * Base URL for the web UI
- * Can be overridden with E2E_BASE_URL environment variable
+ * Constructed from ACCOUNT_SUBDOMAIN + CLOUDFLARE_WORKER_NAME
  */
-export const BASE_URL = process.env.E2E_BASE_URL || 'http://localhost:5173';
+export { BASE_URL } from '../config';
 
 /**
  * Default timeout for page operations (ms)
@@ -84,13 +84,6 @@ export async function navigateToHome(page: Page): Promise<void> {
 }
 
 /**
- * Navigate to the setup page
- */
-export async function navigateToSetup(page: Page): Promise<void> {
-  await navigateTo(page, '/setup');
-}
-
-/**
  * Wait for the app to be ready (initial load complete)
  */
 export async function waitForAppReady(page: Page): Promise<void> {
@@ -115,21 +108,6 @@ export async function takeScreenshot(
 }
 
 /**
- * Get the current page URL
- */
-export function getCurrentUrl(page: Page): string {
-  return page.url();
-}
-
-/**
- * Check if the page is on a specific path
- */
-export function isOnPath(page: Page, path: string): boolean {
-  const currentUrl = new URL(page.url());
-  return currentUrl.pathname === path;
-}
-
-/**
  * Check if setup is complete and main app is accessible
  * Returns true if we're on the main app, false if we're on setup wizard
  */
@@ -139,18 +117,6 @@ export async function isMainAppAvailable(page: Page): Promise<boolean> {
     return !!document.querySelector('[data-testid="header-logo"]');
   });
   return hasHeader;
-}
-
-/**
- * Check if we're on the setup wizard
- */
-export async function isOnSetupWizard(page: Page): Promise<boolean> {
-  const isOnSetupPath = isOnPath(page, '/setup');
-  const hasSetupWizard = await page.evaluate(() => {
-    return !!document.querySelector('[data-testid="setup-wizard"]') ||
-           !!document.querySelector('.setup-wizard');
-  });
-  return isOnSetupPath || hasSetupWizard;
 }
 
 /**

@@ -5,7 +5,10 @@ import { WebLinksAddon } from '@xterm/addon-web-links';
 import '@xterm/xterm/css/xterm.css';
 import { terminalStore } from '../stores/terminal';
 import { sessionStore } from '../stores/session';
+import { CSS_TRANSITION_DELAY_MS } from '../lib/constants';
+import { loadSettings, defaultSettings } from '../lib/settings';
 import InitProgress from './InitProgress';
+import '../styles/terminal.css';
 
 interface TerminalProps {
   sessionId: string;
@@ -18,21 +21,12 @@ interface TerminalProps {
   onInitComplete?: () => void;
 }
 
-// Patterns that indicate Claude has fully loaded
-const CLAUDE_READY_PATTERNS = [
-  'Welcome back',        // Claude welcome message
-  'Tips for getting',    // Tips section
-  '~/workspace',         // Working directory shown
-  'Try "',               // Suggestion prompt
-];
-
 const Terminal: Component<TerminalProps> = (props) => {
   let containerRef: HTMLDivElement | undefined;
   let terminal: XTerm | undefined;
   let fitAddon: FitAddon | undefined;
   let cleanup: (() => void) | undefined;
   let resizeObserver: ResizeObserver | undefined;
-  let outputBuffer = '';  // Buffer to accumulate terminal output for pattern matching
 
   const [dimensions, setDimensions] = createSignal({ cols: 80, rows: 24 });
 
@@ -48,12 +42,15 @@ const Terminal: Component<TerminalProps> = (props) => {
   onMount(() => {
     if (!containerRef) return;
 
-    // Create terminal with dark theme
+    // Load user settings (with defaults as fallback)
+    const settings = loadSettings();
+
+    // Create terminal with dark theme, using saved settings
     terminal = new XTerm({
-      cursorBlink: true,
-      cursorStyle: 'block',
-      fontFamily: "'JetBrains Mono', 'Fira Code', 'SF Mono', Menlo, Monaco, 'Courier New', monospace",
-      fontSize: 14,
+      cursorBlink: settings.cursorBlink ?? defaultSettings.cursorBlink,
+      cursorStyle: settings.cursorStyle ?? defaultSettings.cursorStyle,
+      fontFamily: `'${settings.terminalFont ?? defaultSettings.terminalFont}', 'Fira Code', 'SF Mono', Menlo, Monaco, 'Courier New', monospace`,
+      fontSize: settings.fontSize ?? defaultSettings.fontSize,
       lineHeight: 1.2,
       theme: {
         background: '#1a1a2e',
@@ -81,7 +78,7 @@ const Terminal: Component<TerminalProps> = (props) => {
       },
       allowProposedApi: true,
       convertEol: true,
-      scrollback: 10000,
+      scrollback: settings.scrollback ?? defaultSettings.scrollback,
     });
 
     // Add addons
@@ -107,17 +104,6 @@ const Terminal: Component<TerminalProps> = (props) => {
         }
         // No selection - let Ctrl+C pass through as SIGINT
         return true;
-      }
-
-      // Ctrl+X: Always send SIGINT (alternative interrupt key)
-      if (event.ctrlKey && event.key === 'x') {
-        // Send Ctrl+C (ASCII 3) to PTY for interrupt
-        const ws = terminalStore.getTerminal(props.sessionId, props.terminalId);
-        if (ws) {
-          // The onData handler sends to WebSocket, so we write to terminal input
-          terminal!.paste('\x03'); // ASCII 3 = Ctrl+C / ETX
-        }
-        return false;
       }
 
       // Ctrl+V: Paste from clipboard
@@ -230,7 +216,7 @@ const Terminal: Component<TerminalProps> = (props) => {
           terminal.scrollToBottom();
           terminal.refresh(0, terminal.rows - 1);
         });
-      }, 50); // 50ms delay for CSS transitions to complete
+      }, CSS_TRANSITION_DELAY_MS);
     }
   });
 
@@ -285,54 +271,6 @@ const Terminal: Component<TerminalProps> = (props) => {
         }}
       />
 
-      <style>{`
-        .terminal-init-overlay {
-          position: absolute;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          display: flex;
-          align-items: flex-start;
-          justify-content: center;
-          background: var(--color-bg-primary);
-          z-index: 15;
-          overflow-y: auto;
-          padding: 40px 20px;
-        }
-
-        .terminal-connection-status {
-          position: absolute;
-          top: 0;
-          left: 0;
-          right: 0;
-          bottom: 0;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-          gap: 16px;
-          background: rgba(26, 26, 46, 0.98);
-          color: var(--color-text-secondary);
-          font-size: 14px;
-          z-index: 10;
-        }
-
-        .terminal-connection-spinner {
-          width: 24px;
-          height: 24px;
-          border: 2px solid var(--color-border);
-          border-top-color: var(--color-accent);
-          border-radius: 50%;
-          animation: terminal-spin 1s linear infinite;
-        }
-
-        @keyframes terminal-spin {
-          to {
-            transform: rotate(360deg);
-          }
-        }
-      `}</style>
     </div>
   );
 };

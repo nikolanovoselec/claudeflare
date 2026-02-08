@@ -1,5 +1,7 @@
 name: Deploy
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 concurrency:
@@ -11,7 +13,7 @@ permissions:
 
 jobs:
   deploy:
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     environment: production
     timeout-minutes: 20
     steps:
@@ -62,9 +64,45 @@ jobs:
         run: npm run typecheck
         working-directory: web-ui
 
+      - name: Resolve KV namespace
+        run: |
+          WORKER_NAME="${{ vars.CLOUDFLARE_WORKER_NAME || 'claudeflare' }}"
+          KV_TITLE="${WORKER_NAME}-kv"
+
+          # Check if namespace already exists
+          KV_ID=$(npx wrangler kv namespace list 2>/dev/null \
+            | jq -r --arg title "$KV_TITLE" '.[] | select(.title == $title) | .id' \
+            | head -1)
+
+          if [ -z "$KV_ID" ]; then
+            echo "Creating KV namespace: $KV_TITLE"
+            KV_ID=$(npx wrangler kv namespace create "$KV_TITLE" 2>&1 \
+              | grep -oP '"[a-f0-9]{32}"' | tr -d '"' | head -1)
+          fi
+
+          if [ -z "$KV_ID" ]; then
+            echo "::error::Failed to resolve KV namespace ID"
+            exit 1
+          fi
+
+          echo "KV namespace ID: $KV_ID"
+          sed -i "s/id = \"placeholder\"/id = \"$KV_ID\"/" wrangler.toml
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Generate cache buster
+        run: echo "${{ github.sha }}" > .cache-bust
+
       - name: Deploy to Cloudflare
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: deploy --name ${{ vars.CLOUDFLARE_WORKER_NAME || 'claudeflare' }}
+
+      - name: Set API token as worker secret
+        run: echo "${{ secrets.CLOUDFLARE_API_TOKEN }}" | npx wrangler secret put CLOUDFLARE_API_TOKEN --name ${{ vars.CLOUDFLARE_WORKER_NAME || 'claudeflare' }}
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

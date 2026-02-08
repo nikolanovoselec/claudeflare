@@ -1,24 +1,81 @@
 # Claudeflare
 
-[![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)](https://deploy.workers.cloudflare.com/?url=https://github.com/nikolanovoselec/claudeflare)
-
 Run Claude Code in your browser via Cloudflare Containers.
 
-## What is this?
+## Why
 
-Claudeflare lets you run Anthropic's Claude Code CLI entirely in your browser. Each terminal session gets its own isolated container, while your Claude credentials and configuration are automatically persisted and synced across sessions via Cloudflare R2.
+Running Claude Code typically requires a local terminal setup. Claudeflare removes that barrier -- it gives you a full Claude Code CLI in the browser, backed by isolated containers on Cloudflare's edge. Each session gets its own container with persistent storage, so your credentials, config, and workspace sync automatically across sessions via R2.
 
 ## Features
 
-- **Browser-based Claude Code** - Full Claude Code CLI running in Cloudflare Containers
-- **Multiple terminal sessions** - Open several Claude instances in parallel
-- **Nested terminals** - Up to 6 terminal tabs per session (Claude + htop + yazi + bash)
-- **YOLO mode** - Runs with `--dangerously-skip-permissions` for uninterrupted workflows
-- **Connection status indicators** - Real-time WebSocket connection state shown per session
-- **Persistent storage** - Credentials, config, workspace, and conversation history sync to R2
-- **Login once, use everywhere** - Authenticate in one session, all others pick it up
-- **Fast startup** - Per-session containers with config-only sync (~0.2s)
-- **Dev tools included** - git, gh, vim, neovim, ripgrep, tmux, yazi, lazygit, and more
+- **Browser-based Claude Code** -- full CLI running in Cloudflare Containers
+- **Multiple sessions** -- open several Claude instances in parallel, each in its own container
+- **Nested terminals** -- up to 6 tabs per session (Claude + htop + yazi + bash)
+- **Unleashed mode** -- runs via [claude-unleashed](https://github.com/nikolanovoselec/claude-unleashed) with `--dangerously-skip-permissions` for uninterrupted workflows
+- **Persistent storage** -- credentials, config, and workspace sync to R2 across sessions
+- **Fast startup** -- per-session containers with config-only sync (~0.2s)
+- **Dev tools included** -- git, gh, neovim, ripgrep, tmux, yazi, lazygit, and more
+
+## Deploy
+
+> ![Deploy to Cloudflare](https://deploy.workers.cloudflare.com/button)
+>
+> The one-click deploy button doesn't work for this project. Cloudflare's deploy button can't provision Durable Objects, KV namespaces, R2 buckets, or secrets — all of which claudeflare requires. **Use GitHub Actions instead** (below) — it handles the full setup automatically, including bindings and secrets, with automated redeploys on every push.
+
+### Requirements
+
+- Cloudflare account with Workers Paid plan (~$5/month base)
+- Any paid Claude plan (Pro, Team, or Max) for Claude Code CLI access
+- A domain with its DNS zone in Cloudflare
+
+### 1. Create a Cloudflare API Token
+
+Go to [Cloudflare Dashboard > My Profile > API Tokens](https://dash.cloudflare.com/profile/api-tokens) and create a custom token with these permissions:
+
+| Scope | Permission | Access |
+|-------|------------|--------|
+| Account | Account Settings | Read |
+| Account | Workers Scripts | Edit |
+| Account | Workers KV Storage | Edit |
+| Account | Workers R2 Storage | Edit |
+| Account | Containers | Edit |
+| Account | Access: Apps and Policies | Edit |
+| Zone | Zone | Read |
+| Zone | DNS | Edit |
+| Zone | Workers Routes | Edit |
+
+### 2. Fork and Configure GitHub
+
+Fork this repo and add the following in Settings > Secrets and variables > Actions:
+
+**Secrets:**
+- `CLOUDFLARE_API_TOKEN` -- the API token from step 1
+- `CLOUDFLARE_ACCOUNT_ID` -- your Cloudflare account ID (found on any Workers page)
+
+**Variables (optional):**
+- `CLOUDFLARE_WORKER_NAME` -- custom worker name (defaults to `claudeflare`)
+
+### 3. Deploy
+
+Go to **Actions > Deploy** and click **Run workflow** on `main`.
+
+### 4. Run the Setup Wizard
+
+Visit your worker URL (`https://<worker-name>.<subdomain>.workers.dev`) and follow the wizard:
+
+1. **Welcome** -- auto-detects your API token
+2. **Configure** -- enter your custom domain, allowed emails, and optional CORS origins
+3. **Progress** -- automatically creates DNS records, Cloudflare Access app with user allowlist, and derives R2 credentials
+
+### Manual Deploy (Alternative)
+
+```bash
+git clone https://github.com/your-username/claudeflare.git
+cd claudeflare
+npm install && cd web-ui && npm install && cd ..
+npm run deploy:docker
+echo "your-token" | npx wrangler secret put CLOUDFLARE_API_TOKEN
+```
 
 ## Architecture
 
@@ -37,7 +94,7 @@ Browser (multiple tabs)
     v
 +---------------------------+
 |   Container (Alpine)      |
-|   - Claude Code (YOLO)    |
+|   - Claude Code (unleashed)|
 |   - Up to 6 PTYs/session  |
 |   - rclone bisync         |
 +---------------------------+
@@ -47,265 +104,24 @@ Browser (multiple tabs)
 +---------------------------+
 |   R2 Storage              |
 |   (per-user bucket)       |
-|   ~/.claude/ credentials  |
-|   ~/.config/ settings     |
-|   ~/workspace/ code       |
 +---------------------------+
 ```
 
-## How It Works
+## Why Claude-Unleashed?
 
-1. **Authentication** - Cloudflare Access protects the worker; users authenticate via SSO
-2. **Per-session containers** - Each browser tab gets its own dedicated container
-3. **Shared credentials** - All containers sync to the same per-user R2 bucket
-4. **Bidirectional sync** - rclone bisync runs every 60s, newest file wins on conflict
-5. **Workspace persistence** - Code repos sync to R2 across sessions
+Cloudflare Containers run as root. The standard Claude Code CLI refuses to combine `--dangerously-skip-permissions` with root execution -- a safety check that makes sense locally but blocks headless container use. [Claude-unleashed](https://github.com/nikolanovoselec/claude-unleashed) wraps the official `@anthropic-ai/claude-code` CLI, bypassing the root check so containers can run Claude Code without permission prompts.
 
-## Requirements
+The container ships a pinned baseline (2.1.25) with auto-update disabled on startup for fast boot. To update to the latest version, exit Claude and run `cu` or `claude-unleashed` in any terminal tab.
 
-- **Cloudflare Account** with Workers Paid plan (~$5/month base)
-- **Claude Max subscription** for Claude Code CLI access
+This is safe in context: each container is isolated, ephemeral, and single-user. See `TECHNICAL.md` section 12 for details.
 
-### API Token Permissions
+## Cost
 
-The setup wizard requires a Cloudflare API token with these permissions:
-
-**Required:**
-- Account > Workers Scripts > Edit
-- Account > Workers R2 Storage > Edit
-- Account > Workers KV Storage > Edit
-- Account > Containers > Edit
-
-**Optional (for custom domain with Cloudflare Access):**
-- Account > Access: Apps and Policies > Edit
-- Zone > Zone > Read
-- Zone > DNS > Edit
-- Zone > Workers Routes > Edit
-
-## Deployment
-
-### One-Click Deploy
-
-Click the Deploy to Cloudflare button above to fork the repo and deploy via Workers Builds.
-After deployment, visit your worker URL to complete the setup wizard.
-
-> **Note:** The Deploy button creates the Worker and assets, but does NOT build the container image
-> (Workers Builds doesn't have Docker). You'll need to set up GitHub Actions CI/CD for full
-> container support — the setup wizard guides you through this.
-
-### Manual Deploy
-
-```bash
-# Clone the repo
-git clone https://github.com/nikolanovoselec/claudeflare.git
-cd claudeflare
-
-# Install dependencies
-npm install
-cd web-ui && npm install && cd ..
-
-# Full deploy (builds container image + Worker + assets)
-# Requires Docker for container image build
-npm run deploy:docker
-```
-
-After deployment, visit your worker URL to complete the setup wizard.
-
-### CI/CD (GitHub Actions)
-
-The repo includes GitHub Actions workflows:
-
-| Workflow | Trigger | What it does |
-|----------|---------|-------------|
-| `deploy.yml` | Push to main, manual | Full deploy: tests + typecheck + Docker build + wrangler deploy |
-| `test.yml` | Pull requests | Tests + typecheck only (no deploy) |
-| `e2e.yml` | Manual | E2E tests against a deployed worker |
-
-**Required GitHub Secrets:**
-
-| Secret | Description |
-|--------|-------------|
-| `CLOUDFLARE_API_TOKEN` | API token with Workers Scripts Edit + R2 Edit permissions |
-| `CLOUDFLARE_ACCOUNT_ID` | Your Cloudflare account ID |
-
-**Optional GitHub Variable:**
-
-| Variable | Description |
-|----------|-------------|
-| `CLOUDFLARE_WORKER_NAME` | Custom worker name for forks (defaults to "claudeflare") |
-
-### Setup Wizard
-
-After deployment, the setup wizard guides you through initial configuration:
-
-1. **API Token** - Enter a Cloudflare API token with required permissions
-2. **Custom Domain** (optional) - The wizard automatically:
-   - Creates a DNS CNAME record pointing to your workers.dev URL
-   - Adds a worker route for the custom domain
-   - Creates a Cloudflare Access application for authentication
-3. **Secrets** - R2 credentials and admin secret are derived and stored automatically
-
-The setup uses an upsert pattern, so you can re-run it without manually deleting existing DNS records or Access apps.
-
-## Configuration
-
-### Wrangler Secrets
-
-These secrets are set automatically by the setup wizard:
-
-| Secret | Description |
-|--------|-------------|
-| `R2_ACCESS_KEY_ID` | Derived from API token ID |
-| `R2_SECRET_ACCESS_KEY` | SHA-256 hash of API token |
-| `CLOUDFLARE_API_TOKEN` | API token for R2 bucket creation |
-| `ADMIN_SECRET` | Generated randomly for admin endpoints |
-| `ENCRYPTION_KEY` | (Optional) AES-256 key for encrypting credentials at rest |
-
-### Environment Variables (wrangler.toml)
-
-| Variable | Description |
-|----------|-------------|
-| `DEV_MODE` | Set to "true" to bypass Access auth (dev only) |
-| `ALLOWED_ORIGINS` | CORS allowed origins (comma-separated patterns, e.g., ".workers.dev,.example.com") |
-
-> **Note:** `R2_ACCOUNT_ID`, `R2_ENDPOINT`, and `SERVICE_TOKEN_EMAIL` are no longer in wrangler.toml.
-> R2 config is resolved dynamically (env → KV fallback). For local dev, use `.dev.vars`.
-
-## Development
-
-```bash
-# Run locally (requires Docker)
-npm run dev
-
-# Type checking
-npm run typecheck
-
-# Run unit tests
-npm test
-
-# Run E2E tests (against deployed worker)
-npm run test:e2e
-```
-
-## Testing
-
-### Backend Unit Tests
-
-Located in `src/__tests__/`. Uses Vitest with Cloudflare Workers pool.
-
-```bash
-npm test
-```
-
-Tests cover:
-- Constants validation (ports, session ID patterns)
-- Container helper functions
-- Type guards for runtime validation
-- Error types (AppError hierarchy)
-- Circuit breaker pattern
-- Exponential backoff logic
-- Setup and session route handlers
-
-### Frontend Unit Tests
-
-Located in `web-ui/src/__tests__/`. Uses Vitest with SolidJS Testing Library.
-
-```bash
-cd web-ui && npm test
-```
-
-Tests cover:
-- UI components (Button, Input, SessionCard, etc.)
-- Store logic (terminal, session, setup)
-- API client and contract validation
-
-### E2E Tests
-
-Located in `e2e/`. Tests API endpoints against the deployed worker.
-
-```bash
-npm run test:e2e
-```
-
-Set `E2E_BASE_URL` environment variable to test against a different deployment.
-
-## Container Specs
-
-- **Instance type:** Custom (1 vCPU, 3 GiB RAM, 4 GB disk)
-- **Base image:** Node.js 22 Alpine
-- **Included tools:** git, gh, vim, neovim, ripgrep, fd, tmux, btop, lazygit, yazi
-- **Cost:** ~$56/container/month while running
-
-## API Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `POST` | `/api/container/start` | Start a container |
-| `POST` | `/api/container/destroy` | Destroy a container |
-| `GET` | `/api/container/state` | Get container state |
-| `GET` | `/api/container/health` | Health check |
-| `GET` | `/api/container/startup-status` | Poll startup progress |
-| `GET` | `/api/sessions` | List sessions |
-| `POST` | `/api/sessions` | Create session |
-| `DELETE` | `/api/sessions/:id` | Delete session |
-| `GET` | `/api/user` | Get authenticated user |
-| `WS` | `/api/terminal/:sessionId-:terminalId/ws` | Terminal WebSocket (compound ID) |
-
-## Project Structure
-
-```
-src/
-  index.ts              # Hono router entry point
-  types.ts              # TypeScript types
-  routes/               # API route handlers
-    container/          # Container lifecycle (start, stop, health)
-    session/            # Session CRUD and lifecycle
-    admin.ts            # Admin-only endpoints
-  middleware/           # Shared middleware
-    auth.ts             # Authentication middleware
-    rate-limit.ts       # Rate limiting middleware
-  lib/                  # Utility modules
-    constants.ts        # Centralized config values
-    container-helpers.ts # Container initialization helpers
-    errors.ts           # Standardized error responses
-    error-types.ts      # Centralized error classes (AppError, etc.)
-    type-guards.ts      # Runtime type validation
-    access.ts           # Auth helpers
-    r2-admin.ts         # R2 bucket management
-    kv-keys.ts          # KV key utilities
-    circuit-breaker.ts  # Circuit breaker for resilience
-    logger.ts           # Structured JSON logging
-    backoff.ts          # Exponential backoff with jitter
-    crypto.ts           # AES-GCM encryption utilities
-  container/            # Container Durable Object
-  __tests__/            # Unit tests (lib + routes)
-
-e2e/
-  setup.ts              # E2E test setup
-  api.test.ts           # E2E API tests
-
-host/
-  server.js             # PTY terminal server (runs in container)
-
-web-ui/
-  src/                  # SolidJS frontend with xterm.js
-    components/         # Terminal, SessionCard, Layout, AppSidebar, TerminalArea
-    stores/             # Session, terminal, setup state management
-    api/                # API client
-    lib/                # Frontend constants, Zod schemas, terminal config
-
-Dockerfile              # Container image definition
-entrypoint.sh           # Container startup script
-wrangler.toml           # Cloudflare configuration
-vitest.config.ts        # Unit test config
-vitest.e2e.config.ts    # E2E test config
-```
+~$56/container/month (1 vCPU, 3 GiB RAM). Cost scales per active session -- idle containers hibernate after 30 minutes.
 
 ## Documentation
 
-| Document | Description |
-|----------|-------------|
-| [TECHNICAL.md](./TECHNICAL.md) | Architecture, data flow, sync strategy, troubleshooting |
+See [TECHNICAL.md](./TECHNICAL.md) for architecture details, API reference, development setup, testing, configuration, and troubleshooting.
 
 ## License
 

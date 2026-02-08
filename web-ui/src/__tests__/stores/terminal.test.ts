@@ -7,10 +7,12 @@ vi.mock('../../lib/constants', () => ({
   CONNECTION_RETRY_DELAY_MS: 100,
   MAX_RECONNECT_ATTEMPTS: 2,
   RECONNECT_DELAY_MS: 100,
-  TERMINAL_REFRESH_DELAY_MS: 50,
   TERMINAL_SECONDARY_REFRESH_DELAY_MS: 50,
   CSS_TRANSITION_DELAY_MS: 10,
   WS_CLOSE_ABNORMAL: 1006,
+  BUFFER_REPLAY_IDLE_THRESHOLD_MS: 50,
+  BUFFER_REPLAY_MAX_WAIT_MS: 500,
+  BUFFER_REPLAY_CHECK_INTERVAL_MS: 25,
 }));
 
 // Mock API client
@@ -292,6 +294,35 @@ describe('Terminal Store', () => {
       expect(terminalStore.getConnectionState(sessionId, '2')).toBe('disconnected');
     });
 
+    it('should clean up fitAddons, reconnectAttempts, and inputDisposables for the session', async () => {
+      const terminal1 = createMockTerminal();
+      const terminal2 = createMockTerminal();
+      const mockFitAddon = { fit: vi.fn() };
+
+      // Set up connections and fitAddons for the target session
+      terminalStore.connect(sessionId, '1', terminal1);
+      terminalStore.connect(sessionId, '2', terminal2);
+      await vi.advanceTimersByTimeAsync(0);
+
+      terminalStore.registerFitAddon(sessionId, '1', mockFitAddon as any);
+      terminalStore.registerFitAddon(sessionId, '2', mockFitAddon as any);
+
+      // Dispose the session
+      terminalStore.disposeSession(sessionId);
+
+      // Verify terminals are gone
+      expect(terminalStore.getTerminal(sessionId, '1')).toBeUndefined();
+      expect(terminalStore.getTerminal(sessionId, '2')).toBeUndefined();
+
+      // Verify connections are disconnected
+      expect(terminalStore.getConnectionState(sessionId, '1')).toBe('disconnected');
+      expect(terminalStore.getConnectionState(sessionId, '2')).toBe('disconnected');
+
+      // Verify reconnect returns null (no stored terminal = Maps were cleaned up)
+      expect(terminalStore.reconnect(sessionId, '1')).toBeNull();
+      expect(terminalStore.reconnect(sessionId, '2')).toBeNull();
+    });
+
     it('should not affect other sessions', async () => {
       const terminal1 = createMockTerminal();
       const terminal2 = createMockTerminal();
@@ -320,6 +351,51 @@ describe('Terminal Store', () => {
 
       expect(terminalStore.getConnectionState('session-1', '1')).toBe('disconnected');
       expect(terminalStore.getConnectionState('session-2', '1')).toBe('disconnected');
+    });
+
+    it('should clear all auxiliary Maps (fitAddons, inputDisposables, reconnectAttempts, retryTimeouts)', async () => {
+      const terminal1 = createMockTerminal();
+      const terminal2 = createMockTerminal();
+      const mockFitAddon = { fit: vi.fn() };
+
+      // Set up connections and fitAddons
+      terminalStore.connect('session-a', '1', terminal1);
+      terminalStore.connect('session-b', '1', terminal2);
+      await vi.advanceTimersByTimeAsync(0);
+
+      terminalStore.registerFitAddon('session-a', '1', mockFitAddon as any);
+      terminalStore.registerFitAddon('session-b', '1', mockFitAddon as any);
+
+      // Now dispose all
+      terminalStore.disposeAll();
+
+      // Verify terminals are gone
+      expect(terminalStore.getTerminal('session-a', '1')).toBeUndefined();
+      expect(terminalStore.getTerminal('session-b', '1')).toBeUndefined();
+
+      // Verify connections are disconnected
+      expect(terminalStore.getConnectionState('session-a', '1')).toBe('disconnected');
+      expect(terminalStore.getConnectionState('session-b', '1')).toBe('disconnected');
+
+      // Verify reconnect returns null (no stored terminal means Maps are cleared)
+      expect(terminalStore.reconnect('session-a', '1')).toBeNull();
+      expect(terminalStore.reconnect('session-b', '1')).toBeNull();
+    });
+
+    it('should call dispose on all terminal instances', async () => {
+      const terminal1 = createMockTerminal();
+      const terminal2 = createMockTerminal();
+
+      terminalStore.setTerminal('session-x', '1', terminal1);
+      terminalStore.setTerminal('session-y', '2', terminal2);
+      terminalStore.connect('session-x', '1', terminal1);
+      terminalStore.connect('session-y', '2', terminal2);
+      await vi.advanceTimersByTimeAsync(0);
+
+      terminalStore.disposeAll();
+
+      expect(terminal1.dispose).toHaveBeenCalled();
+      expect(terminal2.dispose).toHaveBeenCalled();
     });
   });
 
@@ -376,6 +452,216 @@ describe('Terminal Store', () => {
       vi.advanceTimersByTime(100);
 
       expect(terminalStore.layoutChangeCounter).toBe(initialCounter + 1);
+    });
+  });
+
+  describe('screen-state message handling (alternate screen reconnect)', () => {
+    it('should parse screen-state message with inAlternateScreen: true and trigger resize-only reconnect', async () => {
+      const terminal = {
+        ...createMockTerminal(),
+        cols: 100,
+        rows: 30,
+      } as unknown as Terminal;
+
+      const sendSpy = vi.fn();
+      const OriginalWebSocket = globalThis.WebSocket;
+      let wsInstance: any;
+
+      globalThis.WebSocket = class extends (OriginalWebSocket as unknown as { new (url: string): WebSocket }) {
+        send = sendSpy;
+        constructor(url: string) {
+          super(url);
+          wsInstance = this;
+        }
+      } as unknown as typeof WebSocket;
+
+      terminalStore.connect(sessionId, terminalId, terminal);
+
+      // Allow WebSocket to open
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Clear send spy to isolate post-open sends
+      sendSpy.mockClear();
+
+      // Simulate server sending screen-state message (arrives before buffer data)
+      wsInstance._simulateMessage(JSON.stringify({ type: 'screen-state', inAlternateScreen: true }));
+
+      // Allow the setTimeout in onopen to fire (BUFFER_REPLAY_CHECK_INTERVAL_MS = 25)
+      await vi.advanceTimersByTimeAsync(25);
+
+      // Should have sent a resize (SIGWINCH trigger for TUI redraw)
+      const resizeCalls = sendSpy.mock.calls.filter((call: any[]) => {
+        try {
+          const parsed = JSON.parse(call[0]);
+          return parsed.type === 'resize';
+        } catch {
+          return false;
+        }
+      });
+      expect(resizeCalls.length).toBeGreaterThanOrEqual(1);
+
+      // Should NOT have called terminal.refresh (no buffer replay for alternate screen)
+      expect(terminal.refresh).not.toHaveBeenCalled();
+
+      globalThis.WebSocket = OriginalWebSocket;
+    });
+
+    it('should parse screen-state message with inAlternateScreen: false and use normal reconnect path', async () => {
+      const terminal = {
+        ...createMockTerminal(),
+        cols: 100,
+        rows: 30,
+      } as unknown as Terminal;
+
+      const sendSpy = vi.fn();
+      const OriginalWebSocket = globalThis.WebSocket;
+      let wsInstance: any;
+
+      globalThis.WebSocket = class extends (OriginalWebSocket as unknown as { new (url: string): WebSocket }) {
+        send = sendSpy;
+        constructor(url: string) {
+          super(url);
+          wsInstance = this;
+        }
+      } as unknown as typeof WebSocket;
+
+      terminalStore.connect(sessionId, terminalId, terminal);
+
+      // Allow WebSocket to open
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Clear send spy
+      sendSpy.mockClear();
+
+      // Simulate server sending screen-state with inAlternateScreen: false
+      wsInstance._simulateMessage(JSON.stringify({ type: 'screen-state', inAlternateScreen: false }));
+
+      // Allow the setTimeout in onopen to fire (25ms) + idle detection interval (25ms)
+      // + idle threshold (50ms) to trigger the normal reconnect path
+      await vi.advanceTimersByTimeAsync(25 + 50 + 25);
+
+      // Normal path should call terminal.refresh (double-refresh for cursor fix)
+      expect(terminal.refresh).toHaveBeenCalled();
+      expect(terminal.scrollToBottom).toHaveBeenCalled();
+
+      globalThis.WebSocket = OriginalWebSocket;
+    });
+
+    it('should NOT write screen-state message to the terminal', async () => {
+      const terminal = createMockTerminal();
+
+      const OriginalWebSocket = globalThis.WebSocket;
+      let wsInstance: any;
+
+      globalThis.WebSocket = class extends (OriginalWebSocket as unknown as { new (url: string): WebSocket }) {
+        constructor(url: string) {
+          super(url);
+          wsInstance = this;
+        }
+      } as unknown as typeof WebSocket;
+
+      terminalStore.connect(sessionId, terminalId, terminal);
+
+      // Allow WebSocket to open
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Send screen-state message
+      wsInstance._simulateMessage(JSON.stringify({ type: 'screen-state', inAlternateScreen: true }));
+
+      // terminal.write should NOT have been called with the screen-state message
+      const writeCalls = (terminal.write as ReturnType<typeof vi.fn>).mock.calls;
+      for (const call of writeCalls) {
+        // None of the write calls should contain screen-state JSON
+        expect(call[0]).not.toContain('screen-state');
+      }
+
+      globalThis.WebSocket = OriginalWebSocket;
+    });
+
+    it('should still write non-JSON raw terminal data to terminal', async () => {
+      const terminal = createMockTerminal();
+
+      const OriginalWebSocket = globalThis.WebSocket;
+      let wsInstance: any;
+
+      globalThis.WebSocket = class extends (OriginalWebSocket as unknown as { new (url: string): WebSocket }) {
+        constructor(url: string) {
+          super(url);
+          wsInstance = this;
+        }
+      } as unknown as typeof WebSocket;
+
+      terminalStore.connect(sessionId, terminalId, terminal);
+
+      // Allow WebSocket to open
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Simulate raw terminal data (escape sequences, text, etc.)
+      const rawData = '\x1b[32mHello World\x1b[0m\r\n';
+      wsInstance._simulateMessage(rawData);
+
+      // Should write raw data directly to terminal
+      expect(terminal.write).toHaveBeenCalledWith(rawData);
+
+      globalThis.WebSocket = OriginalWebSocket;
+    });
+
+    it('should not write pong control messages to terminal', async () => {
+      const terminal = createMockTerminal();
+
+      const OriginalWebSocket = globalThis.WebSocket;
+      let wsInstance: any;
+
+      globalThis.WebSocket = class extends (OriginalWebSocket as unknown as { new (url: string): WebSocket }) {
+        constructor(url: string) {
+          super(url);
+          wsInstance = this;
+        }
+      } as unknown as typeof WebSocket;
+
+      terminalStore.connect(sessionId, terminalId, terminal);
+
+      // Allow WebSocket to open
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Send pong control message
+      wsInstance._simulateMessage(JSON.stringify({ type: 'pong' }));
+
+      // terminal.write should NOT have been called with pong message
+      const writeCalls = (terminal.write as ReturnType<typeof vi.fn>).mock.calls;
+      for (const call of writeCalls) {
+        expect(call[0]).not.toContain('pong');
+      }
+
+      globalThis.WebSocket = OriginalWebSocket;
+    });
+
+    it('should write JSON-like strings that fail parsing as raw terminal data', async () => {
+      const terminal = createMockTerminal();
+
+      const OriginalWebSocket = globalThis.WebSocket;
+      let wsInstance: any;
+
+      globalThis.WebSocket = class extends (OriginalWebSocket as unknown as { new (url: string): WebSocket }) {
+        constructor(url: string) {
+          super(url);
+          wsInstance = this;
+        }
+      } as unknown as typeof WebSocket;
+
+      terminalStore.connect(sessionId, terminalId, terminal);
+
+      // Allow WebSocket to open
+      await vi.advanceTimersByTimeAsync(0);
+
+      // Send malformed JSON that starts with '{' but isn't valid JSON
+      const malformedJson = '{not valid json at all';
+      wsInstance._simulateMessage(malformedJson);
+
+      // Should fall through to raw write
+      expect(terminal.write).toHaveBeenCalledWith(malformedJson);
+
+      globalThis.WebSocket = OriginalWebSocket;
     });
   });
 

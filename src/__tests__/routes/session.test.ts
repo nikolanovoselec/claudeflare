@@ -2,42 +2,28 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Hono } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import crudRoutes from '../../routes/session/crud';
+import lifecycleRoutes from '../../routes/session/lifecycle';
 import type { Env, Session } from '../../types';
 import type { AuthVariables } from '../../middleware/auth';
 import { ValidationError, NotFoundError, RateLimitError } from '../../lib/error-types';
 import { MAX_SESSION_NAME_LENGTH } from '../../lib/constants';
-
-// Mock KV storage
-function createMockKV() {
-  const store = new Map<string, string>();
-  return {
-    get: vi.fn(async (key: string, type?: string) => {
-      const value = store.get(key);
-      if (!value) return null;
-      return type === 'json' ? JSON.parse(value) : value;
-    }),
-    put: vi.fn(async (key: string, value: string) => {
-      store.set(key, value);
-    }),
-    delete: vi.fn(async (key: string) => {
-      store.delete(key);
-    }),
-    list: vi.fn(async ({ prefix }: { prefix: string }) => {
-      const keys = Array.from(store.keys())
-        .filter((k) => k.startsWith(prefix))
-        .map((name) => ({ name }));
-      return { keys };
-    }),
-    _store: store,
-    _set: (key: string, value: unknown) => store.set(key, JSON.stringify(value)),
-    _clear: () => store.clear(),
-  };
-}
+import { createMockKV } from '../helpers/mock-kv';
 
 // Mock container
-function createMockContainer() {
+function createMockContainer(healthy = true) {
   return {
-    fetch: vi.fn().mockResolvedValue(new Response('', { status: 200 })),
+    fetch: vi.fn().mockImplementation((req: Request) => {
+      const url = new URL(req.url);
+      if (url.pathname === '/health') {
+        return healthy
+          ? Promise.resolve(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+          : Promise.reject(new Error('Container not running'));
+      }
+      if (url.pathname === '/sessions' && req.method === 'GET') {
+        return Promise.resolve(new Response(JSON.stringify({ sessions: [] }), { status: 200 }));
+      }
+      return Promise.resolve(new Response('', { status: 200 }));
+    }),
     destroy: vi.fn().mockResolvedValue(undefined),
   };
 }
@@ -223,6 +209,22 @@ describe('Session CRUD Routes', () => {
       expect(body.session.name).not.toContain('<');
       expect(body.session.name).not.toContain('>');
       expect(body.session.name).not.toContain('"');
+    });
+
+    it('strips control characters from session name', async () => {
+      const app = createTestApp();
+
+      const res = await app.request('/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Test\x00Name\x0aWith\x1fControl' }),
+      });
+
+      expect(res.status).toBe(201);
+      const body = await res.json() as { session: Session };
+      // Control characters (\x00, \x0a, \x1f) should be stripped
+      expect(body.session.name).not.toMatch(/[\x00-\x1f]/);
+      expect(body.session.name).toBe('TestNameWithControl');
     });
 
     it('returns 400 when name exceeds max length', async () => {
@@ -413,6 +415,87 @@ describe('Session CRUD Routes', () => {
 
       expect(res.status).toBe(404);
     });
+  });
+});
+
+describe('GET /sessions/batch-status', () => {
+  let mockKV: ReturnType<typeof createMockKV>;
+
+  beforeEach(() => {
+    mockKV = createMockKV();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2024-01-15T10:00:00.000Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.clearAllMocks();
+  });
+
+  function createLifecycleTestApp(bucketName = 'test-bucket') {
+    const app = new Hono<{ Bindings: Env; Variables: AuthVariables }>();
+
+    // Error handler
+    app.onError((err, c) => {
+      return c.json({ error: err.message }, 500);
+    });
+
+    // Set up mock env and auth variables
+    app.use('*', async (c, next) => {
+      c.env = {
+        KV: mockKV as unknown as KVNamespace,
+        CONTAINER: {} as DurableObjectNamespace,
+      } as unknown as Env;
+      c.set('user', { email: 'test@example.com', authenticated: true });
+      c.set('bucketName', bucketName);
+      return next();
+    });
+
+    app.route('/sessions', lifecycleRoutes);
+    return app;
+  }
+
+  it('returns status for multiple sessions', async () => {
+    const app = createLifecycleTestApp();
+    const session1: Session = {
+      id: 'batchsession1234abc',
+      name: 'Session 1',
+      userId: 'test-bucket',
+      createdAt: '2024-01-15T09:00:00.000Z',
+      lastAccessedAt: '2024-01-15T09:30:00.000Z',
+    };
+    const session2: Session = {
+      id: 'batchsession5678def',
+      name: 'Session 2',
+      userId: 'test-bucket',
+      createdAt: '2024-01-15T08:00:00.000Z',
+      lastAccessedAt: '2024-01-15T10:00:00.000Z',
+    };
+
+    mockKV._set('session:test-bucket:batchsession1234abc', session1);
+    mockKV._set('session:test-bucket:batchsession5678def', session2);
+
+    const res = await app.request('/sessions/batch-status');
+    expect(res.status).toBe(200);
+
+    const body = await res.json() as { statuses: Record<string, { status: string; ptyActive: boolean }> };
+    expect(body.statuses).toBeDefined();
+    // Both sessions should have entries in the statuses map
+    expect(body.statuses['batchsession1234abc']).toBeDefined();
+    expect(body.statuses['batchsession5678def']).toBeDefined();
+    // Each should have status and ptyActive fields
+    expect(body.statuses['batchsession1234abc'].status).toBeDefined();
+    expect(typeof body.statuses['batchsession1234abc'].ptyActive).toBe('boolean');
+  });
+
+  it('returns empty statuses when no sessions exist', async () => {
+    const app = createLifecycleTestApp();
+
+    const res = await app.request('/sessions/batch-status');
+    expect(res.status).toBe(200);
+
+    const body = await res.json() as { statuses: Record<string, unknown> };
+    expect(body.statuses).toEqual({});
   });
 });
 

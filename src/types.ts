@@ -7,9 +7,6 @@ export interface Env {
   // Static assets binding (auto-injected by Cloudflare when [assets] is configured)
   ASSETS: Fetcher;
 
-  // R2 bucket for workspace storage
-  STORAGE: R2Bucket;
-
   // KV namespace for session metadata
   KV: KVNamespace;
 
@@ -17,7 +14,8 @@ export interface Env {
   CONTAINER: DurableObjectNamespace<Container<Env>>;
 
   // Environment variables
-  R2_BUCKET_NAME: string;
+  // Only available inside containers (set via envVars)
+  R2_BUCKET_NAME?: string;
   R2_ACCOUNT_ID?: string;
   R2_ENDPOINT?: string;
 
@@ -35,16 +33,21 @@ export interface Env {
   // Cloudflare API token for R2 bucket management
   CLOUDFLARE_API_TOKEN: string;
 
-  // Admin secret for privileged endpoints (destroy-by-id)
-  ADMIN_SECRET?: string;
-
   // Allowed CORS origins (comma-separated patterns, e.g., ".workers.dev,.example.com")
   ALLOWED_ORIGINS?: string;
 
-  // Encryption key for credentials at rest (base64-encoded AES-256 key)
-  // Generate with: node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
-  ENCRYPTION_KEY?: string;
+  // Configurable log level (debug | info | warn | error)
+  LOG_LEVEL?: string;
+
+  // Optional worker name override for forks (set via wrangler.toml [vars] or GitHub Actions)
+  CLOUDFLARE_WORKER_NAME?: string;
+
 }
+
+/**
+ * Possible user roles within the application
+ */
+export type UserRole = 'admin' | 'user';
 
 /**
  * User extracted from Cloudflare Access JWT
@@ -52,6 +55,7 @@ export interface Env {
 export interface AccessUser {
   email: string;
   authenticated: boolean;
+  role?: UserRole;
 }
 
 /**
@@ -63,6 +67,7 @@ export interface Session {
   userId: string;
   createdAt: string;
   lastAccessedAt: string;
+  status?: 'stopped' | 'running';
 }
 
 /**

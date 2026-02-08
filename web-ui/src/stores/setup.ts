@@ -1,113 +1,128 @@
 import { createStore, produce } from 'solid-js/store';
+import * as api from '../api/client';
 
-export interface SetupState {
+const TOTAL_STEPS = 3;
+
+interface SetupState {
   step: number;
-  token: string;
-  tokenValid: boolean;
-  tokenError: string | null;
-  tokenVerifying: boolean;
+  // Token detection (auto-detected from env)
+  tokenDetected: boolean;
+  tokenDetecting: boolean;
+  tokenDetectError: string | null;
   accountInfo: { id: string; name: string } | null;
   // Custom domain (optional)
-  useCustomDomain: boolean;
   customDomain: string;
   customDomainError: string | null;
-  // Access policy (only if custom domain)
-  accessPolicy: {
-    type: 'email' | 'domain' | 'everyone';
-    emails: string[];
-    domain: string;
-  };
+  // Allowed users and origins
+  adminUsers: string[];
+  allowedUsers: string[];
+  allowedOrigins: string[];
   // Configuration progress
   configuring: boolean;
   configureSteps: Array<{ step: string; status: string; error?: string }>;
   configureError: string | null;
   setupComplete: boolean;
   // Result URLs
-  workersDevUrl: string | null;
   customDomainUrl: string | null;
-  adminSecret: string | null;
   accountId: string | null;
 }
 
-const [state, setState] = createStore<SetupState>({
+const initialState: SetupState = {
   step: 1,
-  token: '',
-  tokenValid: false,
-  tokenError: null,
-  tokenVerifying: false,
+  tokenDetected: false,
+  tokenDetecting: false,
+  tokenDetectError: null,
   accountInfo: null,
-  useCustomDomain: false,
   customDomain: '',
   customDomainError: null,
-  accessPolicy: {
-    type: 'email',
-    emails: [],
-    domain: '',
-  },
+  adminUsers: [],
+  allowedUsers: [],
+  allowedOrigins: [],
   configuring: false,
   configureSteps: [],
   configureError: null,
   setupComplete: false,
-  workersDevUrl: null,
   customDomainUrl: null,
-  adminSecret: null,
   accountId: null,
-});
+};
 
-function setToken(token: string): void {
-  setState({ token, tokenValid: false, tokenError: null });
-}
+const [state, setState] = createStore<SetupState>({ ...initialState });
 
-async function verifyToken(): Promise<boolean> {
-  setState({ tokenVerifying: true, tokenError: null });
-
+async function detectToken(): Promise<void> {
+  setState('tokenDetecting', true);
+  setState('tokenDetectError', null);
   try {
-    const res = await fetch('/api/setup/verify-token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: state.token }),
-    });
-    const data = await res.json();
-
-    if (data.valid) {
-      setState({ tokenValid: true, accountInfo: data.account, tokenError: null });
-      return true;
+    const data = await api.detectToken();
+    if (data.detected && data.valid) {
+      setState('tokenDetected', true);
+      setState('accountInfo', data.account ?? null);
     } else {
-      setState({ tokenValid: false, tokenError: data.error || 'Invalid token' });
-      return false;
+      setState('tokenDetectError', data.error || 'Token not detected');
     }
-  } catch {
-    setState({ tokenValid: false, tokenError: 'Verification failed' });
-    return false;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Failed to detect token';
+    setState('tokenDetectError', msg);
   } finally {
-    setState({ tokenVerifying: false });
+    setState('tokenDetecting', false);
   }
 }
 
-function setAccessPolicy(policy: Partial<SetupState['accessPolicy']>): void {
-  setState('accessPolicy', (prev) => ({ ...prev, ...policy }));
-}
-
-function addEmail(email: string): void {
-  if (email && !state.accessPolicy.emails.includes(email)) {
+/** Add a user as admin. If already in allowedUsers, promotes to admin. */
+function addAdminUser(email: string): void {
+  if (email && !state.adminUsers.includes(email)) {
     setState(
       produce((s) => {
-        s.accessPolicy.emails.push(email);
+        // If already in regular users list, remove from there
+        const regularIndex = s.allowedUsers.indexOf(email);
+        if (regularIndex !== -1) {
+          s.allowedUsers.splice(regularIndex, 1);
+        }
+        s.adminUsers.push(email);
       })
     );
   }
 }
 
-function removeEmail(index: number): void {
+function removeAdminUser(email: string): void {
   setState(
     produce((s) => {
-      s.accessPolicy.emails.splice(index, 1);
+      const index = s.adminUsers.indexOf(email);
+      if (index !== -1) {
+        s.adminUsers.splice(index, 1);
+      }
     })
   );
 }
 
-function setUseCustomDomain(use: boolean): void {
-  setState({ useCustomDomain: use, customDomainError: null });
+/** Add a user as regular allowed user. If already in adminUsers, demotes to regular user. */
+function addAllowedUser(email: string): void {
+  if (email && !state.allowedUsers.includes(email)) {
+    setState(
+      produce((s) => {
+        // If already in admin list, remove from there
+        const adminIndex = s.adminUsers.indexOf(email);
+        if (adminIndex !== -1) {
+          s.adminUsers.splice(adminIndex, 1);
+        }
+        s.allowedUsers.push(email);
+      })
+    );
+  }
+}
+
+function removeAllowedUser(email: string): void {
+  setState(
+    produce((s) => {
+      const index = s.allowedUsers.indexOf(email);
+      if (index !== -1) {
+        s.allowedUsers.splice(index, 1);
+      }
+    })
+  );
+}
+
+function setAllowedOrigins(origins: string[]): void {
+  setState('allowedOrigins', origins);
 }
 
 function setCustomDomain(domain: string): void {
@@ -115,7 +130,9 @@ function setCustomDomain(domain: string): void {
 }
 
 function nextStep(): void {
-  setState('step', state.step + 1);
+  if (state.step < TOTAL_STEPS) {
+    setState('step', state.step + 1);
+  }
 }
 
 function prevStep(): void {
@@ -123,32 +140,32 @@ function prevStep(): void {
 }
 
 function goToStep(step: number): void {
-  setState('step', step);
+  setState('step', Math.max(1, Math.min(TOTAL_STEPS, step)));
 }
 
 async function configure(): Promise<boolean> {
   setState({ configuring: true, configureSteps: [], configureError: null });
 
   try {
-    const res = await fetch('/api/setup/configure', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        token: state.token,
-        customDomain: state.useCustomDomain ? state.customDomain : undefined,
-        accessPolicy: state.useCustomDomain ? state.accessPolicy : undefined,
-      }),
-    });
-    const data = await res.json();
+    // Combine admin + regular users for the allowedUsers list (CF Access needs all emails)
+    const allUsers = [...state.adminUsers, ...state.allowedUsers];
+    const body: Parameters<typeof api.configure>[0] = {
+      customDomain: state.customDomain,
+      allowedUsers: allUsers,
+      adminUsers: state.adminUsers,
+    };
+    if (state.allowedOrigins.length > 0) {
+      body.allowedOrigins = state.allowedOrigins;
+    }
+
+    const data = await api.configure(body);
 
     setState({ configureSteps: data.steps || [] });
 
     if (data.success) {
       setState({
         setupComplete: true,
-        workersDevUrl: data.workersDevUrl || null,
         customDomainUrl: data.customDomainUrl || null,
-        adminSecret: data.adminSecret || null,
         accountId: data.accountId || null,
       });
       return true;
@@ -156,8 +173,9 @@ async function configure(): Promise<boolean> {
       setState({ configureError: data.error || 'Configuration failed' });
       return false;
     }
-  } catch {
-    setState({ configureError: 'Configuration request failed' });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : 'Configuration request failed';
+    setState({ configureError: msg });
     return false;
   } finally {
     setState({ configuring: false });
@@ -165,30 +183,7 @@ async function configure(): Promise<boolean> {
 }
 
 function reset(): void {
-  setState({
-    step: 1,
-    token: '',
-    tokenValid: false,
-    tokenError: null,
-    tokenVerifying: false,
-    accountInfo: null,
-    useCustomDomain: false,
-    customDomain: '',
-    customDomainError: null,
-    accessPolicy: {
-      type: 'email',
-      emails: [],
-      domain: '',
-    },
-    configuring: false,
-    configureSteps: [],
-    configureError: null,
-    setupComplete: false,
-    workersDevUrl: null,
-    customDomainUrl: null,
-    adminSecret: null,
-    accountId: null,
-  });
+  setState({ ...initialState, adminUsers: [], allowedUsers: [], allowedOrigins: [], configureSteps: [] });
 }
 
 export const setupStore = {
@@ -196,23 +191,17 @@ export const setupStore = {
   get step() {
     return state.step;
   },
-  get token() {
-    return state.token;
+  get tokenDetected() {
+    return state.tokenDetected;
   },
-  get tokenValid() {
-    return state.tokenValid;
+  get tokenDetecting() {
+    return state.tokenDetecting;
   },
-  get tokenError() {
-    return state.tokenError;
-  },
-  get tokenVerifying() {
-    return state.tokenVerifying;
+  get tokenDetectError() {
+    return state.tokenDetectError;
   },
   get accountInfo() {
     return state.accountInfo;
-  },
-  get useCustomDomain() {
-    return state.useCustomDomain;
   },
   get customDomain() {
     return state.customDomain;
@@ -220,8 +209,14 @@ export const setupStore = {
   get customDomainError() {
     return state.customDomainError;
   },
-  get accessPolicy() {
-    return state.accessPolicy;
+  get adminUsers() {
+    return state.adminUsers;
+  },
+  get allowedUsers() {
+    return state.allowedUsers;
+  },
+  get allowedOrigins() {
+    return state.allowedOrigins;
   },
   get configuring() {
     return state.configuring;
@@ -235,26 +230,20 @@ export const setupStore = {
   get setupComplete() {
     return state.setupComplete;
   },
-  get workersDevUrl() {
-    return state.workersDevUrl;
-  },
   get customDomainUrl() {
     return state.customDomainUrl;
-  },
-  get adminSecret() {
-    return state.adminSecret;
   },
   get accountId() {
     return state.accountId;
   },
 
   // Actions
-  setToken,
-  verifyToken,
-  setAccessPolicy,
-  addEmail,
-  removeEmail,
-  setUseCustomDomain,
+  detectToken,
+  addAdminUser,
+  removeAdminUser,
+  addAllowedUser,
+  removeAllowedUser,
+  setAllowedOrigins,
   setCustomDomain,
   nextStep,
   prevStep,

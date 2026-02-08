@@ -1,13 +1,21 @@
-import { Component, Show, Accessor } from 'solid-js';
+import { Component, Show, Accessor, createMemo } from 'solid-js';
 import {
   mdiStop,
-  mdiLoading,
   mdiTrashCanOutline,
 } from '@mdi/js';
 import Icon from './Icon';
 import type { SessionWithStatus, SessionStatus, TerminalConnectionState } from '../types';
 import { sessionStore } from '../stores/session';
+
+const statusLabel: Record<SessionStatus, string> = {
+  running: 'Live',
+  initializing: 'Starting',
+  stopped: 'Stopped',
+  error: 'Stopped',
+};
 import { terminalStore } from '../stores/terminal';
+import { MAX_TERMINALS_PER_SESSION } from '../lib/constants';
+import { formatUptime } from '../lib/format';
 
 export interface SessionCardProps {
   session: SessionWithStatus;
@@ -27,12 +35,12 @@ const wsStatusConfig: Record<TerminalConnectionState, { color: string; title: st
   error: { color: 'var(--color-error)', title: 'WebSocket error - click to reconnect' },
 };
 
-// Status indicator icons and colors
-const statusConfig: Record<SessionStatus, { icon: string; color: string; spinning?: boolean }> = {
-  running: { icon: '', color: 'var(--color-success)' },
-  stopped: { icon: '', color: 'var(--color-text-muted)' },
-  initializing: { icon: mdiLoading, color: 'var(--color-accent)', spinning: true },
-  error: { icon: '', color: 'var(--color-error)' },
+// Which statuses show a spinning indicator
+const statusSpinning: Record<SessionStatus, boolean> = {
+  running: false,
+  stopped: false,
+  initializing: true,
+  error: false,
 };
 
 // Status dot variant mapping
@@ -43,23 +51,13 @@ const statusDotVariant: Record<SessionStatus, 'success' | 'warning' | 'error' | 
   error: 'error',
 };
 
-// Format uptime (compact format for metrics display)
-export function formatUptime(createdAt: string): string {
-  const ms = Date.now() - new Date(createdAt).getTime();
-  const mins = Math.floor(ms / 60000);
-  if (mins < 60) return `${mins}m`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  return `${days}d`;
-}
-
 const SessionCard: Component<SessionCardProps> = (props) => {
-  const config = () => statusConfig[props.session.status];
+  const isSpinning = () => statusSpinning[props.session.status];
   const canStop = () => props.session.status === 'running' || props.session.status === 'initializing';
   const canDelete = () => true;
   const wsState = () => terminalStore.getConnectionState(props.session.id, '1');
   const wsConfig = () => wsStatusConfig[wsState()];
+  const metrics = createMemo(() => sessionStore.getMetricsForSession(props.session.id));
 
   // Allow reconnect for any non-connected state (including stuck 'connecting')
   const canReconnect = () => wsState() !== 'connected';
@@ -73,7 +71,7 @@ const SessionCard: Component<SessionCardProps> = (props) => {
   };
 
   const isPulsing = () => {
-    return config().spinning || (props.session.status === 'running' && wsState() === 'connecting');
+    return isSpinning() || (props.session.status === 'running' && wsState() === 'connecting');
   };
 
   const statusVariant = () => {
@@ -123,7 +121,7 @@ const SessionCard: Component<SessionCardProps> = (props) => {
               <Show when={props.session.status === 'running'}>
                 <span class="session-status-dot" />
               </Show>
-              {props.session.status === 'running' ? 'Live' : props.session.status === 'initializing' ? 'Starting' : 'Stopped'}
+              {statusLabel[props.session.status]}
             </span>
           </div>
 
@@ -133,22 +131,22 @@ const SessionCard: Component<SessionCardProps> = (props) => {
               <div class="session-card-metrics-row">
                 <div class="session-card-metric" data-testid={`session-card-${props.session.id}-metric-cpu`}>
                   <span class="metric-label">CPU</span>
-                  <span class="metric-value">{sessionStore.getMetricsForSession(props.session.id)?.cpu || '...'}</span>
+                  <span class="metric-value">{metrics()?.cpu || '...'}</span>
                 </div>
                 <div class="session-card-metric" data-testid={`session-card-${props.session.id}-metric-mem`}>
                   <span class="metric-label">MEM</span>
-                  <span class="metric-value">{sessionStore.getMetricsForSession(props.session.id)?.mem || '...'}</span>
+                  <span class="metric-value">{metrics()?.mem || '...'}</span>
                 </div>
                 <div class="session-card-metric" data-testid={`session-card-${props.session.id}-metric-hdd`}>
                   <span class="metric-label">HDD</span>
-                  <span class="metric-value">{sessionStore.getMetricsForSession(props.session.id)?.hdd || '...'}</span>
+                  <span class="metric-value">{metrics()?.hdd || '...'}</span>
                 </div>
               </div>
               {/* Row 2: R2 Bucket (full width) */}
               <div class="session-card-metrics-row">
                 <div class="session-card-metric session-card-metric--full" data-testid={`session-card-${props.session.id}-metric-bucket`}>
                   <span class="metric-label">R2 Bucket</span>
-                  <span class="metric-value">{sessionStore.getMetricsForSession(props.session.id)?.bucketName || '...'}</span>
+                  <span class="metric-value">{metrics()?.bucketName || '...'}</span>
                 </div>
               </div>
               {/* Row 3: Sync status */}
@@ -156,19 +154,19 @@ const SessionCard: Component<SessionCardProps> = (props) => {
                 <div class="session-card-metric" data-testid={`session-card-${props.session.id}-metric-sync`}>
                   <span class="metric-label">Sync</span>
                   <span class="metric-value metric-value--status">
-                    <span class={`status-dot status-dot--${sessionStore.getMetricsForSession(props.session.id)?.syncStatus || 'pending'}`} />
-                    {sessionStore.getMetricsForSession(props.session.id)?.syncStatus || '...'}
+                    <span class={`status-dot status-dot--${metrics()?.syncStatus || 'pending'}`} />
+                    {metrics()?.syncStatus || '...'}
                   </span>
                 </div>
               </div>
-              {/* Row 4: Terminals + Uptime */}
+              {/* Row 4: Terminals + Age */}
               <div class="session-card-metrics-row">
                 <div class="session-card-metric" data-testid={`session-card-${props.session.id}-metric-terminals`}>
                   <span class="metric-label">Terminals</span>
-                  <span class="metric-value">{getTabCount()}/6</span>
+                  <span class="metric-value">{getTabCount()}/{MAX_TERMINALS_PER_SESSION}</span>
                 </div>
                 <div class="session-card-metric" data-testid={`session-card-${props.session.id}-metric-uptime`}>
-                  <span class="metric-label">Uptime</span>
+                  <span class="metric-label">Age</span>
                   <span class="metric-value">{formatUptime(props.session.createdAt)}</span>
                 </div>
               </div>

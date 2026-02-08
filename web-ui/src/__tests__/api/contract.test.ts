@@ -1,6 +1,12 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { z } from 'zod';
-import { SessionSchema, StartupStatusSchema, UserSchema } from '../../lib/schemas';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import {
+  SessionSchema,
+  UserResponseSchema,
+  StartupStatusResponseSchema,
+  CreateSessionResponseSchema,
+  SessionsResponseSchema,
+  InitStageSchema,
+} from '../../lib/schemas';
 
 /**
  * Integration-style tests that verify the frontend-backend contract.
@@ -21,11 +27,6 @@ import {
   getSessions,
   createSession,
   getStartupStatus,
-  UserResponseSchema,
-  SessionsResponseSchema,
-  CreateSessionResponseSchema,
-  StartupStatusResponseSchema,
-  InitStageSchema,
 } from '../../api/client';
 
 describe('Frontend-Backend Contract Tests', () => {
@@ -137,8 +138,9 @@ describe('Frontend-Backend Contract Tests', () => {
         expect(() => SessionSchema.parse(session)).not.toThrow();
       });
 
-      it('should accept session with all status values', async () => {
-        const validStatuses = ['stopped', 'starting', 'running', 'error'];
+      it('should accept session with all backend status values', async () => {
+        // Backend only returns 'stopped' | 'running' in KV. 'initializing' and 'error' are frontend-computed states.
+        const validStatuses = ['stopped', 'running'];
 
         for (const status of validStatuses) {
           mockFetch.mockResolvedValueOnce({
@@ -287,7 +289,6 @@ describe('Frontend-Backend Contract Tests', () => {
             containerStatus: 'running',
             syncStatus: 'success',
             syncError: null,
-            terminalPid: 12345,
             healthServerOk: true,
             terminalServerOk: true,
             cpu: '15%',
@@ -309,7 +310,6 @@ describe('Frontend-Backend Contract Tests', () => {
         expect(status.details.email).toBe('user@example.com');
         expect(status.details.cpu).toBe('15%');
         expect(status.details.mem).toBe('512MB');
-        expect(status.details.terminalPid).toBe(12345);
       });
     });
 
@@ -405,6 +405,41 @@ describe('Frontend-Backend Contract Tests', () => {
         });
 
         await expect(getUser()).rejects.toThrow();
+      });
+
+      it('should accept user response with role field', async () => {
+        const backendResponse = {
+          email: 'admin@example.com',
+          authenticated: true,
+          bucketName: 'claudeflare-admin-example-com',
+          role: 'admin',
+        };
+
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          text: () => Promise.resolve(JSON.stringify(backendResponse)),
+        });
+
+        const user = await getUser();
+        expect(user.role).toBe('admin');
+      });
+
+      it('should accept user response without role field (backward compat)', async () => {
+        const backendResponse = {
+          email: 'user@example.com',
+          authenticated: true,
+          bucketName: 'claudeflare-user-example-com',
+        };
+
+        mockFetch.mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          text: () => Promise.resolve(JSON.stringify(backendResponse)),
+        });
+
+        const user = await getUser();
+        expect(user.role).toBeUndefined();
       });
     });
   });
@@ -526,48 +561,81 @@ describe('Frontend-Backend Contract Tests', () => {
       });
     });
 
-    describe('StartupStatusSchema', () => {
-      it('should validate minimal startup status', () => {
-        const minimal = {
+    describe('StartupStatusResponseSchema', () => {
+      it('should validate startup status with required details', () => {
+        const valid = {
           stage: 'creating',
           progress: 10,
           message: 'Creating...',
+          details: {
+            bucketName: 'my-bucket',
+            container: 'container-abc',
+            path: '/workspace',
+          },
         };
 
-        expect(() => StartupStatusSchema.parse(minimal)).not.toThrow();
+        expect(() => StartupStatusResponseSchema.parse(valid)).not.toThrow();
       });
 
-      it('should validate startup status with details', () => {
+      it('should validate startup status with all optional fields', () => {
         const withDetails = {
           stage: 'ready',
           progress: 100,
           message: 'Ready',
           details: {
+            bucketName: 'my-bucket',
+            container: 'container-abc',
+            path: '/workspace',
             containerStatus: 'running',
             syncStatus: 'success',
           },
         };
 
-        expect(() => StartupStatusSchema.parse(withDetails)).not.toThrow();
+        expect(() => StartupStatusResponseSchema.parse(withDetails)).not.toThrow();
+      });
+
+      it('should reject startup status without required details fields', () => {
+        const missingDetails = {
+          stage: 'creating',
+          progress: 10,
+          message: 'Creating...',
+          details: {
+            containerStatus: 'running',
+            // missing bucketName, container, path
+          },
+        };
+
+        expect(() => StartupStatusResponseSchema.parse(missingDetails)).toThrow();
       });
     });
 
-    describe('UserSchema', () => {
-      it('should validate user with email and authenticated', () => {
+    describe('UserResponseSchema', () => {
+      it('should validate user with required fields', () => {
         const user = {
           email: 'test@example.com',
           authenticated: true,
+          bucketName: 'claudeflare-test-example-com',
         };
 
-        expect(() => UserSchema.parse(user)).not.toThrow();
+        expect(() => UserResponseSchema.parse(user)).not.toThrow();
       });
 
       it('should reject user without email', () => {
         const noEmail = {
           authenticated: true,
+          bucketName: 'claudeflare-test-example-com',
         };
 
-        expect(() => UserSchema.parse(noEmail)).toThrow();
+        expect(() => UserResponseSchema.parse(noEmail)).toThrow();
+      });
+
+      it('should reject user without bucketName', () => {
+        const noBucket = {
+          email: 'test@example.com',
+          authenticated: true,
+        };
+
+        expect(() => UserResponseSchema.parse(noBucket)).toThrow();
       });
     });
   });
@@ -641,20 +709,9 @@ describe('Frontend-Backend Contract Tests', () => {
         email: 'user@example.com',
         authenticated: true,
         bucketName: 'claudeflare-user-example-com',
-        bucketCreated: false,
       };
 
       expect(() => UserResponseSchema.parse(backendResponse)).not.toThrow();
-    });
-
-    it('should accept response without optional bucketCreated', () => {
-      const response = {
-        email: 'user@example.com',
-        authenticated: true,
-        bucketName: 'claudeflare-user-example-com',
-      };
-
-      expect(() => UserResponseSchema.parse(response)).not.toThrow();
     });
 
     it('should reject response missing required bucketName', () => {
@@ -684,6 +741,39 @@ describe('Frontend-Backend Contract Tests', () => {
 
       expect(() => UserResponseSchema.parse(response)).toThrow();
     });
+
+    it('should accept response with role: admin', () => {
+      const response = {
+        email: 'admin@example.com',
+        authenticated: true,
+        bucketName: 'claudeflare-admin-example-com',
+        role: 'admin',
+      };
+
+      expect(() => UserResponseSchema.parse(response)).not.toThrow();
+    });
+
+    it('should accept response with role: user', () => {
+      const response = {
+        email: 'user@example.com',
+        authenticated: true,
+        bucketName: 'claudeflare-user-example-com',
+        role: 'user',
+      };
+
+      expect(() => UserResponseSchema.parse(response)).not.toThrow();
+    });
+
+    it('should reject response with invalid role value', () => {
+      const response = {
+        email: 'user@example.com',
+        authenticated: true,
+        bucketName: 'claudeflare-user-example-com',
+        role: 'superadmin',
+      };
+
+      expect(() => UserResponseSchema.parse(response)).toThrow();
+    });
   });
 
   describe('Runtime Schema Contract — StartupStatusResponseSchema', () => {
@@ -701,7 +791,6 @@ describe('Frontend-Backend Contract Tests', () => {
           containerStatus: 'running',
           syncStatus: 'success',
           syncError: null,
-          terminalPid: 42,
           healthServerOk: true,
           terminalServerOk: true,
           cpu: '15%',
@@ -865,21 +954,18 @@ describe('Frontend-Backend Contract Tests', () => {
     });
   });
 
-  describe('Runtime vs Shared Schema Strictness', () => {
-    it('UserResponseSchema should be stricter than UserSchema (requires bucketName)', () => {
-      // This passes shared UserSchema but FAILS runtime UserResponseSchema
-      const sharedOnly = {
+  describe('Schema Strictness (consolidated)', () => {
+    it('UserResponseSchema requires bucketName', () => {
+      const noBucket = {
         email: 'user@example.com',
         authenticated: true,
       };
 
-      expect(() => UserSchema.parse(sharedOnly)).not.toThrow();
-      expect(() => UserResponseSchema.parse(sharedOnly)).toThrow();
+      expect(() => UserResponseSchema.parse(noBucket)).toThrow();
     });
 
-    it('StartupStatusResponseSchema should be stricter than StartupStatusSchema (requires typed details)', () => {
-      // This passes shared StartupStatusSchema but FAILS runtime StartupStatusResponseSchema
-      const sharedOnly = {
+    it('StartupStatusResponseSchema requires typed details fields', () => {
+      const missingDetails = {
         stage: 'ready',
         progress: 100,
         message: 'Ready',
@@ -889,19 +975,10 @@ describe('Frontend-Backend Contract Tests', () => {
         },
       };
 
-      expect(() => StartupStatusSchema.parse(sharedOnly)).not.toThrow();
-      expect(() => StartupStatusResponseSchema.parse(sharedOnly)).toThrow();
+      expect(() => StartupStatusResponseSchema.parse(missingDetails)).toThrow();
     });
 
-    it('InitStageSchema should enforce valid enum values unlike shared StartupStatusSchema', () => {
-      // Shared schema accepts any string for stage
-      expect(() => StartupStatusSchema.parse({
-        stage: 'banana',
-        progress: 0,
-        message: 'test',
-      })).not.toThrow();
-
-      // Runtime schema rejects invalid stages
+    it('InitStageSchema enforces valid enum values', () => {
       expect(() => InitStageSchema.parse('banana')).toThrow();
       expect(() => InitStageSchema.parse('ready')).not.toThrow();
     });

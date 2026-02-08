@@ -222,28 +222,3 @@ export async function waitForElementRemoved(
   }
 }
 
-/**
- * Scroll element into view
- */
-export async function scrollIntoView(
-  page: Page,
-  selector: string
-): Promise<void> {
-  await page.evaluate((sel) => {
-    const element = document.querySelector(sel);
-    element?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, selector);
-
-  // Wait for scroll to complete
-  await new Promise(resolve => setTimeout(resolve, 300));
-}
-
-/**
- * Wait for network to be idle
- */
-export async function waitForNetworkIdle(
-  page: Page,
-  timeout: number = DEFAULT_TIMEOUT
-): Promise<void> {
-  await page.waitForNetworkIdle({ timeout });
-}
