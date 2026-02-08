@@ -236,9 +236,9 @@ bisync_with_r2() {
             --exclude ".cache/rclone/**" \
             --exclude ".npm/**" \
             --exclude "**/node_modules/**" \
-            --include "CLAUDE.md" \
-            --include "**/CLAUDE.md" \
-            --exclude "*" \
+            --include "workspace/**/CLAUDE.md" \
+            --include "workspace/**/.claude/**" \
+            --exclude "workspace/**" \
             --conflict-resolve newer \
             --resync \
             --resilient \
