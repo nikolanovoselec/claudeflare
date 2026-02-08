@@ -7,6 +7,12 @@ import {
   CreateSessionResponseSchema,
   StartupStatusResponseSchema,
   BatchSessionStatusResponseSchema,
+  SetupStatusResponseSchema,
+  DetectTokenResponseSchema,
+  ConfigureResponseSchema,
+  UserEntrySchema,
+  GetUsersResponseSchema,
+  UserMutationResponseSchema,
 } from '../lib/schemas';
 import { mapStartupDetailsToProgress } from '../lib/status-mapper';
 
@@ -209,28 +215,7 @@ export async function stopSession(id: string): Promise<void> {
 }
 
 // User management
-export interface UserEntry {
-  email: string;
-  addedBy: string;
-  addedAt: string;
-  role: 'admin' | 'user';
-}
-
-const UserEntrySchema = z.object({
-  email: z.string(),
-  addedBy: z.string(),
-  addedAt: z.string(),
-  role: z.enum(['admin', 'user']).default('user'),
-});
-
-const GetUsersResponseSchema = z.object({
-  users: z.array(UserEntrySchema),
-});
-
-const UserMutationResponseSchema = z.object({
-  success: z.boolean(),
-  email: z.string(),
-});
+export type UserEntry = z.infer<typeof UserEntrySchema>;
 
 export async function getUsers(): Promise<UserEntry[]> {
   const data = await fetchApi('/users', {}, GetUsersResponseSchema);
@@ -251,37 +236,17 @@ export async function removeUser(email: string): Promise<void> {
 }
 
 // Setup API
-const SetupStatusResponseSchema = z.object({
-  configured: z.boolean(),
-  tokenDetected: z.boolean(),
-});
-
 export type SetupStatusResponse = z.infer<typeof SetupStatusResponseSchema>;
 
 export async function getSetupStatus(): Promise<SetupStatusResponse> {
   return fetchApi('/setup/status', {}, SetupStatusResponseSchema);
 }
 
-const DetectTokenResponseSchema = z.object({
-  detected: z.boolean(),
-  valid: z.boolean().optional(),
-  account: z.object({ id: z.string(), name: z.string() }).optional(),
-  error: z.string().optional(),
-});
-
 export type DetectTokenResponse = z.infer<typeof DetectTokenResponseSchema>;
 
 export async function detectToken(): Promise<DetectTokenResponse> {
   return fetchApi('/setup/detect-token', {}, DetectTokenResponseSchema);
 }
-
-const ConfigureResponseSchema = z.object({
-  success: z.boolean(),
-  steps: z.array(z.object({ step: z.string(), status: z.string(), error: z.string().optional() })).optional(),
-  error: z.string().optional(),
-  customDomainUrl: z.string().optional(),
-  accountId: z.string().optional(),
-});
 
 export type ConfigureResponse = z.infer<typeof ConfigureResponseSchema>;
 

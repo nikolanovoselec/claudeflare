@@ -194,16 +194,16 @@ describe('Setup Routes', () => {
       expect(body.tokenDetected).toBe(true);
     });
 
-    it('returns configured: true and tokenDetected: true when setup is complete', async () => {
+    it('returns configured: true without tokenDetected when setup is complete', async () => {
       const app = createTestApp();
       mockKV.get.mockResolvedValue('true');
 
       const res = await app.request('/api/setup/status');
       expect(res.status).toBe(200);
 
-      const body = await res.json() as { configured: boolean; tokenDetected: boolean };
+      const body = await res.json() as { configured: boolean; tokenDetected?: boolean };
       expect(body.configured).toBe(true);
-      expect(body.tokenDetected).toBe(true);
+      expect(body.tokenDetected).toBeUndefined();
     });
 
     it('returns tokenDetected: false when CLOUDFLARE_API_TOKEN is not set', async () => {

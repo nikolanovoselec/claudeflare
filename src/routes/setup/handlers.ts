@@ -17,10 +17,11 @@ handlers.get('/status', statusRateLimiter, async (c) => {
   const setupComplete = await c.env.KV.get('setup:complete');
   const configured = setupComplete === 'true';
 
-  return c.json({
-    configured,
-    tokenDetected: Boolean(c.env.CLOUDFLARE_API_TOKEN),
-  });
+  const response: { configured: boolean; tokenDetected?: boolean } = { configured };
+  if (!configured) {
+    response.tokenDetected = !!c.env.CLOUDFLARE_API_TOKEN;
+  }
+  return c.json(response);
 });
 
 /**

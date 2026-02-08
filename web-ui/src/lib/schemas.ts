@@ -60,4 +60,40 @@ export const BatchSessionStatusResponseSchema = z.object({
   })),
 });
 
+// Setup API schemas — moved from client.ts (strict versions)
+export const SetupStatusResponseSchema = z.object({
+  configured: z.boolean(),
+  tokenDetected: z.boolean().optional(),
+});
 
+export const DetectTokenResponseSchema = z.object({
+  detected: z.boolean(),
+  valid: z.boolean().optional(),
+  account: z.object({ id: z.string(), name: z.string() }).optional(),
+  error: z.string().optional(),
+});
+
+export const ConfigureResponseSchema = z.object({
+  success: z.boolean(),
+  steps: z.array(z.object({ step: z.string(), status: z.string(), error: z.string().optional() })).optional(),
+  error: z.string().optional(),
+  customDomainUrl: z.string().optional(),
+  accountId: z.string().optional(),
+});
+
+// User management schemas — moved from client.ts (strict versions)
+export const UserEntrySchema = z.object({
+  email: z.string(),
+  addedBy: z.string(),
+  addedAt: z.string(),
+  role: z.enum(['admin', 'user']).default('user'),
+});
+
+export const GetUsersResponseSchema = z.object({
+  users: z.array(UserEntrySchema),
+});
+
+export const UserMutationResponseSchema = z.object({
+  success: z.boolean(),
+  email: z.string(),
+});
