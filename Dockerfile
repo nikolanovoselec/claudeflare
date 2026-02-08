@@ -17,6 +17,7 @@ FROM node:22-alpine
 ENV NPM_CONFIG_UPDATE_NOTIFIER=false
 ENV CLAUDE_UNLEASHED_SKIP_CONSENT=1
 ENV DISABLE_INSTALLATION_CHECKS=1
+ENV DISABLE_AUTOUPDATER=1
 ENV IS_SANDBOX=1
 
 # Install runtime packages (no build tools needed - native addons pre-compiled)
