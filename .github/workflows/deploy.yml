@@ -94,7 +94,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: deploy --name ${{ vars.CLOUDFLARE_WORKER_NAME || 'claudeflare' }}
+          command: deploy --name ${{ vars.CLOUDFLARE_WORKER_NAME || 'claudeflare' }} --build-arg CACHE_BUST=${{ github.sha }}
 
       - name: Set API token as worker secret
         run: echo "${{ secrets.CLOUDFLARE_API_TOKEN }}" | npx wrangler secret put CLOUDFLARE_API_TOKEN --name ${{ vars.CLOUDFLARE_WORKER_NAME || 'claudeflare' }}

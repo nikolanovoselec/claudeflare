@@ -56,9 +56,11 @@ RUN apk add --no-cache \
     && apk add --no-cache lazygit --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community
 
 # Install claude-unleashed globally (wraps Claude Code with permission bypass)
-# Ships with Claude Code 2.1.25 baseline; auto-update disabled for fast startup
+# Installs latest @anthropic-ai/claude-code; auto-update disabled for fast startup
 # Users can update manually by running `cu` or `claude-unleashed` in any terminal tab
-RUN npm install -g github:nikolanovoselec/claude-unleashed#c673f3a
+# CACHE_BUST invalidates this layer on each deploy so npm resolves fresh "latest"
+ARG CACHE_BUST
+RUN npm install -g github:nikolanovoselec/claude-unleashed
 
 # Create 'claude' wrapper that uses claude-unleashed transparently
 # Users type 'claude' as usual, gets unleashed mode under the hood
