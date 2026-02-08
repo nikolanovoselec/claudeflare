@@ -40,8 +40,18 @@ export class container extends Container<Env> {
   // Bug 3 fix: Activity polling timer
   private _activityPollAlarm: boolean = false;
 
+  // Map-based dispatch for internal routes (AR9)
+  private readonly internalRoutes: Map<string, (request: Request) => Promise<Response> | Response>;
+
   constructor(ctx: DurableObjectState<Env>, env: Env) {
     super(ctx, env);
+
+    // Initialize internal route dispatch table
+    this.internalRoutes = new Map<string, (request: Request) => Promise<Response> | Response>([
+      ['POST:/_internal/setBucketName', (request) => this.handleSetBucketName(request)],
+      ['GET:/_internal/getBucketName', () => this.handleGetBucketName()],
+      ['GET:/_internal/debugEnvVars', () => this.handleDebugEnvVars()],
+    ]);
     // Load bucket name from storage on startup and update envVars
     this.ctx.blockConcurrencyWhile(async () => {
       // Check if this DO was already destroyed - if so, self-destruct immediately
@@ -155,87 +165,94 @@ export class container extends Container<Env> {
   }
 
   /**
-   * Override fetch to handle internal bucket name setting
+   * Override fetch to handle internal routes via map-based dispatch
    */
   override async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-
-    // Handle internal bucket name setting endpoint
-    if (url.pathname === '/_internal/setBucketName' && request.method === 'POST') {
-      try {
-        const { bucketName, r2AccessKeyId, r2SecretAccessKey, r2AccountId, r2Endpoint } =
-          await request.json() as {
-            bucketName: string;
-            r2AccessKeyId?: string;
-            r2SecretAccessKey?: string;
-            r2AccountId?: string;
-            r2Endpoint?: string;
-          };
-        if (bucketName) {
-          await this.setBucketName(bucketName, { r2AccessKeyId, r2SecretAccessKey, r2AccountId, r2Endpoint });
-          return new Response(JSON.stringify({ success: true, bucketName }), {
-            headers: { 'Content-Type': 'application/json' },
-          });
-        }
-        return new Response(JSON.stringify({ error: 'Missing bucketName' }), {
-          status: 400,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      } catch (err) {
-        return new Response(JSON.stringify({ error: toErrorMessage(err) }), {
-          status: 500,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-    }
-
-    // Handle internal bucket name getting endpoint
-    if (url.pathname === '/_internal/getBucketName' && request.method === 'GET') {
-      return new Response(JSON.stringify({ bucketName: this._bucketName }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Handle internal envVars debug endpoint (shows masked values) - DEV_MODE only
-    if (url.pathname === '/_internal/debugEnvVars' && request.method === 'GET') {
-      if (this.env.DEV_MODE !== 'true') {
-        return new Response(JSON.stringify({ error: 'Not found' }), {
-          status: 404,
-          headers: { 'Content-Type': 'application/json' },
-        });
-      }
-
-      const debugInfo = {
-        bucketName: this._bucketName,
-        resolvedR2Config: {
-          accountId: this._r2AccountId || 'NOT SET',
-          endpoint: this._r2Endpoint || 'NOT SET',
-          source: this._r2AccountId
-            ? (this.env.R2_ACCOUNT_ID ? 'env' : 'kv')
-            : 'none',
-        },
-        envVars: {
-          R2_BUCKET_NAME: this.envVars?.R2_BUCKET_NAME || 'NOT SET',
-          R2_ENDPOINT: this.envVars?.R2_ENDPOINT || 'NOT SET',
-          R2_ACCOUNT_ID: this.envVars?.R2_ACCOUNT_ID || 'NOT SET',
-          R2_ACCESS_KEY_ID: this.envVars?.R2_ACCESS_KEY_ID ? 'SET' : 'NOT SET',
-          R2_SECRET_ACCESS_KEY: this.envVars?.R2_SECRET_ACCESS_KEY ? 'SET' : 'NOT SET',
-          TERMINAL_PORT: this.envVars?.TERMINAL_PORT || 'NOT SET',
-        },
-        workerEnv: {
-          R2_ACCESS_KEY_ID: this.env.R2_ACCESS_KEY_ID ? 'SET' : 'NOT SET',
-          R2_SECRET_ACCESS_KEY: this.env.R2_SECRET_ACCESS_KEY ? 'SET' : 'NOT SET',
-          R2_ACCOUNT_ID: this.env.R2_ACCOUNT_ID || 'NOT SET',
-          R2_ENDPOINT: this.env.R2_ENDPOINT || 'NOT SET',
-        },
-      };
-      return new Response(JSON.stringify(debugInfo, null, 2), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-    }
-
-    // Pass all other requests to the parent Container class
+    const routeKey = `${request.method}:${url.pathname}`;
+    const handler = this.internalRoutes.get(routeKey);
+    if (handler) return handler(request);
     return super.fetch(request);
+  }
+
+  /**
+   * Handle POST /_internal/setBucketName
+   */
+  private async handleSetBucketName(request: Request): Promise<Response> {
+    try {
+      const { bucketName, r2AccessKeyId, r2SecretAccessKey, r2AccountId, r2Endpoint } =
+        await request.json() as {
+          bucketName: string;
+          r2AccessKeyId?: string;
+          r2SecretAccessKey?: string;
+          r2AccountId?: string;
+          r2Endpoint?: string;
+        };
+      if (bucketName) {
+        await this.setBucketName(bucketName, { r2AccessKeyId, r2SecretAccessKey, r2AccountId, r2Endpoint });
+        return new Response(JSON.stringify({ success: true, bucketName }), {
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return new Response(JSON.stringify({ error: 'Missing bucketName' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    } catch (err) {
+      return new Response(JSON.stringify({ error: toErrorMessage(err) }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+  }
+
+  /**
+   * Handle GET /_internal/getBucketName
+   */
+  private handleGetBucketName(): Response {
+    return new Response(JSON.stringify({ bucketName: this._bucketName }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  /**
+   * Handle GET /_internal/debugEnvVars (DEV_MODE only)
+   */
+  private handleDebugEnvVars(): Response {
+    if (this.env.DEV_MODE !== 'true') {
+      return new Response(JSON.stringify({ error: 'Not found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    const debugInfo = {
+      bucketName: this._bucketName,
+      resolvedR2Config: {
+        accountId: this._r2AccountId || 'NOT SET',
+        endpoint: this._r2Endpoint || 'NOT SET',
+        source: this._r2AccountId
+          ? (this.env.R2_ACCOUNT_ID ? 'env' : 'kv')
+          : 'none',
+      },
+      envVars: {
+        R2_BUCKET_NAME: this.envVars?.R2_BUCKET_NAME || 'NOT SET',
+        R2_ENDPOINT: this.envVars?.R2_ENDPOINT || 'NOT SET',
+        R2_ACCOUNT_ID: this.envVars?.R2_ACCOUNT_ID || 'NOT SET',
+        R2_ACCESS_KEY_ID: this.envVars?.R2_ACCESS_KEY_ID ? 'SET' : 'NOT SET',
+        R2_SECRET_ACCESS_KEY: this.envVars?.R2_SECRET_ACCESS_KEY ? 'SET' : 'NOT SET',
+        TERMINAL_PORT: this.envVars?.TERMINAL_PORT || 'NOT SET',
+      },
+      workerEnv: {
+        R2_ACCESS_KEY_ID: this.env.R2_ACCESS_KEY_ID ? 'SET' : 'NOT SET',
+        R2_SECRET_ACCESS_KEY: this.env.R2_SECRET_ACCESS_KEY ? 'SET' : 'NOT SET',
+        R2_ACCOUNT_ID: this.env.R2_ACCOUNT_ID || 'NOT SET',
+        R2_ENDPOINT: this.env.R2_ENDPOINT || 'NOT SET',
+      },
+    };
+    return new Response(JSON.stringify(debugInfo, null, 2), {
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   /**
