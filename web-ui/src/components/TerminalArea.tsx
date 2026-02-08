@@ -8,19 +8,11 @@ import {
   NoSessionsEmptyState,
   AllStoppedEmptyState,
 } from './EmptyStateVariants';
-import type { SessionWithStatus, TileLayout, TilingState, SessionTerminals } from '../types';
+import { sessionStore } from '../stores/session';
+import type { TileLayout } from '../types';
 
 export interface TerminalAreaProps {
-  activeSession: SessionWithStatus | null;
-  activeSessionId: string | null;
-  runningSessions: SessionWithStatus[];
   showTerminal: boolean;
-  hasInitializingSession: boolean;
-  hasNoSessions: boolean;
-  allSessionsStopped: boolean;
-  activeTiling: TilingState | null;
-  activeTabOrder: string[] | null;
-  activeTerminals: SessionTerminals | null;
   showTilingOverlay: boolean;
   onTilingButtonClick: () => void;
   onSelectTilingLayout: (layout: TileLayout) => void;
@@ -30,12 +22,51 @@ export interface TerminalAreaProps {
   onStartSession: (id: string) => void;
   onStartMostRecentSession: () => void;
   onTerminalError: Setter<string | null>;
-  getTerminalsForSession: (sessionId: string) => SessionTerminals | null;
   error: string | null;
   onDismissError: () => void;
 }
 
 const TerminalArea: Component<TerminalAreaProps> = (props) => {
+  // Derive session state from store directly (avoids prop drilling from Layout)
+  const activeSession = createMemo(() => sessionStore.getActiveSession() ?? null);
+  const activeSessionId = () => sessionStore.activeSessionId;
+
+  const runningSessions = createMemo(() =>
+    sessionStore.sessions.filter((s) => s.status === 'running' || s.status === 'initializing')
+  );
+
+  const hasInitializingSession = createMemo(() =>
+    sessionStore.sessions.some((s) => sessionStore.isSessionInitializing(s.id))
+  );
+
+  const hasNoSessions = () => sessionStore.sessions.length === 0;
+
+  const allSessionsStopped = createMemo(() =>
+    sessionStore.sessions.length > 0 &&
+    sessionStore.sessions.every((s) => s.status === 'stopped' || s.status === 'error')
+  );
+
+  const activeTiling = createMemo(() => {
+    const sid = sessionStore.activeSessionId;
+    if (!sid) return null;
+    return sessionStore.getTilingForSession(sid);
+  });
+
+  const activeTabOrder = createMemo(() => {
+    const sid = sessionStore.activeSessionId;
+    if (!sid) return null;
+    return sessionStore.getTabOrder(sid);
+  });
+
+  const activeTerminals = createMemo(() => {
+    const sid = sessionStore.activeSessionId;
+    if (!sid) return null;
+    return sessionStore.getTerminalsForSession(sid);
+  });
+
+  const getTerminalsForSession = (sessionId: string) =>
+    sessionStore.getTerminalsForSession(sessionId);
+
   return (
     <main class="layout-main">
       {/* Error display */}
@@ -49,26 +80,26 @@ const TerminalArea: Component<TerminalAreaProps> = (props) => {
       </Show>
 
       {/* Terminal tabs - show when active session is running/initializing */}
-      <Show when={props.showTerminal && props.activeSessionId}>
-        <TerminalTabs sessionId={props.activeSessionId!} />
+      <Show when={props.showTerminal && activeSessionId()}>
+        <TerminalTabs sessionId={activeSessionId()!} />
       </Show>
 
       {/* Terminal container - keep all terminals mounted for instant switching */}
       <div class="layout-terminal-container">
         {/* Tiling button - only show when active session is running with 2+ tabs */}
-        <Show when={props.showTerminal && props.activeSessionId && props.activeTerminals}>
+        <Show when={props.showTerminal && activeSessionId() && activeTerminals()}>
           <div class="layout-tiling-button-wrapper">
             <TilingButton
-              sessionId={props.activeSessionId!}
-              tabCount={props.activeTerminals?.tabs.length || 0}
-              isActive={props.activeTiling?.enabled || false}
+              sessionId={activeSessionId()!}
+              tabCount={activeTerminals()?.tabs.length || 0}
+              isActive={activeTiling()?.enabled || false}
               onClick={props.onTilingButtonClick}
             />
             {/* Tiling overlay - positioned relative to button wrapper */}
             <Show when={props.showTilingOverlay}>
               <TilingOverlay
-                tabCount={props.activeTerminals?.tabs.length || 0}
-                currentLayout={props.activeTiling?.layout || 'tabbed'}
+                tabCount={activeTerminals()?.tabs.length || 0}
+                currentLayout={activeTiling()?.layout || 'tabbed'}
                 onSelectLayout={props.onSelectTilingLayout}
                 onClose={props.onCloseTilingOverlay}
               />
@@ -77,16 +108,16 @@ const TerminalArea: Component<TerminalAreaProps> = (props) => {
         </Show>
 
         {/* Tiled terminal view - when tiling is enabled */}
-        <Show when={props.activeTiling?.enabled && props.activeSessionId && props.activeTerminals}>
+        <Show when={activeTiling()?.enabled && activeSessionId() && activeTerminals()}>
           <TiledTerminalContainer
-            sessionId={props.activeSessionId!}
-            terminals={props.activeTerminals!.tabs}
-            tabOrder={props.activeTabOrder || []}
-            layout={props.activeTiling!.layout}
-            activeTabId={props.activeTerminals!.activeTabId}
+            sessionId={activeSessionId()!}
+            terminals={activeTerminals()!.tabs}
+            tabOrder={activeTabOrder() || []}
+            layout={activeTiling()!.layout}
+            activeTabId={activeTerminals()!.activeTabId}
             onTileClick={props.onTileClick}
             renderTerminal={(tabId, slotIndex) => {
-              const session = props.activeSession;
+              const session = activeSession();
               if (!session) return null;
               return (
                 <Terminal
@@ -104,11 +135,11 @@ const TerminalArea: Component<TerminalAreaProps> = (props) => {
         </Show>
 
         {/* Standard tabbed view - when tiling is disabled */}
-        <Show when={!props.activeTiling?.enabled}>
-          <For each={props.runningSessions}>
+        <Show when={!activeTiling()?.enabled}>
+          <For each={runningSessions()}>
             {(session) => {
               // Get terminals for this session
-              const terminals = createMemo(() => props.getTerminalsForSession(session.id));
+              const terminals = createMemo(() => getTerminalsForSession(session.id));
 
               return (
                 <For each={terminals()?.tabs || [{ id: '1', createdAt: '' }]}>
@@ -116,8 +147,8 @@ const TerminalArea: Component<TerminalAreaProps> = (props) => {
                     // Terminal is active if: session is active AND this tab is the active tab
                     // During initialization, sessionTerminals is null - use fallback logic
                     const isActive = createMemo(() => {
-                      const isActiveSession = session.id === props.activeSessionId;
-                      const sessionTerminals = props.getTerminalsForSession(session.id);
+                      const isActiveSession = session.id === activeSessionId();
+                      const sessionTerminals = getTerminalsForSession(session.id);
                       // If no terminals yet (initializing), fallback tab '1' is active
                       const isActiveTab = sessionTerminals
                         ? sessionTerminals.activeTabId === tab.id
@@ -144,23 +175,23 @@ const TerminalArea: Component<TerminalAreaProps> = (props) => {
       </div>
 
       {/* Empty state: No sessions */}
-      <Show when={!props.activeSession && !props.hasInitializingSession && props.hasNoSessions}>
+      <Show when={!activeSession() && !hasInitializingSession() && hasNoSessions()}>
         <div class="layout-empty-state">
           <NoSessionsEmptyState />
         </div>
       </Show>
 
       {/* Empty state: All sessions stopped */}
-      <Show when={!props.activeSession && !props.hasInitializingSession && props.allSessionsStopped}>
+      <Show when={!activeSession() && !hasInitializingSession() && allSessionsStopped()}>
         <div class="layout-empty-state">
           <AllStoppedEmptyState onStartLast={props.onStartMostRecentSession} />
         </div>
       </Show>
 
       {/* Session selected but not running */}
-      <Show when={props.activeSession && props.activeSession?.status === 'stopped' && !props.hasInitializingSession}>
+      <Show when={activeSession() && activeSession()?.status === 'stopped' && !hasInitializingSession()}>
         <div class="layout-empty-state">
-          <AllStoppedEmptyState onStartLast={() => props.onStartSession(props.activeSession!.id)} />
+          <AllStoppedEmptyState onStartLast={() => props.onStartSession(activeSession()!.id)} />
         </div>
       </Show>
     </main>

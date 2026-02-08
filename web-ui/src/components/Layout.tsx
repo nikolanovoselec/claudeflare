@@ -1,4 +1,4 @@
-import { Component, Show, createSignal, createMemo, onMount } from 'solid-js';
+import { Component, createSignal, createMemo, onMount } from 'solid-js';
 import Header from './Header';
 import StatusBar from './StatusBar';
 import AppSidebar from './AppSidebar';
@@ -43,59 +43,16 @@ const Layout: Component<LayoutProps> = (props) => {
     setLastSyncTime(new Date());
   });
 
-  // Check if any session is currently initializing (used for empty state logic)
-  const hasInitializingSession = createMemo(() => {
-    return sessionStore.sessions.some((s) => sessionStore.isSessionInitializing(s.id));
-  });
-
-  // Get active session
-  const activeSession = createMemo(() => {
-    return sessionStore.getActiveSession();
-  });
-
   // Bug 4 fix: Show terminal even when other sessions are initializing
   // The init progress overlay is now per-session, inside the Terminal component
   const showTerminal = createMemo(() => {
-    const session = activeSession();
+    const session = sessionStore.getActiveSession();
     return session && (session.status === 'running' || session.status === 'initializing');
-  });
-
-  // Bug 4 fix: Get running OR initializing sessions for terminal rendering
-  // This allows each session to show its own init progress inside its terminal area
-  const runningSessions = createMemo(() => {
-    return sessionStore.sessions.filter((s) => s.status === 'running' || s.status === 'initializing');
   });
 
   // Connection status based on whether we have any running sessions
   const isConnected = createMemo(() => {
-    return runningSessions().length > 0;
-  });
-
-  // Check if all sessions are stopped (for empty state display)
-  const allSessionsStopped = createMemo(() => {
-    return sessionStore.sessions.length > 0 &&
-      sessionStore.sessions.every((s) => s.status === 'stopped' || s.status === 'error');
-  });
-
-  // Get tiling state for active session
-  const activeTiling = createMemo(() => {
-    const sessionId = sessionStore.activeSessionId;
-    if (!sessionId) return null;
-    return sessionStore.getTilingForSession(sessionId);
-  });
-
-  // Get tab order for active session
-  const activeTabOrder = createMemo(() => {
-    const sessionId = sessionStore.activeSessionId;
-    if (!sessionId) return null;
-    return sessionStore.getTabOrder(sessionId);
-  });
-
-  // Get terminals for active session (for tiling button)
-  const activeTerminals = createMemo(() => {
-    const sessionId = sessionStore.activeSessionId;
-    if (!sessionId) return null;
-    return sessionStore.getTerminalsForSession(sessionId);
+    return sessionStore.sessions.some((s) => s.status === 'running' || s.status === 'initializing');
   });
 
   // Handlers
@@ -217,16 +174,7 @@ const Layout: Component<LayoutProps> = (props) => {
 
         {/* Main content */}
         <TerminalArea
-          activeSession={activeSession() ?? null}
-          activeSessionId={sessionStore.activeSessionId}
-          runningSessions={runningSessions()}
           showTerminal={showTerminal() ?? false}
-          hasInitializingSession={hasInitializingSession()}
-          hasNoSessions={sessionStore.sessions.length === 0}
-          allSessionsStopped={allSessionsStopped()}
-          activeTiling={activeTiling()}
-          activeTabOrder={activeTabOrder()}
-          activeTerminals={activeTerminals()}
           showTilingOverlay={showTilingOverlay()}
           onTilingButtonClick={handleTilingButtonClick}
           onSelectTilingLayout={handleSelectTilingLayout}
@@ -236,7 +184,6 @@ const Layout: Component<LayoutProps> = (props) => {
           onStartSession={handleStartSession}
           onStartMostRecentSession={handleStartMostRecentSession}
           onTerminalError={setTerminalError}
-          getTerminalsForSession={sessionStore.getTerminalsForSession}
           error={sessionStore.error || terminalError()}
           onDismissError={handleDismissError}
         />
