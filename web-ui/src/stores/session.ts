@@ -1,5 +1,5 @@
 import { createStore, produce } from 'solid-js/store';
-import type { Session, SessionWithStatus, SessionStatus, InitProgress, TerminalTab, SessionTerminals, TileLayout, TilingState } from '../types';
+import type { Session, SessionWithStatus, SessionStatus, InitProgress, InitStage, TerminalTab, SessionTerminals, TileLayout, TilingState } from '../types';
 import * as api from '../api/client';
 import { terminalStore } from './terminal';
 import { METRICS_POLL_INTERVAL_MS, STARTUP_POLL_INTERVAL_MS, MAX_STARTUP_POLL_ERRORS, MAX_TERMINALS_PER_SESSION } from '../lib/constants';
@@ -146,7 +146,7 @@ async function loadSessions(): Promise<void> {
     // Fetch session list and batch status in parallel (2 calls instead of 1+N+M)
     const [sessions, batchStatuses] = await Promise.all([
       api.getSessions(),
-      api.getBatchSessionStatus().catch(() => ({} as Record<string, { status: string; ptyActive: boolean }>)),
+      api.getBatchSessionStatus().catch(() => ({} as Record<string, { status: string; ptyActive: boolean; startupStage?: string }>)),
     ]);
 
     // Bail out if a newer call has started
@@ -186,7 +186,7 @@ async function loadSessions(): Promise<void> {
           produce((s) => {
             s.initializingSessionIds[session.id] = true;
             s.initProgressBySession[session.id] = {
-              stage: batchStatus.startupStage || 'verifying',
+              stage: (batchStatus.startupStage || 'verifying') as InitStage,
               progress: 50,
               message: 'Container starting...',
             };

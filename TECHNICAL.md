@@ -192,11 +192,6 @@ Standardized error classes for consistent API responses (see section 2.7 for ful
 Runtime type validation to replace unsafe type casts.
 
 ```typescript
-export function isAdminRequest(data: unknown): data is { doId: string } {
-  return typeof data === 'object' && data !== null &&
-         'doId' in data && typeof (data as any).doId === 'string';
-}
-
 export function isBucketNameResponse(data: unknown): data is { bucketName: string | null } {
   return typeof data === 'object' && data !== null && 'bucketName' in data;
 }
@@ -1406,59 +1401,20 @@ The container startup script uses **polling with safety timeouts**. This prefers
   - `MAX_NPM_WAIT=120` (2 min) for npm install
   - `MAX_CONSENT_WAIT=30` (30 sec) for consent files
 
-### preseed_claude_yolo() Implementation
-
-```bash
-# Phase 1: Wait for npm install (version update)
-# Poll until: (a) version matches, OR (b) process exits, OR (c) timeout
-while kill -0 $PRESEED_PID 2>/dev/null && [ $WAITED -lt $MAX_NPM_WAIT ]; do
-    UPDATED=$(sed -n 's/.*"@anthropic-ai\/claude-code".*"\([^"]*\)".*/\1/p' "$PACKAGE_JSON")
-    if [ "$UPDATED" = "$LATEST_NPM" ]; then
-        break  # SUCCESS! Exit immediately
-    fi
-    sleep 1
-    WAITED=$((WAITED + 1))
-done
-
-# Phase 2: Wait for consent files
-# Poll until: (a) files exist, OR (b) process exits, OR (c) timeout
-while kill -0 $PRESEED_PID 2>/dev/null && [ $WAITED -lt $MAX_CONSENT_WAIT ]; do
-    if [ -f "$CLAUDE_YOLO_DIR/.claude-yolo-consent" ] && [ -f "$CLAUDE_YOLO_DIR/cli-yolo.mjs" ]; then
-        break  # SUCCESS! Exit immediately
-    fi
-    sleep 1
-    WAITED=$((WAITED + 1))
-done
-```
-
-**Key pattern:** `kill -0 $PID` returns success if process is running, failure if it exited. Safety timeouts (`MAX_NPM_WAIT=120`, `MAX_CONSENT_WAIT=30`) prevent infinite blocking.
-
-| Scenario | Old (60s timeout) | New (polling + safety timeout) |
-|----------|-------------------|-------------------------------|
-| npm install takes 5s | Waits 60s anyway | Exits after 5s |
-| npm install takes 90s | Fails at 60s | Waits 90s, succeeds (under 120s limit) |
-| npm hangs forever | Waits 60s | Times out at 120s safety limit |
-| claude-yolo crashes | Waits 60s anyway | Detects immediately |
-
 ### Parallel Startup
 
-The entrypoint runs R2 sync and claude-yolo pre-seeding in parallel:
+The entrypoint runs R2 sync and claude-unleashed auto-update in parallel:
 
 ```
 Container Start
-├── preseed_claude_yolo() &     ← Background process #1
-├── initial_sync_from_r2() &    ← Background process #2
+├── initial_sync_from_r2() &    ← Background process
 ├── wait for R2 sync            ← Block until data restored
 ├── establish_bisync_baseline() &   ← Background (non-blocking)
 ├── configure_claude_autostart()
-├── wait $PRESEED_PID           ← Block until consent complete
 └── Start terminal server (port 8080)
 ```
 
-This means:
-1. R2 sync and claude-yolo run simultaneously (saves time)
-2. Servers start only after BOTH complete (correct ordering)
-3. Polling with safety timeouts throughout (early exit on success, bounded wait on failure)
+Claude-unleashed auto-updates to the latest `@anthropic-ai/claude-code` on first run. No pre-seeding or consent management is needed (handled by `CLAUDE_UNLEASHED_SKIP_CONSENT=1`).
 
 ---
 
@@ -1483,7 +1439,7 @@ Base: `node:22-alpine`
 
 ### Global NPM Packages
 
-- `claude-yolo` - Claude Code CLI wrapper with YOLO mode support (wraps `@anthropic-ai/claude-code`)
+- `claude-unleashed` - Claude Code CLI wrapper with unleashed mode support (wraps `@anthropic-ai/claude-code`)
 
 ### Build Process
 
@@ -1493,8 +1449,8 @@ RUN apk add --no-cache rclone git vim ... \
     && apk add --no-cache yazi --repository=http://dl-cdn.alpinelinux.org/alpine/edge/testing \
     && apk add --no-cache lazygit --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community
 
-# Install claude-yolo (wraps Claude Code with YOLO mode)
-RUN npm install -g claude-yolo
+# Install claude-unleashed
+RUN npm install -g github:nikolanovoselec/claude-unleashed
 
 # Copy and install terminal server
 COPY host/package.json host/server.js /app/host/
@@ -1512,87 +1468,36 @@ ENTRYPOINT ["/entrypoint.sh"]
 
 ---
 
-## 12. Claude-YOLO Integration
+## 12. Claude-Unleashed Integration
 
-Claudeflare uses [claude-yolo](https://github.com/maxparez/claude-yolo) to enable `--dangerously-skip-permissions` when running as root inside containers.
+Claudeflare uses [claude-unleashed](https://github.com/nikolanovoselec/claude-unleashed) to enable `--dangerously-skip-permissions` when running as root inside containers.
 
-### Why Claude-YOLO?
+### Why Claude-Unleashed?
 
-Standard Claude Code CLI prevents combining:
-- `--dangerously-skip-permissions` flag (skips permission prompts)
-- Running as root user (detected via `process.getuid() === 0`)
-
-Since Cloudflare Containers run as root, the standard Claude CLI would reject YOLO mode. Claude-yolo wraps the official CLI and bypasses these restrictions by patching runtime checks.
+Standard Claude Code CLI prevents combining `--dangerously-skip-permissions` with running as root (detected via `process.getuid() === 0`). Since Cloudflare Containers run as root, claude-unleashed wraps the official CLI and bypasses these restrictions.
 
 ### How It Works
 
-1. **Runtime patching:**
-   - Replaces `process.getuid() === 0` checks with `false`
-   - Replaces `getIsDocker()` calls with `true`
-   - Auto-adds `--dangerously-skip-permissions` to all invocations
-
-2. **Consent management:**
-   - First run requires interactive consent prompt
-   - Creates `.claude-yolo-consent` file to remember consent
-   - State stored in `~/.claude_yolo_state`
-
-3. **Auto-updating:**
-   - Checks for and installs latest Claude CLI version on startup
+1. Ships with Claude Code 2.1.25 baseline
+2. Auto-updates to latest `@anthropic-ai/claude-code` on first container start
+3. The `claude` wrapper in `/usr/local/bin/claude` delegates to `cu` (claude-unleashed)
+4. All configuration via Dockerfile ENV vars -- no CLI flags or consent prompts needed
 
 ### Container Configuration
 
-**Dockerfile installs claude-yolo:**
+**Dockerfile installs claude-unleashed:**
 ```dockerfile
-RUN npm install -g claude-yolo
+RUN npm install -g github:nikolanovoselec/claude-unleashed
 ```
-
-**Consent pre-configuration (Dockerfile):**
-```dockerfile
-RUN CLAUDE_CODE_DIR=$(npm root -g)/claude-yolo/node_modules/@anthropic-ai/claude-code && \
-    echo "consent-given" > "$CLAUDE_CODE_DIR/.claude-yolo-consent"
-```
-
-**Wrapper script for transparent usage:**
-```dockerfile
-RUN echo '#!/bin/bash' > /usr/local/bin/claude && \
-    echo 'export IS_SANDBOX=1' >> /usr/local/bin/claude && \
-    echo 'export DISABLE_INSTALLATION_CHECKS=1' >> /usr/local/bin/claude && \
-    echo 'exec /usr/local/bin/claude-yolo "$@"' >> /usr/local/bin/claude && \
-    chmod +x /usr/local/bin/claude
-```
-
-### Entrypoint Pre-seeding
-
-The `preseed_claude_yolo()` function in `entrypoint.sh` handles automatic consent and updates:
-
-```bash
-# Run claude-yolo with "yes" piped to auto-answer consent prompt
-(echo "yes"; sleep 5) | claude-yolo 2>&1 | head -100 &
-PRESEED_PID=$!
-
-# Poll until consent files appear OR process exits OR safety timeout
-local WAITED=0
-while kill -0 $PRESEED_PID 2>/dev/null && [ $WAITED -lt $MAX_CONSENT_WAIT ]; do
-    if [ -f "$CLAUDE_YOLO_DIR/.claude-yolo-consent" ] && [ -f "$CLAUDE_YOLO_DIR/cli-yolo.mjs" ]; then
-        break
-    fi
-    sleep 1
-    WAITED=$((WAITED + 1))
-done
-
-# Cleanup - kill any lingering processes
-pkill -f "claude-yolo" 2>/dev/null || true
-```
-
-This runs during container init (before terminal opens), so users never see consent prompts.
 
 ### Environment Variables
 
 | Variable | Purpose | Value |
 |----------|---------|-------|
-| `IS_SANDBOX` | Tells claude-yolo this is a sandbox environment | `1` |
+| `CLAUDE_UNLEASHED_SILENT` | Suppress banners | `1` |
+| `CLAUDE_UNLEASHED_SKIP_CONSENT` | Skip consent prompt | `1` |
 | `DISABLE_INSTALLATION_CHECKS` | Skips PATH checks that fail in sudo/root contexts | `1` |
-| `DEBUG` | Enable verbose debug output from claude-yolo | `1` (optional) |
+| `IS_SANDBOX` | Sandbox mode | `1` |
 
 ### Security Considerations
 
@@ -1602,29 +1507,19 @@ This runs during container init (before terminal opens), so users never see cons
 - Container destruction cleans up all state
 - Users explicitly chose to use this service
 
-**What YOLO mode bypasses:**
+**What unleashed mode bypasses:**
 - File read/write permission prompts
 - Shell command execution prompts
 - Network access prompts
 
+Configuration is via Dockerfile ENV vars (`CLAUDE_UNLEASHED_SILENT`, `CLAUDE_UNLEASHED_SKIP_CONSENT`, `DISABLE_INSTALLATION_CHECKS`, `IS_SANDBOX`). The `claude` wrapper in `/usr/local/bin/claude` delegates to `cu` (claude-unleashed).
+
 ### Troubleshooting
 
-**claude-yolo not found:**
+**claude-unleashed not found:**
 ```bash
-npm list -g claude-yolo
-ls -la $(npm root -g)/claude-yolo
-```
-
-**Consent file missing:**
-```bash
-CLAUDE_CODE_DIR=$(npm root -g)/claude-yolo/node_modules/@anthropic-ai/claude-code
-ls -la "$CLAUDE_CODE_DIR/.claude-yolo-consent"
-```
-
-**YOLO mode not activating:**
-```bash
-cat ~/.claude_yolo_state
-# Should output: YOLO
+which cu
+npm list -g claude-unleashed
 ```
 
 ---
@@ -1749,7 +1644,7 @@ npm test
 **~317 tests** across 19 test files covering:
 - Constants validation (ports, session ID patterns, R2 permission IDs)
 - Container helper functions (getContainerId, waitForContainerHealth)
-- Type guards (isAdminRequest, isBucketNameResponse)
+- Type guards (isBucketNameResponse)
 - Error types (AppError hierarchy including RateLimitError, CircuitBreakerOpenError)
 - Circuit breaker pattern
 - JWT verification (RS256 against CF Access JWKS)
@@ -1888,7 +1783,7 @@ CORS origins are managed dynamically. During setup, the wizard automatically add
 
 | Category | Packages |
 |----------|----------|
-| AI | claude-yolo (wraps @anthropic-ai/claude-code) |
+| AI | claude-unleashed (wraps @anthropic-ai/claude-code) |
 | Sync | rclone |
 | Version Control | git, gh, lazygit |
 | Editors | vim, neovim, nano |

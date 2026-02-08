@@ -11,7 +11,7 @@ Running Claude Code typically requires a local terminal setup. Claudeflare remov
 - **Browser-based Claude Code** -- full CLI running in Cloudflare Containers
 - **Multiple sessions** -- open several Claude instances in parallel, each in its own container
 - **Nested terminals** -- up to 6 tabs per session (Claude + htop + yazi + bash)
-- **YOLO mode** -- runs with `--dangerously-skip-permissions` for uninterrupted workflows
+- **Unleashed mode** -- runs via [claude-unleashed](https://github.com/nikolanovoselec/claude-unleashed) with `--dangerously-skip-permissions` for uninterrupted workflows
 - **Persistent storage** -- credentials, config, and workspace sync to R2 across sessions
 - **Fast startup** -- per-session containers with config-only sync (~0.2s)
 - **Dev tools included** -- git, gh, neovim, ripgrep, tmux, yazi, lazygit, and more
@@ -65,9 +65,7 @@ Visit your worker URL (`https://<worker-name>.<subdomain>.workers.dev`) and foll
 
 1. **Welcome** -- auto-detects your API token
 2. **Configure** -- enter your custom domain, allowed emails, and optional CORS origins
-3. **Progress** -- automatically creates DNS records, Access policies, R2 credentials, and admin secret
-
-Save the admin secret shown on the success screen -- it is only displayed once.
+3. **Progress** -- automatically creates DNS records, Cloudflare Access app with user allowlist, and derives R2 credentials
 
 ### Manual Deploy (Alternative)
 
@@ -96,7 +94,7 @@ Browser (multiple tabs)
     v
 +---------------------------+
 |   Container (Alpine)      |
-|   - Claude Code (YOLO)    |
+|   - Claude Code (unleashed)|
 |   - Up to 6 PTYs/session  |
 |   - rclone bisync         |
 +---------------------------+
