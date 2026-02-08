@@ -6,7 +6,7 @@ const CfApiBaseSchema = z.object({
     messages: z.array(z.unknown()).default([]),
 });
 
-export type CfApiResponse<T = unknown> = z.infer<typeof CfApiBaseSchema> & { result?: T };
+type CfApiResponse<T = unknown> = z.infer<typeof CfApiBaseSchema> & { result?: T };
 
 export async function parseCfResponse<T = unknown>(
     response: Response

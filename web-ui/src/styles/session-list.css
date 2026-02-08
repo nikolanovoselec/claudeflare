@@ -262,28 +262,6 @@
   50% { opacity: 0.6; }
 }
 
-.session-card-meta {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  color: var(--color-text-dimmed);
-}
-
-.session-meta-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-}
-
-.session-meta-item svg {
-  opacity: 0.7;
-}
-
-.session-meta-separator {
-  opacity: 0.4;
-}
-
 /* Developer Metrics Section */
 .session-card-metrics {
   margin-top: 8px;
@@ -304,10 +282,6 @@
 .session-card-metric {
   flex: 1;
   min-width: 0;
-}
-
-.session-card-metric--wide {
-  flex: 2;
 }
 
 .session-card-metric--full {

@@ -224,7 +224,6 @@ app.use('*', authMiddleware);
  * refers to a terminal's session, not the terminal resource itself
  */
 app.get('/:sessionId/status', async (c) => {
-  const reqLogger = logger.child({ requestId: c.get('requestId') });
   const bucketName = c.get('bucketName');
   const sessionId = c.req.param('sessionId');
 

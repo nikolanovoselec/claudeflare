@@ -163,6 +163,8 @@ export function createLogger(module: string, context?: Record<string, unknown>):
     debug: (msg, data) => log('debug', msg, data),
     info: (msg, data) => log('info', msg, data),
     warn: (msg, data) => log('warn', msg, data),
+    // Parameter order is (message, error, data) — not (message, data) like other methods —
+    // because the Error object is more important than metadata for debugging.
     error: (msg, err, data) => log('error', msg, data, err),
     child: (ctx) => createLogger(module, { ...baseContext, ...ctx }),
   };

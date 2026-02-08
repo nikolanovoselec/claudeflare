@@ -190,26 +190,6 @@
           color: var(--color-accent);
         }
 
-        .launch-button {
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          gap: 8px;
-          padding: 16px 32px;
-          font-size: 16px;
-          font-weight: 600;
-          color: white;
-          background: var(--color-accent);
-          border-radius: 8px;
-          cursor: pointer;
-          transition: all 0.2s ease;
-        }
-
-        .launch-button:hover {
-          background: var(--color-accent-hover);
-          transform: translateY(-1px);
-        }
-
         .launch-note {
           margin: 0;
           font-size: 13px;
