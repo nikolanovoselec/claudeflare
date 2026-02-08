@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   deploy:
-    runs-on: tools_github_runner
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     environment: production
     timeout-minutes: 20
     steps:

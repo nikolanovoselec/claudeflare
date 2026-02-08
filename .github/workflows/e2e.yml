@@ -7,7 +7,7 @@ permissions:
 
 jobs:
   e2e:
-    runs-on: tools_github_runner
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 15
     env:
       ACCOUNT_SUBDOMAIN: ${{ vars.ACCOUNT_SUBDOMAIN }}

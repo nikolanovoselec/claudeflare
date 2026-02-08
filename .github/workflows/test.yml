@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   test:
-    runs-on: tools_github_runner
+    runs-on: ${{ vars.RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
