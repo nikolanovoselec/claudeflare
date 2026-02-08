@@ -57,7 +57,7 @@ RUN apk add --no-cache \
 # Install claude-unleashed globally (wraps Claude Code with permission bypass)
 # Ships with Claude Code 2.1.25 baseline; auto-update disabled for fast startup
 # Users can update manually by running `cu` or `claude-unleashed` in any terminal tab
-RUN npm install -g github:nikolanovoselec/claude-unleashed#b74c30d
+RUN npm install -g github:nikolanovoselec/claude-unleashed#dfbeaf5
 
 # Create 'claude' wrapper that uses claude-unleashed transparently
 # Users type 'claude' as usual, gets unleashed mode under the hood
