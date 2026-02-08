@@ -1478,7 +1478,7 @@ Standard Claude Code CLI prevents combining `--dangerously-skip-permissions` wit
 
 ### How It Works
 
-1. Ships with Claude Code 2.1.25 baseline (pinned in Dockerfile via commit hash)
+1. Ships with Claude Code 2.1.25 baseline
 2. **Two separate updaters, two controls:**
    - **claude-unleashed's updater**: checks npm for latest `@anthropic-ai/claude-code`. Disabled on auto-start via `CLAUDE_UNLEASHED_NO_UPDATE=1` (fast boot). Runs on manual `cu` (updates to latest).
    - **Upstream CLI's internal auto-updater**: background process that checks for native builds. Always disabled via `DISABLE_AUTOUPDATER=1` (set by claude-unleashed) + source patch for `DISABLE_INSTALLATION_CHECKS`. Without this, causes 30s startup delay and "Auto-update failed" errors in containers.
@@ -1487,9 +1487,9 @@ Standard Claude Code CLI prevents combining `--dangerously-skip-permissions` wit
 
 ### Container Configuration
 
-**Dockerfile installs claude-unleashed (pinned by commit hash to bust Docker layer cache):**
+**Dockerfile installs claude-unleashed:**
 ```dockerfile
-RUN npm install -g github:nikolanovoselec/claude-unleashed#<commit-hash>
+RUN npm install -g github:nikolanovoselec/claude-unleashed
 ```
 
 ### Environment Variables
