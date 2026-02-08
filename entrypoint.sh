@@ -127,13 +127,13 @@ initial_sync_from_r2() {
 
     timeout $SYNC_TIMEOUT rclone sync "r2:$R2_BUCKET_NAME/" "$USER_HOME/" \
         --config "$RCLONE_CONFIG" \
-        --exclude ".config/rclone/**" \
-        --exclude ".cache/rclone/**" \
-        --exclude ".npm/**" \
-        --exclude "**/node_modules/**" \
-        --include "workspace/**/CLAUDE.md" \
-        --include "workspace/**/.claude/**" \
-        --exclude "workspace/**" \
+        --filter "- .config/rclone/**" \
+        --filter "- .cache/rclone/**" \
+        --filter "- .npm/**" \
+        --filter "- **/node_modules/**" \
+        --filter "+ workspace/**/CLAUDE.md" \
+        --filter "+ workspace/**/.claude/**" \
+        --filter "- workspace/**" \
         --fast-list \
         --size-only \
         --multi-thread-streams 4 \
@@ -166,13 +166,13 @@ establish_bisync_baseline() {
 
     timeout $BISYNC_TIMEOUT rclone bisync "$USER_HOME/" "r2:$R2_BUCKET_NAME/" \
         --config "$RCLONE_CONFIG" \
-        --exclude ".config/rclone/**" \
-        --exclude ".cache/rclone/**" \
-        --exclude ".npm/**" \
-        --exclude "**/node_modules/**" \
-        --include "workspace/**/CLAUDE.md" \
-        --include "workspace/**/.claude/**" \
-        --exclude "workspace/**" \
+        --filter "- .config/rclone/**" \
+        --filter "- .cache/rclone/**" \
+        --filter "- .npm/**" \
+        --filter "- **/node_modules/**" \
+        --filter "+ workspace/**/CLAUDE.md" \
+        --filter "+ workspace/**/.claude/**" \
+        --filter "- workspace/**" \
         --resync \
         --fast-list \
         --conflict-resolve newer \
@@ -211,13 +211,13 @@ bisync_with_r2() {
     # First try normal bisync
     rclone bisync "$USER_HOME/" "r2:$R2_BUCKET_NAME/" \
         --config "$RCLONE_CONFIG" \
-        --exclude ".config/rclone/**" \
-        --exclude ".cache/rclone/**" \
-        --exclude ".npm/**" \
-        --exclude "**/node_modules/**" \
-        --include "workspace/**/CLAUDE.md" \
-        --include "workspace/**/.claude/**" \
-        --exclude "workspace/**" \
+        --filter "- .config/rclone/**" \
+        --filter "- .cache/rclone/**" \
+        --filter "- .npm/**" \
+        --filter "- **/node_modules/**" \
+        --filter "+ workspace/**/CLAUDE.md" \
+        --filter "+ workspace/**/.claude/**" \
+        --filter "- workspace/**" \
         --fast-list \
         --conflict-resolve newer \
         --resilient \
@@ -232,13 +232,13 @@ bisync_with_r2() {
         echo "[sync] Normal bisync failed (exit $RESULT), attempting --resync..." | tee -a /tmp/sync.log
         rclone bisync "$USER_HOME/" "r2:$R2_BUCKET_NAME/" \
             --config "$RCLONE_CONFIG" \
-            --exclude ".config/rclone/**" \
-            --exclude ".cache/rclone/**" \
-            --exclude ".npm/**" \
-            --exclude "**/node_modules/**" \
-            --include "workspace/**/CLAUDE.md" \
-            --include "workspace/**/.claude/**" \
-            --exclude "workspace/**" \
+            --filter "- .config/rclone/**" \
+            --filter "- .cache/rclone/**" \
+            --filter "- .npm/**" \
+            --filter "- **/node_modules/**" \
+            --filter "+ workspace/**/CLAUDE.md" \
+            --filter "+ workspace/**/.claude/**" \
+            --filter "- workspace/**" \
             --conflict-resolve newer \
             --resync \
             --resilient \
