@@ -1497,7 +1497,8 @@ RUN npm install -g github:nikolanovoselec/claude-unleashed
 | `CLAUDE_UNLEASHED_SILENT` | Suppress banners (auto-start only, inline in entrypoint) | `1` |
 | `CLAUDE_UNLEASHED_NO_UPDATE` | Disable auto-update (auto-start only, inline in entrypoint) | `1` |
 | `CLAUDE_UNLEASHED_SKIP_CONSENT` | Skip consent prompt | `1` |
-| `DISABLE_INSTALLATION_CHECKS` | Skips PATH checks that fail in sudo/root contexts | `1` |
+| `DISABLE_INSTALLATION_CHECKS` | Suppress upstream CLI deprecation warnings (set internally by claude-unleashed) | `1` |
+| `DISABLE_AUTOUPDATER` | Disable upstream CLI background auto-updater (set internally by claude-unleashed) | `1` |
 | `IS_SANDBOX` | Sandbox mode | `1` |
 
 ### Security Considerations
@@ -1513,7 +1514,7 @@ RUN npm install -g github:nikolanovoselec/claude-unleashed
 - Shell command execution prompts
 - Network access prompts
 
-Global config via Dockerfile ENV: `CLAUDE_UNLEASHED_SKIP_CONSENT`, `DISABLE_INSTALLATION_CHECKS`, `IS_SANDBOX`. Auto-start adds `CLAUDE_UNLEASHED_SILENT` and `CLAUDE_UNLEASHED_NO_UPDATE` as inline env vars. The `claude` wrapper in `/usr/local/bin/claude` delegates to `cu` (claude-unleashed).
+Global config via Dockerfile ENV: `CLAUDE_UNLEASHED_SKIP_CONSENT`, `IS_SANDBOX`. claude-unleashed internally sets `DISABLE_INSTALLATION_CHECKS=1` and `DISABLE_AUTOUPDATER=1` before importing the upstream CLI. Auto-start adds `CLAUDE_UNLEASHED_SILENT` and `CLAUDE_UNLEASHED_NO_UPDATE` via export in `.bashrc`. The `claude` wrapper in `/usr/local/bin/claude` delegates to `cu` (claude-unleashed).
 
 ### Troubleshooting
 
