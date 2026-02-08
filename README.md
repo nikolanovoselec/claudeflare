@@ -25,7 +25,7 @@ Running Claude Code typically requires a local terminal setup. Claudeflare remov
 ### Requirements
 
 - Cloudflare account with Workers Paid plan (~$5/month base)
-- Claude Max subscription for Claude Code CLI access
+- Any paid Claude plan (Pro, Team, or Max) for Claude Code CLI access
 - A domain with its DNS zone in Cloudflare
 
 ### 1. Create a Cloudflare API Token
