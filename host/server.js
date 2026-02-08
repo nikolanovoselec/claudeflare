@@ -143,6 +143,7 @@ class Session {
     this.clients = new Set(); // WebSocket clients attached to this session
     this.buffer = ''; // Buffer for reconnection (last 10KB)
     this.bufferMaxSize = 10 * 1024;
+    this.inAlternateScreen = false; // Track if PTY is in alternate screen buffer (TUI apps)
     this.createdAt = new Date().toISOString();
     this.lastAccessedAt = this.createdAt;
     this.disconnectedAt = null; // Timestamp when last client disconnected
@@ -189,6 +190,14 @@ class Session {
       // Bug 3 fix: Record PTY activity for smart hibernation
       activityTracker.recordPtyOutput();
 
+      // Track alternate screen buffer transitions (TUI apps like htop, lazygit, yazi)
+      if (data.includes('\x1b[?1049h') || data.includes('\x1b[?47h') || data.includes('\x1b[?1047h')) {
+        this.inAlternateScreen = true;
+      }
+      if (data.includes('\x1b[?1049l') || data.includes('\x1b[?47l') || data.includes('\x1b[?1047l')) {
+        this.inAlternateScreen = false;
+      }
+
       // Add to buffer for reconnection
       this.buffer += data;
       if (this.buffer.length > this.bufferMaxSize) {
@@ -212,6 +221,7 @@ class Session {
         }
       }
       this.ptyProcess = null;
+      this.inAlternateScreen = false;
     });
 
     console.log(`[Session ${this.id}] PTY started: pid=${this.ptyProcess.pid}`);
@@ -237,12 +247,17 @@ class Session {
       this.start();
     }
 
-    // Send buffered output for reconnection - raw data
-    if (this.buffer) {
+    // Send screen state info before any buffer data
+    // Frontend uses this to decide whether to replay buffer or trigger SIGWINCH
+    ws.send(JSON.stringify({ type: 'screen-state', inAlternateScreen: this.inAlternateScreen }));
+
+    // Only replay buffer for normal screen mode
+    // For alternate screen, SIGWINCH from resize will trigger full redraw by the TUI app
+    if (!this.inAlternateScreen && this.buffer) {
       ws.send(this.buffer);
     }
 
-    console.log(`[Session ${this.id}] Client attached. Total clients: ${this.clients.size}`);
+    console.log(`[Session ${this.id}] Client attached (altScreen=${this.inAlternateScreen}). Total clients: ${this.clients.size}`);
   }
 
   /**
