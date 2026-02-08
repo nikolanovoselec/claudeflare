@@ -117,24 +117,40 @@ init_sync_log() {
 RCLONE_CONFIG="$USER_HOME/.config/rclone/rclone.conf"
 
 # Shared rclone filter rules (used by all sync functions)
-RCLONE_FILTERS=(
-    --filter "- .bashrc"
-    --filter "- .bash_profile"
-    --filter "- .config/rclone/**"
-    --filter "- .cache/rclone/**"
-    --filter "- .npm/**"
-    --filter "- **/node_modules/**"
-    --filter "+ workspace/**/"
-    --filter "+ workspace/CLAUDE.md"
-    --filter "+ workspace/**/CLAUDE.md"
-    --filter "+ workspace/.claude/**"
-    --filter "+ workspace/**/.claude/**"
-    --filter "- workspace/**"
-)
+# SYNC_MODE controls what syncs from workspace/:
+#   "full"     = entire workspace folder (for persistent storage across stop/resume)
+#   "metadata" = only CLAUDE.md and .claude/ per repo (lightweight, restore later if needed)
+SYNC_MODE="${SYNC_MODE:-full}"
+
+if [ "$SYNC_MODE" = "metadata" ]; then
+    RCLONE_FILTERS=(
+        --filter "- .bashrc"
+        --filter "- .bash_profile"
+        --filter "- .config/rclone/**"
+        --filter "- .cache/rclone/**"
+        --filter "- .npm/**"
+        --filter "- **/node_modules/**"
+        --filter "+ workspace/**/"
+        --filter "+ workspace/CLAUDE.md"
+        --filter "+ workspace/**/CLAUDE.md"
+        --filter "+ workspace/.claude/**"
+        --filter "+ workspace/**/.claude/**"
+        --filter "- workspace/**"
+    )
+else
+    RCLONE_FILTERS=(
+        --filter "- .bashrc"
+        --filter "- .bash_profile"
+        --filter "- .config/rclone/**"
+        --filter "- .cache/rclone/**"
+        --filter "- .npm/**"
+        --filter "- **/node_modules/**"
+    )
+fi
 
 # Step 1: One-way sync FROM R2 TO local (restore user data)
 # This ensures existing credentials, plugins, etc. are restored BEFORE anything else runs
-# Excludes workspace folder - workspace is ephemeral per-session
+# Workspace sync controlled by SYNC_MODE (full or metadata-only)
 # IMPORTANT: Uses timeout to prevent infinite hangs on network issues
 initial_sync_from_r2() {
     local SYNC_TIMEOUT=120  # 2 minutes max for initial sync
