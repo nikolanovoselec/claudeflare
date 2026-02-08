@@ -12,6 +12,8 @@ vi.mock('../../stores/terminal', () => ({
 // Mock constants
 vi.mock('../../lib/constants', () => ({
   METRICS_POLL_INTERVAL_MS: 1000,
+  STARTUP_POLL_INTERVAL_MS: 1500,
+  MAX_STARTUP_POLL_ERRORS: 10,
   MAX_TERMINALS_PER_SESSION: 6,
 }));
 
@@ -116,7 +118,7 @@ describe('Session Store', () => {
       ];
       mockGetSessions.mockResolvedValue(mockSessions);
       mockGetBatchSessionStatus.mockResolvedValue({
-        'session-1': { status: 'running', ptyActive: true },
+        'session-1': { status: 'running', ptyActive: true, startupStage: 'ready' },
       });
       mockGetStartupStatus.mockResolvedValue({
         stage: 'ready',
@@ -145,7 +147,7 @@ describe('Session Store', () => {
       ];
       mockGetSessions.mockResolvedValue(mockSessions);
       mockGetBatchSessionStatus.mockResolvedValue({
-        'session-1': { status: 'running', ptyActive: true },
+        'session-1': { status: 'running', ptyActive: true, startupStage: 'ready' },
       });
       mockGetStartupStatus.mockResolvedValue({
         stage: 'ready',
@@ -176,7 +178,7 @@ describe('Session Store', () => {
       ];
       mockGetSessions.mockResolvedValue(mockSessions);
       mockGetBatchSessionStatus.mockResolvedValue({
-        'session-1': { status: 'running', ptyActive: false },
+        'session-1': { status: 'running', ptyActive: false, startupStage: 'verifying' },
       });
       mockGetStartupStatus.mockResolvedValue({
         stage: 'syncing',
@@ -314,7 +316,7 @@ describe('Session Store', () => {
           lastAccessedAt: new Date().toISOString(),
         },
       ]);
-      mockGetBatchSessionStatus.mockResolvedValue({ 'session-1': { status: 'running', ptyActive: true } });
+      mockGetBatchSessionStatus.mockResolvedValue({ 'session-1': { status: 'running', ptyActive: true, startupStage: 'ready' } });
       mockGetStartupStatus.mockResolvedValue({
         stage: 'ready',
         progress: 100,
@@ -465,17 +467,8 @@ describe('Session Store', () => {
           lastAccessedAt: new Date().toISOString(),
         },
       ]);
-      mockGetBatchSessionStatus.mockResolvedValue({ 'session-1': { status: 'running', ptyActive: true } });
-      mockGetStartupStatus.mockResolvedValue({
-        stage: 'syncing',
-        progress: 50,
-        message: 'Syncing...',
-        details: {
-          container: 'container-1',
-          bucketName: 'test-bucket',
-          path: '/workspace',
-        },
-      });
+      // Use 'verifying' so the session is marked as initializing (not ready)
+      mockGetBatchSessionStatus.mockResolvedValue({ 'session-1': { status: 'running', ptyActive: false, startupStage: 'verifying' } });
       await sessionStore.loadSessions();
 
       expect(sessionStore.isSessionInitializing('session-1')).toBe(true);
@@ -496,7 +489,7 @@ describe('Session Store', () => {
           lastAccessedAt: new Date().toISOString(),
         },
       ]);
-      mockGetBatchSessionStatus.mockResolvedValue({ 'session-1': { status: 'running', ptyActive: true } });
+      mockGetBatchSessionStatus.mockResolvedValue({ 'session-1': { status: 'running', ptyActive: true, startupStage: 'ready' } });
       mockGetStartupStatus.mockResolvedValue({
         stage: 'ready',
         progress: 100,

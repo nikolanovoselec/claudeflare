@@ -2,7 +2,7 @@ import { createStore, produce } from 'solid-js/store';
 import type { Session, SessionWithStatus, SessionStatus, InitProgress, TerminalTab, SessionTerminals, TileLayout, TilingState } from '../types';
 import * as api from '../api/client';
 import { terminalStore } from './terminal';
-import { METRICS_POLL_INTERVAL_MS, MAX_TERMINALS_PER_SESSION } from '../lib/constants';
+import { METRICS_POLL_INTERVAL_MS, STARTUP_POLL_INTERVAL_MS, MAX_STARTUP_POLL_ERRORS, MAX_TERMINALS_PER_SESSION } from '../lib/constants';
 
 // ============================================================================
 // Session Metrics Type
@@ -73,6 +73,65 @@ function getActiveSession(): SessionWithStatus | undefined {
 // Track startup polling cleanup functions per session
 const startupCleanups = new Map<string, () => void>();
 
+// Poll startup status for a session that's already starting (used by loadSessions)
+function startPollingStartupStatus(sessionId: string): void {
+  // Don't start duplicate polling
+  if (startupCleanups.has(sessionId)) return;
+
+  let cancelled = false;
+  let consecutiveErrors = 0;
+
+  const pollInterval = setInterval(async () => {
+    if (cancelled) return;
+
+    try {
+      const status = await api.getStartupStatus(sessionId);
+      consecutiveErrors = 0;
+
+      if (status.stage === 'ready') {
+        clearInterval(pollInterval);
+        startupCleanups.delete(sessionId);
+        updateSessionStatus(sessionId, 'running');
+        initializeTerminalsForSession(sessionId);
+        // Keep init progress visible until user dismisses
+      } else if (status.stage === 'error' || status.stage === 'stopped') {
+        clearInterval(pollInterval);
+        startupCleanups.delete(sessionId);
+        updateSessionStatus(sessionId, status.stage === 'error' ? 'error' : 'stopped');
+        setState(produce((s) => {
+          delete s.initializingSessionIds[sessionId];
+          delete s.initProgressBySession[sessionId];
+        }));
+      } else {
+        // Still starting - update progress
+        setState(produce((s) => {
+          s.initProgressBySession[sessionId] = {
+            stage: status.stage,
+            progress: status.progress,
+            message: status.message,
+          };
+        }));
+      }
+    } catch {
+      consecutiveErrors++;
+      if (consecutiveErrors >= MAX_STARTUP_POLL_ERRORS) {
+        clearInterval(pollInterval);
+        startupCleanups.delete(sessionId);
+        updateSessionStatus(sessionId, 'error');
+        setState(produce((s) => {
+          delete s.initializingSessionIds[sessionId];
+          delete s.initProgressBySession[sessionId];
+        }));
+      }
+    }
+  }, STARTUP_POLL_INTERVAL_MS);
+
+  startupCleanups.set(sessionId, () => {
+    cancelled = true;
+    clearInterval(pollInterval);
+  });
+}
+
 // Generation counter to detect stale closures when concurrent loadSessions calls overlap
 let loadSessionsGeneration = 0;
 
@@ -106,60 +165,39 @@ async function loadSessions(): Promise<void> {
     }));
     setState('sessions', sessionsWithStatus);
 
-    // Apply batch statuses and handle running sessions
-    await Promise.all(
-      sessionsWithStatus.map(async (session) => {
-        try {
-          const batchStatus = batchStatuses[session.id];
-          if (!batchStatus) {
-            // No batch status available - keep existing or default
-            return;
-          }
+    // Apply batch statuses using batch data directly (no per-session API calls)
+    for (const session of sessionsWithStatus) {
+      if (thisGen !== loadSessionsGeneration) return;
 
-          if (batchStatus.status === 'running') {
-            // Container is healthy - verify live state for running sessions
-            try {
-              const liveStatus = await api.getStartupStatus(session.id);
-              if (thisGen !== loadSessionsGeneration) return;
-              if (liveStatus.stage === 'ready') {
-                updateSessionStatus(session.id, 'running');
-                initializeTerminalsForSession(session.id);
-              } else if (liveStatus.stage === 'error') {
-                updateSessionStatus(session.id, 'error');
-              } else if (liveStatus.stage === 'stopped') {
-                updateSessionStatus(session.id, 'stopped');
-              } else {
-                // Container starting/syncing - mark as initializing
-                updateSessionStatus(session.id, 'initializing');
-                // Store init progress so UI shows the progress bar
-                setState(
-                  produce((s) => {
-                    s.initializingSessionIds[session.id] = true;
-                    s.initProgressBySession[session.id] = {
-                      stage: liveStatus.stage,
-                      progress: liveStatus.progress,
-                      message: liveStatus.message,
-                    };
-                  })
-                );
-              }
-            } catch {
-              // Container not reachable via startup-status but batch says running
-              // Trust batch - container might be slow to respond
-              if (thisGen !== loadSessionsGeneration) return;
-              console.warn(`[SessionStore] Container ${session.id} unreachable via startup-status, keeping batch status: running`);
-              updateSessionStatus(session.id, 'running');
-              initializeTerminalsForSession(session.id);
-            }
-          } else {
-            if (thisGen !== loadSessionsGeneration) return;
-            updateSessionStatus(session.id, batchStatus.status as SessionStatus);
-          }
-        } catch {
-          // Status check failed, ignore
-        }
-      })
-    );
+      const batchStatus = batchStatuses[session.id];
+      if (!batchStatus) {
+        // No batch status available - keep existing or default
+        continue;
+      }
+
+      if (batchStatus.status === 'running' && batchStatus.startupStage === 'ready') {
+        // Container running and fully ready
+        updateSessionStatus(session.id, 'running');
+        initializeTerminalsForSession(session.id);
+      } else if (batchStatus.status === 'running') {
+        // Container running but not ready (startupStage is 'verifying' or missing)
+        updateSessionStatus(session.id, 'initializing');
+        setState(
+          produce((s) => {
+            s.initializingSessionIds[session.id] = true;
+            s.initProgressBySession[session.id] = {
+              stage: batchStatus.startupStage || 'verifying',
+              progress: 50,
+              message: 'Container starting...',
+            };
+          })
+        );
+        // Start polling to track startup progress
+        startPollingStartupStatus(session.id);
+      } else {
+        updateSessionStatus(session.id, batchStatus.status as SessionStatus);
+      }
+    }
   } catch (err) {
     if (thisGen !== loadSessionsGeneration) return;
     setState('error', err instanceof Error ? err.message : 'Failed to load sessions');

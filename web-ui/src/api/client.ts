@@ -22,11 +22,13 @@ class ApiError extends Error {
   }
 }
 
+async function fetchApi<T>(endpoint: string, options: RequestInit, schema: z.ZodType<T>): Promise<T>;
+async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T | undefined>;
 async function fetchApi<T>(
   endpoint: string,
   options: RequestInit = {},
   schema?: z.ZodType<T>
-): Promise<T> {
+): Promise<T | undefined> {
   const url = `${BASE_URL}${endpoint}`;
   const response = await fetch(url, {
     ...options,
@@ -57,7 +59,7 @@ async function fetchApi<T>(
     if (schema) {
       throw new ApiError(response.status, 'Expected response body but received empty response');
     }
-    return undefined as unknown as T;
+    return undefined;
   }
 
   let data: unknown;
