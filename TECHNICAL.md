@@ -876,17 +876,18 @@ rclone bisync "$HOME/" "r2:$BUCKET/" --resync --conflict-resolve newer
 
 ### rclone bisync Configuration
 
-```bash
-rclone bisync "$USER_HOME/" "r2:$R2_BUCKET_NAME/" \
-    --config "$RCLONE_CONFIG" \
-    --exclude ".config/rclone/**" \
-    --exclude ".cache/rclone/**" \
-    --exclude ".npm/**" \
-    --conflict-resolve newer \
-    --resilient \
-    --recover \
-    -v
-```
+Sync filters are controlled by `SYNC_MODE` env var (default: `full`):
+
+| Mode | Workspace Sync | Use Case |
+|------|---------------|----------|
+| `full` | Entire `workspace/` folder (minus `node_modules/`) | Persistent storage across stop/resume (Cloudflare Containers have ephemeral disk) |
+| `metadata` | Only `CLAUDE.md` and `.claude/` per repo | Lightweight sync, gitignored project context only |
+
+To switch: change `${SYNC_MODE:-full}` default in `entrypoint.sh` or add `ENV SYNC_MODE=metadata` to Dockerfile.
+
+Both modes always exclude: `.bashrc`, `.bash_profile`, `.config/rclone/`, `.cache/rclone/`, `.npm/`, `**/node_modules/`.
+
+All rclone commands use `--filter` flags (NOT `--include`/`--exclude`). See entrypoint.sh `RCLONE_FILTERS` array.
 
 **Flags Explained:**
 - `--conflict-resolve newer` - Newest file wins on conflicts
@@ -1885,17 +1886,16 @@ rclone sync "r2:$BUCKET/" "$HOME/" \
 
 **Diagnosis:** Check `/tmp/sync.log` inside the container for the indeterminate order warning.
 
-### Slow Sync Despite Workspace Exclusion
+### Slow Sync With Full Workspace Mode
 
-**Symptom:** Container startup slow even with workspace excluded.
+**Symptom:** Container startup slow with `SYNC_MODE=full` (default).
 
-**Cause:** Workspace data already exists in R2 from before exclusions were added. `--exclude` prevents new uploads but doesn't delete existing data.
+**Cause:** Full workspace sync downloads all workspace data from R2 on startup. Large repos with many files will slow initial sync.
 
-**Fix:** Manually delete from R2:
-```bash
-rclone delete r2:claudeflare-<user-bucket>/workspace/ -v
-rclone delete r2:claudeflare-<user-bucket>/.npm/ -v
-```
+**Options:**
+1. Switch to metadata-only sync: set `SYNC_MODE=metadata` in entrypoint.sh or Dockerfile
+2. Manually clean large repos from R2: `rclone delete r2:claudeflare-<user-bucket>/workspace/<repo>/ -v`
+3. Clean caches: `rclone delete r2:claudeflare-<user-bucket>/.npm/ -v`
 
 ### WebSocket Connection Failures
 
