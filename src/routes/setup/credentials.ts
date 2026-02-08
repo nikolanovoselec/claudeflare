@@ -30,10 +30,11 @@ export async function handleDeriveR2Credentials(
     };
 
     if (!verifyData.success || !verifyData.result?.id) {
-      const errorMsg = verifyData.errors?.map(e => e.message).join(', ') || 'Token verification failed';
+      const rawError = verifyData.errors?.map(e => e.message).join(', ') || 'Token verification failed';
+      logger.error('Failed to derive R2 credentials', new Error(rawError));
       steps[stepIndex].status = 'error';
-      steps[stepIndex].error = `Failed to derive R2 credentials: ${errorMsg}`;
-      throw new SetupError(`Failed to derive R2 credentials: ${errorMsg}`, steps);
+      steps[stepIndex].error = 'Failed to derive R2 credentials';
+      throw new SetupError('Failed to derive R2 credentials', steps);
     }
 
     const tokenId = verifyData.result.id;

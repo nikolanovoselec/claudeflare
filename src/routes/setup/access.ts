@@ -90,10 +90,12 @@ async function upsertAccessApp(
       return null;
     }
 
-    const errorMsg = data.errors?.[0]?.message || `Failed to ${existingAppId ? 'update' : 'create'} Access app`;
+    const rawError = data.errors?.[0]?.message || 'unknown';
+    logger.error('Failed to upsert Access app', new Error(rawError), { domain: customDomain, method, errors: data.errors });
+    const genericMsg = `Failed to ${existingAppId ? 'update' : 'create'} Access application`;
     steps[stepIndex].status = 'error';
-    steps[stepIndex].error = errorMsg;
-    throw new SetupError(errorMsg, steps);
+    steps[stepIndex].error = genericMsg;
+    throw new SetupError(genericMsg, steps);
   }
 
   logger.info(`Access app ${existingAppId ? 'updated' : 'created'}`, { domain: customDomain, appId: data.result.id });
@@ -218,10 +220,9 @@ async function upsertAccessPolicy(
   );
   if (!createRes.ok) {
     const errorText = await createRes.text();
-    const message = `Policy creation failed: ${createRes.status} - ${errorText}`;
-    logger.warn(message);
+    logger.error('Access policy creation failed', new Error(errorText), { appId, status: createRes.status });
     steps[stepIndex].status = 'error';
-    steps[stepIndex].error = message;
+    steps[stepIndex].error = 'Failed to configure Access policy';
   } else {
     logger.info('Access policy created', { appId });
     steps[stepIndex].status = 'success';
