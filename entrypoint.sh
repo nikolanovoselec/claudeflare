@@ -338,14 +338,12 @@ PROFILE_EOF
         echo "[entrypoint] .bash_profile created"
     fi
 
-    # Check if already configured
-    if grep -q "$AUTOSTART_MARKER" "$BASHRC_FILE" 2>/dev/null; then
-        echo "[entrypoint] Claude auto-start already configured in .bashrc"
-        echo "already_configured" > /tmp/claude-autostart-status.txt
-        return 0
+    # Strip any existing autostart block (may be stale from R2 sync)
+    if [ -f "$BASHRC_FILE" ]; then
+        sed -i '/# claude-autostart/,/^fi$/d; /# terminal-autostart/,/^fi$/d' "$BASHRC_FILE"
     fi
 
-    echo "[entrypoint] Adding Claude auto-start to .bashrc..."
+    echo "[entrypoint] Writing Claude auto-start to .bashrc..."
 
     # Create .bashrc if it doesn't exist
     touch "$BASHRC_FILE"
