@@ -371,9 +371,11 @@ if [ -t 1 ] && [ -z "$TERMINAL_APP_STARTED" ]; then
             # Tab 1: Claude Code (via claude-unleashed)
             # Auto-start: silent + no-update for fast boot on bundled version
             # Manual re-run: just `cu` or `claude-unleashed` to update + show output
-            export CLAUDE_UNLEASHED_SILENT=1 CLAUDE_UNLEASHED_NO_UPDATE=1
+            export CLAUDE_UNLEASHED_SILENT=1
+            export CLAUDE_UNLEASHED_NO_UPDATE=1
             cu
-            unset CLAUDE_UNLEASHED_SILENT CLAUDE_UNLEASHED_NO_UPDATE
+            unset CLAUDE_UNLEASHED_SILENT
+            unset CLAUDE_UNLEASHED_NO_UPDATE
             # If claude exits, drop to bash (don't use exec so PTY survives)
             ;;
         2)
