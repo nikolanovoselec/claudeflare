@@ -131,6 +131,7 @@ initial_sync_from_r2() {
         --filter "- .cache/rclone/**" \
         --filter "- .npm/**" \
         --filter "- **/node_modules/**" \
+        --filter "+ workspace/**/" \
         --filter "+ workspace/**/CLAUDE.md" \
         --filter "+ workspace/**/.claude/**" \
         --filter "- workspace/**" \
@@ -170,6 +171,7 @@ establish_bisync_baseline() {
         --filter "- .cache/rclone/**" \
         --filter "- .npm/**" \
         --filter "- **/node_modules/**" \
+        --filter "+ workspace/**/" \
         --filter "+ workspace/**/CLAUDE.md" \
         --filter "+ workspace/**/.claude/**" \
         --filter "- workspace/**" \
@@ -215,6 +217,7 @@ bisync_with_r2() {
         --filter "- .cache/rclone/**" \
         --filter "- .npm/**" \
         --filter "- **/node_modules/**" \
+        --filter "+ workspace/**/" \
         --filter "+ workspace/**/CLAUDE.md" \
         --filter "+ workspace/**/.claude/**" \
         --filter "- workspace/**" \
@@ -236,6 +239,7 @@ bisync_with_r2() {
             --filter "- .cache/rclone/**" \
             --filter "- .npm/**" \
             --filter "- **/node_modules/**" \
+            --filter "+ workspace/**/" \
             --filter "+ workspace/**/CLAUDE.md" \
             --filter "+ workspace/**/.claude/**" \
             --filter "- workspace/**" \
